@@ -291,7 +291,11 @@ concolic ask-channel.
   finds the None-deref and avoids false fires.)* How rich beyond that? intervals/type-sets
   later via CALL. What's the minimum that finds *interesting* bugs?
 - **Fuel / world budget** — per-hypothesis fuel, loop unrolling depth, recursion cap. Where
-  does UNKNOWN get returned, and is that honestly useful? *(Untested — the spike has no loops.)*
+  does UNKNOWN get returned, and is that honestly useful? *(Slice A′: `while` unrolling depth is
+  now concrete — `intake_function(src, loop_unroll=k)` pre-materializes a k-deep state chain, and
+  the pool size IS the fuel budget, pinned by a depth-2 bug found at k=2 / missed at k=1. Still
+  open: fixed depth is not a fixpoint — no widening and no explicit UNKNOWN-on-exhaustion yet;
+  recursion is unmodelled.)*
 - **State-succession vs. SSA** — *probed and largely settled* (`experiments/state_threading.py`,
   4 pins; see `spike_findings.md`). Two-sided: (a) **"mint a successor state" is NOT expressible
   as a Horn rule** — an existential head var is not Skolem-minted by ugm's drivers (`chain_sip`
@@ -303,8 +307,15 @@ concolic ask-channel.
   rules; the state-pool size *is* the unrolling/fuel budget (next bullet), so the two questions
   merge. **Update (slice A, 2026-07-12):** deriving the cell lattice from real `ast` is now
   **done in the main analyzer** — intake emits states/transitions/cells from the CFG and
-  `analyze` threads value through them (reassignment correct, pinned in `test_spike.py`). Still
-  open: branch-merge (a join over two predecessor states) and loop unrolling.
+  `analyze` threads value through them (reassignment correct, pinned in `test_spike.py`).
+  **Update (slice A′):** branch-merge **and loop unrolling** are now done — an `if`/`if-else` forks
+  into then/else states and joins at a merge; a `while` body is unrolled to a fixed depth and every
+  iteration-count exit joins at a post-loop merge. At every join the value is the *union* of the
+  incoming edges, derived by the frame rule firing once per edge (Horn disjunction, never a Python
+  join; a boundary-guard test pins that intake emits no reasoning predicates). The unrolled
+  state-pool size **is** the fuel budget (a depth-2 dependency bug is found at unroll=2, missed at
+  unroll=1 — pinned). Still open: this is a fixed bound, not a fixpoint — widening / UNKNOWN-on-
+  exhaustion and per-path branch refinement (assuming a branch's condition) are the next refinements.
 - **Transformation-rule library** — *built* (`operators.py`). Operators are data keyed by the
   effect they prevent, with preconditions, retrieved by backward-CHAIN (`retrieve` →
   `who applies_to <site>`); the effect vocabulary IS the analysis's outcome vocabulary

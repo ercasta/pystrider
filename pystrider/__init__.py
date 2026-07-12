@@ -14,6 +14,7 @@ from .analysis import (
 )
 from .transform import insert_none_guard, insert_none_guard_range
 from .operators import Operator, LIBRARY, retrieve
+from .session import Session, relabel_trace
 
 __all__ = [
     "Intake", "intake_function",
@@ -23,4 +24,5 @@ __all__ = [
     "candidate_edits", "choose_repair",
     "insert_none_guard", "insert_none_guard_range",
     "Operator", "LIBRARY", "retrieve",
+    "Session", "relabel_trace",
 ]

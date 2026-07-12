@@ -210,3 +210,115 @@ def test_deref_before_reassignment_still_raises():
         "def f(x, z):\n    y = x\n    w = y.bar()\n    y = z\n    return w\n")
     outs = analyze(ik, {"x": "none", "z": "object"})
     assert len(outs) == 1 and outs[0].label == "y.bar"
+
+
+# --- slice A' (branch-merge): value at a merge point is the UNION of the branches -------------
+
+BRANCH = """
+def f(c, x, z):
+    if c:
+        y = x
+    else:
+        y = z
+    return y.bar()
+"""
+
+
+def test_branch_forks_and_merges_into_states():
+    # an if/else forks p0 into two entry points and merges into a fresh point: 6 states total
+    ik = intake_function(BRANCH)
+    assert ik.states == ["p0", "p1", "p2", "p3", "p4", "p5"]
+
+
+def test_merge_unions_a_none_from_the_then_branch():
+    # y = x on the then-path; x=None makes y possibly-None at the merge -> a sound may-None-deref
+    ik = intake_function(BRANCH)
+    assert analyze(ik, {"c": "object", "x": "none", "z": "object"}) != []
+
+
+def test_merge_unions_a_none_from_the_else_branch():
+    # y = z on the else-path; z=None makes y possibly-None at the merge, via the OTHER edge
+    ik = intake_function(BRANCH)
+    assert analyze(ik, {"c": "object", "x": "object", "z": "none"}) != []
+
+
+def test_no_raise_when_both_branches_are_non_none():
+    # neither path can bind y to None -> the merged value is non-None on every edge, no raise
+    ik = intake_function(BRANCH)
+    assert analyze(ik, {"c": "object", "x": "object", "z": "object"}) == []
+
+
+def test_merged_value_is_derived_by_a_rule_not_a_python_join():
+    # the DISTINGUISHING claim: the value union at the merge is ugm provenance (the frame rule
+    # firing across a merge edge), not a Python-computed lattice meet. The trace must show the
+    # merge cell's None threaded back through a branch assignment.
+    ik = intake_function(BRANCH)
+    o = analyze(ik, {"c": "object", "x": "object", "z": "none"})[0]
+    joined = "\n".join(o.trace)
+    assert "has_value none  <- rule" in joined      # the merged value is RULE-derived, not given
+    assert "reads z" in joined                       # ... threaded back through the else branch (y = z)
+
+
+# --- slice A' (loop unrolling): the pre-materialized state pool is the fuel budget -----------
+
+MAY_SKIP = """
+def f(x, z):
+    y = x
+    while c:
+        y = z
+    return y.bar()
+"""
+
+LOOP_MAY_NULL = """
+def f(x, z):
+    y = z
+    while c:
+        y = x
+    return y.bar()
+"""
+
+# b becomes None only after the loop's body runs TWICE (b <- a, a <- x): a depth-2 dependency
+DEPTH2 = """
+def f(x, z):
+    a = z
+    b = z
+    while c:
+        b = a
+        a = x
+    return b.bar()
+"""
+
+
+def test_loop_may_be_skipped_so_pre_loop_none_survives():
+    # the loop might run 0 times; y is None before it -> a sound possible None-deref at the merge
+    assert analyze(intake_function(MAY_SKIP), {"x": "none", "z": "object"}) != []
+
+
+def test_loop_body_may_introduce_none():
+    # y is non-None before the loop, but the body may set it to None -> possible None-deref
+    assert analyze(intake_function(LOOP_MAY_NULL), {"x": "none", "z": "object"}) != []
+
+
+def test_loop_safe_when_no_path_binds_none():
+    # nothing on any iteration count can make y None -> no raise
+    assert analyze(intake_function(MAY_SKIP), {"x": "object", "z": "object"}) == []
+
+
+def test_unroll_depth_is_the_fuel_budget():
+    # THE fuel-budget claim: a bug that only manifests on the 2nd iteration is FOUND at unroll>=2
+    # and MISSED at unroll=1 — the pre-materialized state-pool size bounds what is reachable.
+    assert analyze(intake_function(DEPTH2, loop_unroll=2), {"x": "none", "z": "object"}) != []
+    assert analyze(intake_function(DEPTH2, loop_unroll=1), {"x": "none", "z": "object"}) == []
+
+
+# --- the ugm/Python boundary, as a CHECKED INVARIANT ----------------------------------------
+
+def test_intake_emits_only_structure_never_reasoning():
+    # The load-bearing design claim: intake materializes STRUCTURE; every value/outcome fact is
+    # DERIVED by a ugm rule, never written by Python. If a reasoning predicate ever leaks into
+    # intake, the analysis has silently migrated out of the engine — this pin catches that.
+    REASONING = {"has_value", "eval_to", "guard_open", "reached", "raises"}
+    for src in (NONE_DEREF, REASSIGN, BRANCH, MAY_SKIP, DEPTH2,
+                "def f(x):\n    y = x\n    if y is not None:\n        return y.bar()\n"):
+        emitted = {p for _, p, _ in intake_function(src).facts}
+        assert emitted.isdisjoint(REASONING), emitted & REASONING

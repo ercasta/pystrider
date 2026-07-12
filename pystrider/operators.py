@@ -40,18 +40,22 @@ class Operator:
 # --- helpers that read the intake facts (an operator's precondition + its strategy's inputs) ---
 
 def root_param(intake: Intake, var: str) -> str | None:
-    """The parameter `var`'s value traces back to via a single `var = <param>` assignment."""
+    """The parameter `var`'s value traces back to via a single `var = <param>` assignment. Works in
+    SOURCE-name space (in/out), translating to namespaced graph-node ids at the fact boundary."""
     f = intake.facts
-    stmt = next((s for (s, p, o) in f if p == "assigns" and o == var), None)
+    vid = intake.var_id(var)
+    stmt = next((s for (s, p, o) in f if p == "assigns" and o == vid), None)
     if not stmt:
         return None
     e = next((o for (s, p, o) in f if s == stmt and p == "from_expr"), None)
     src = next((o for (s, p, o) in f if s == e and p == "reads"), None)
-    return src if src in intake.params else None
+    src_name = intake.var_source(src) if src else None
+    return src_name if src_name in intake.params else None
 
 
 def assign_line(intake: Intake, var: str) -> int | None:
-    stmt = next((s for (s, p, o) in intake.facts if p == "assigns" and o == var), None)
+    vid = intake.var_id(var)
+    stmt = next((s for (s, p, o) in intake.facts if p == "assigns" and o == vid), None)
     return intake.line_of.get(stmt) if stmt else None
 
 

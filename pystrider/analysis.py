@@ -48,6 +48,12 @@ class Outcome:
         return f"assuming {hyp}: {self.label} (line {self.line}) -> AttributeError"
 
 
+def _node(g: "h.Graph", name: str) -> str:
+    """The id of the node named `name`, reusing an existing one or minting it (intake boundary)."""
+    ex = g.nodes_named(name)
+    return ex[0] if ex else g.add_node(name)
+
+
 def _kb_from(intake: Intake, extra: list[tuple[str, str, str]]) -> "h.Graph":
     """Materialize intake facts + any extra facts (value-kind types, guard structure) into a
     fresh graph. This is the ONLY direct materialization — the sanctioned intake boundary."""
@@ -77,28 +83,74 @@ def _hypothesis_facts(intake: Intake, hypothesis: dict[str, str]):
     return assumptions, extra
 
 
+def _focus_of(intake: Intake, assumptions: list[tuple[str, str, str]],
+              extra: list[tuple[str, str, str]]) -> frozenset[str]:
+    """The attention bound for this hypothesis: the function's own entity names plus the value /
+    outcome vocab the assumptions + predictions reference (`attribute_error`, the value nodes). One
+    function = the whole graph (no-op); the bound bites once a Session holds several functions."""
+    names = set(intake.entity_names())
+    for s, _p, o in list(assumptions) + list(extra):
+        names.add(s)
+        names.add(o)
+    names.add("attribute_error")
+    return frozenset(names)
+
+
+def _ensure_facts(g: "h.Graph", facts: list[tuple[str, str, str]]) -> None:
+    """Add each `(s, p, o)` to `g` if absent (monotone). Used to inject a hypothesis's shared value
+    vocab (e.g. `obj is_a object_value`) into a shared Session graph without duplicating it."""
+    present = set(h.derived_triples(g))
+    for s, p, o in facts:
+        if (s, p, o) not in present:
+            g.add_relation(_node(g, s), p, _node(g, o))
+
+
 def analyze(intake: Intake, hypothesis: dict[str, str], *,
-            extra_facts: list[tuple[str, str, str]] | None = None) -> list[Outcome]:
+            extra_facts: list[tuple[str, str, str]] | None = None,
+            focus_scope: frozenset[str] | None = None,
+            kb: "h.Graph | None" = None) -> list[Outcome]:
     """Under `hypothesis` (param -> 'none'|'object'), find every attribute site that raises
-    AttributeError. Each confirmed site carries its RECORD provenance trace."""
+    AttributeError. Each confirmed site carries its RECORD provenance trace.
+
+    Detection is a **pure query over the KB** — `suppose(commit=False)` inks nothing, so the world
+    is reused across every site (ugm feedback #6 retired the old rebuild-per-site dance). Attention
+    is bounded by `focus_scope` (feedback #7), defaulting to this function's working set.
+
+    `kb` lets a `Session` run this against a **shared, accreting graph** holding several functions:
+    detection stays read-only (nothing inked into the shared graph — so other functions and other
+    hypotheses are never contaminated), and `focus_scope` keeps the cost tracking this function, not
+    the whole graph. Trace rendering (which needs the hypothesis present to re-derive the RECORD
+    tree) then happens on a private scratch KB, never the shared one. `kb=None` builds a private
+    world from `intake` (the single-function default)."""
     rg = build_rule_graph()
     rules = rule_list()
     assumptions, type_extra = _hypothesis_facts(intake, hypothesis)
     extra = type_extra + list(extra_facts or [])
+    focus = focus_scope if focus_scope is not None else _focus_of(intake, assumptions, extra)
 
+    own = kb is None
+    detect_kb = _kb_from(intake, extra) if own else kb
+    if not own:
+        _ensure_facts(detect_kb, extra)                    # shared value vocab (e.g. obj), monotone
+    confirmed = [site for site in intake.attributes
+                 if suppose(detect_kb, rg, assumptions=assumptions,
+                            predictions=[("raises", site, "attribute_error")],
+                            commit=False, focus_scope=focus).status == CONFIRMED]
+    if not confirmed:
+        return []
+
+    # Render on a scratch KB when sharing, so the hypothesis ink never touches the shared graph.
+    trace_kb = detect_kb if own else _kb_from(intake, extra)
+    for s, p, o in assumptions:                            # ink the hypothesis ONCE to render traces
+        trace_kb.add_relation(_node(trace_kb, s), p, _node(trace_kb, o))
     outcomes: list[Outcome] = []
-    for site in intake.attributes:
-        kb = _kb_from(intake, extra)                       # fresh world per site (suppose mutates)
-        result = suppose(kb, rg, assumptions=assumptions,
-                         predictions=[("raises", site, "attribute_error")])
-        if result.status == CONFIRMED:
-            # the assumption is now ink; re-derive demand-driven to render the provenance trace.
-            trace = ask_goal(kb, f"why {site} raises attribute_error", rules)
-            outcomes.append(Outcome(
-                site=site, label=intake.label_of.get(site, site),
-                line=intake.line_of.get(site, 0), kind="attribute_error",
-                hypothesis=dict(hypothesis),
-                base_var=intake.attr_base_var.get(site, ""), trace=trace))
+    for site in confirmed:
+        trace = ask_goal(trace_kb, f"why {site} raises attribute_error", rules)
+        outcomes.append(Outcome(
+            site=site, label=intake.label_of.get(site, site),
+            line=intake.line_of.get(site, 0), kind="attribute_error",
+            hypothesis=dict(hypothesis),
+            base_var=intake.attr_base_var.get(site, ""), trace=trace))
     return outcomes
 
 
@@ -111,7 +163,7 @@ def guarded_variant(intake: Intake, guard_var: str, site: str) -> list[tuple[str
     state = intake.state_of.get(site, intake.entry_state)
     return [
         ("g_guard", "is_a", "guard"),
-        ("g_guard", "tests", guard_var),
+        ("g_guard", "tests", intake.var_id(guard_var)),   # the guard tests the var's graph node
         ("g_guard", "in_state", state),
         (site, "within_guard", "g_guard"),
     ]

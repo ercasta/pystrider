@@ -6,11 +6,22 @@ from __future__ import annotations
 
 from .intake import intake_function
 from .analysis import analyze, repair, choose_repair
+from .session import Session
 
 SOURCE = """
 def f(x):
     y = x
     return y.bar()
+"""
+
+# slice B: two functions in one shared graph, a value flowing across the call boundary.
+CALLER = """
+def caller(m):
+    return callee(m)
+"""
+CALLEE = """
+def callee(p):
+    return p.foo()
 """
 
 
@@ -65,6 +76,25 @@ def main() -> None:
         for ln in sel.trace:
             print("    " + ln)
         print(f"  -> winner: {sel.winner.name} (`if {sel.winner.var} is not None:`)")
+
+    _banner("6. SESSION  -- two functions in ONE shared graph; value flow across a call")
+    print("  caller:", CALLER.strip().replace("\n", " ; "))
+    print("  callee:", CALLEE.strip().replace("\n", " ; "))
+    sess = Session()
+    sess.add_function(CALLER)
+    sess.add_function(CALLEE)
+    for a, b, param in sess.link_calls():
+        print(f"  linked: {a}(...) -> {b}, arg wired to param `{param}`")
+    print("  SUPPOSE caller's input m = None  ->  outcome must surface INSIDE the callee:")
+    xouts = sess.analyze_across_call("caller", {"m": "none"}, "callee")
+    for o in xouts:
+        print(f"    OUTCOME: {o.label} (line {o.line}) -> AttributeError, inside `callee`")
+        print("    RECORD trace (value threads caller-cell -> link -> callee-cell -> deref):")
+        for line in o.trace:
+            print("      " + line)
+    print("  SOUNDNESS: caller's input m = <object> ->",
+          sess.analyze_across_call("caller", {"m": "object"}, "callee")
+          or "no outcome  OK")
 
 
 if __name__ == "__main__":

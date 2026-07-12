@@ -45,9 +45,12 @@ class Intake:
     attributes: list[str]            # every attribute-access expr id (candidate None-deref sites)
     source: str = ""                 # the source this was intaken from (for the transformer)
     attr_base_var: dict[str, str] = None   # attribute site -> the Name variable it dereferences
+    call_target: dict[str, str] = field(default_factory=dict)   # call id -> callee source name
+    call_args: dict[str, list[str]] = field(default_factory=dict)  # call id -> positional arg exprs
     entry_state: str = "p0"          # the program point before the first statement
     states: list[str] = field(default_factory=list)   # every program point, in order
     state_of: dict[str, str] = field(default_factory=dict)   # expr/guard id -> the state it reads in
+    namespace: str = ""              # per-function id prefix (Session); "" = single-function (today)
 
     def __post_init__(self) -> None:
         if self.attr_base_var is None:
@@ -56,9 +59,30 @@ class Intake:
     def source_line(self, node_id: str) -> int | None:
         return self.line_of.get(node_id)
 
-    def entry_cell(self, var: str) -> str:
+    def var_id(self, source_name: str) -> str:
+        """The graph NODE id of a source variable — namespaced so `x` in two functions are two
+        distinct nodes in a shared Session graph. Identity is by `(namespace, source_name)`."""
+        return self.namespace + source_name
+
+    def var_source(self, var_id: str) -> str:
+        """The source name behind a namespaced variable node id (for rendering / source edits)."""
+        ns = self.namespace
+        return var_id[len(ns):] if ns and var_id.startswith(ns) else var_id
+
+    def entry_cell(self, source_name: str) -> str:
         """The cell to seed a parameter hypothesis into (its value at function entry)."""
-        return cell_name(self.entry_state, var)
+        return cell_name(self.entry_state, self.var_id(source_name))
+
+    def entity_names(self) -> frozenset[str]:
+        """Every node name this intake mentions — the working set to bound a hypothesis's attention
+        to (feedback #7: `focus_scope` on `suppose`). For one function this is the whole graph (a
+        no-op); once a `Session` accretes several functions in one graph it is the per-function
+        subset that keeps per-hypothesis cost tracking the function, not the accreted graph."""
+        names: set[str] = set()
+        for s, _p, o in self.facts:
+            names.add(s)
+            names.add(o)
+        return frozenset(names)
 
 
 # the abstract-value lattice this intake commits to: concrete-or-None first (the design's
@@ -68,40 +92,57 @@ VALUE_LATTICE: list[tuple[str, str, str]] = [("none", "is_a", "none_value")]
 
 
 class _Walker:
-    def __init__(self, src: str) -> None:
+    def __init__(self, src: str, loop_unroll: int = 2, namespace: str = "") -> None:
         self.src = src.splitlines()
+        self.ns = namespace              # per-function id prefix; "" = single-function (today)
         self.facts: list[tuple[str, str, str]] = list(VALUE_LATTICE)
         self.line_of: dict[str, int] = {}
         self.label_of: dict[str, str] = {}
         self.attributes: list[str] = []
         self.attr_base_var: dict[str, str] = {}
-        self.func: str = ""              # the enclosing function node (set by intake_function)
+        self.call_target: dict[str, str] = {}     # call id -> callee SOURCE name (free-function calls)
+        self.call_args: dict[str, list[str]] = {}  # call id -> positional argument expr ids
+        self.func: str = ""              # the enclosing function NODE (namespaced; set by intake_function)
         self._vars_seen: set[str] = set()
         self._n = 0
         # --- CFG / state threading: values live in per-state cells, not in bare variables, so
-        # reassignment is correct (see docs/spike_findings.md "State-succession"). `state` is the
-        # program point the statement currently being walked reads/writes at; assigns advance it.
-        self.entry_state = "p0"
-        self.state = self.entry_state
+        # reassignment is correct (see docs/spike_findings.md "State-succession"). The program point
+        # is threaded explicitly through `block`/`stmt` (a fork-join tree, not a single cursor).
+        self.entry_state = f"{namespace}p0"
         self.states: list[str] = [self.entry_state]
         self.state_of: dict[str, str] = {}
         self._sn = 0
+        # loop bodies are UNROLLED to this depth: the pre-materialized state-pool size IS the
+        # fuel/world budget (design "fuel / world budget"). Beyond it, later iterations are not
+        # modelled — an honest bound, not a fixpoint (the "agent, not theorem prover" stance).
+        self.loop_unroll = loop_unroll
 
-    def _fresh(self, prefix: str) -> str:
+    def _fresh(self, kind: str) -> str:
         self._n += 1
-        return f"{prefix}{self._n}"
+        return f"{self.ns}{kind}{self._n}"
 
     def _fresh_state(self) -> str:
         self._sn += 1
-        st = f"p{self._sn}"
+        st = f"{self.ns}p{self._sn}"
         self.states.append(st)
         return st
 
-    def _in_state(self, node_id: str) -> str:
+    def _in_state(self, node_id: str, state: str) -> str:
         """Stamp `node_id` (an expression or guard) with the program point it reads in."""
-        self._emit(node_id, "in_state", self.state)
-        self.state_of[node_id] = self.state
+        self._emit(node_id, "in_state", state)
+        self.state_of[node_id] = state
         return node_id
+
+    def _edge(self, frm: str, to: str) -> str:
+        """A plain CFG control-flow edge (branch fork / merge join) — assigns nothing, so the frame
+        rule carries EVERY variable across it. A merge point simply has two incoming edges, and the
+        value union at the merge falls out of the frame rule firing once per edge (Horn disjunction)
+        — the join is a ugm derivation, never a Python-computed lattice meet."""
+        tid = self._fresh("t")
+        self._emit(tid, "is_a", "transition")
+        self._emit(tid, "from_state", frm)
+        self._emit(tid, "to_state", to)
+        return tid
 
     def _emit(self, s: str, p: str, o: str) -> None:
         self.facts.append((s, p, o))
@@ -115,14 +156,17 @@ class _Walker:
         return entity
 
     def _var(self, name: str) -> str:
-        """A variable mention: type it `variable` and scope it to the function on first sight.
-        (Identity is still by bare name within this one function — distinct-node identity across
-        functions in a shared graph is the inter-procedural follow-on; see the design doc.)"""
+        """A variable mention -> its graph NODE id (namespaced). Identity is by `(namespace,
+        source_name)`: within one function all mentions of `x` share a node; across functions in a
+        shared Session graph two `x`s are distinct nodes (the `ns` prefix), so the shared graph
+        holds legitimately different same-named variables. The source name is kept as the label."""
+        vid = self.ns + name
         if name not in self._vars_seen:
             self._vars_seen.add(name)
-            self._emit(name, "is_a", "variable")
-            self._scope(name)
-        return name
+            self._emit(vid, "is_a", "variable")
+            self._scope(vid)
+            self.label_of[vid] = name
+        return vid
 
     def _snippet(self, node: ast.AST) -> str:
         try:
@@ -133,17 +177,17 @@ class _Walker:
     # --- expressions: return the node-id standing for the expression's value ---
     # every expression is stamped `in_state <point>` so the semantics reads its variables from the
     # cells live at that point (value flow is state-threaded, not SSA-per-variable).
-    def expr(self, node: ast.AST) -> str:
+    def expr(self, node: ast.AST, state: str) -> str:
         if isinstance(node, ast.Name):
-            eid = self._in_state(self._scope(self._fresh("e")))
+            eid = self._in_state(self._scope(self._fresh("e")), state)
             self._emit(eid, "is_a", "name")
             self._emit(eid, "reads", self._var(node.id))
             self.label_of[eid] = node.id
             self.line_of[eid] = node.lineno
             return eid
         if isinstance(node, ast.Attribute):
-            base = self.expr(node.value)
-            eid = self._in_state(self._scope(self._fresh("attr")))
+            base = self.expr(node.value, state)
+            eid = self._in_state(self._scope(self._fresh("attr")), state)
             self._emit(eid, "is_a", "attribute")
             self._emit(eid, "attr_of", base)
             self._emit(eid, "attr_name", node.attr)
@@ -154,65 +198,121 @@ class _Walker:
             self.line_of[eid] = node.lineno
             return eid
         if isinstance(node, ast.Call):
-            fn = self.expr(node.func)
-            eid = self._in_state(self._scope(self._fresh("call")))
+            fn = self.expr(node.func, state)
+            eid = self._in_state(self._scope(self._fresh("call")), state)
             self._emit(eid, "is_a", "call")
             self._emit(eid, "calls", fn)
+            # a FREE-function call `g(a, ...)` is an inter-procedural link candidate: record the
+            # callee's SOURCE name and each positional argument expression (each read in this state),
+            # so a Session can wire arg -> callee param cell. A method call (`x.bar()`) is not a link.
+            if isinstance(node.func, ast.Name):
+                self.call_target[eid] = node.func.id
+                self._emit(eid, "calls_func", node.func.id)
+                arg_exprs = [self.expr(a, state) for a in node.args]
+                self.call_args[eid] = arg_exprs
+                for i, aexpr in enumerate(arg_exprs):
+                    self._emit(eid, "passes", aexpr)
+                    self._emit(aexpr, "at_index", str(i))
             self.label_of[eid] = self._snippet(node)
             self.line_of[eid] = node.lineno
             return eid
         # unsupported expression: an opaque value node, typed `unknown_value` (honest UNKNOWN)
-        eid = self._in_state(self._scope(self._fresh("u")))
+        eid = self._in_state(self._scope(self._fresh("u")), state)
         self._emit(eid, "is_a", "unknown_expr")
         self.label_of[eid] = self._snippet(node)
         self.line_of[eid] = getattr(node, "lineno", 0)
         return eid
 
-    # --- statements ---
-    def stmt(self, node: ast.AST) -> None:
+    # --- statements: process one statement entering at `state`; return the EXIT state ---
+    def block(self, stmts: list[ast.stmt], state: str) -> str:
+        """Walk a straight-line block from `state`, threading the program point statement to
+        statement; return the block's exit state."""
+        for s in stmts:
+            state = self.stmt(s, state)
+        return state
+
+    def stmt(self, node: ast.AST, state: str) -> str:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 \
                 and isinstance(node.targets[0], ast.Name):
-            # an assignment is a CFG transition frm -> to: the RHS reads the cells live at `frm`,
+            # an assignment is a CFG transition state -> to: the RHS reads the cells live at `state`,
             # the target's cell at `to` takes that value, every other var is framed forward.
-            frm, to = self.state, self._fresh_state()
+            to = self._fresh_state()
             sid = self._scope(self._fresh("s"))
             self._emit(sid, "is_a", "assign")
             self._emit(sid, "assigns", self._var(node.targets[0].id))
-            self._emit(sid, "from_expr", self.expr(node.value))   # read at `frm` (state not yet advanced)
-            self._emit(sid, "from_state", frm)
+            self._emit(sid, "from_expr", self.expr(node.value, state))
+            self._emit(sid, "from_state", state)
             self._emit(sid, "to_state", to)
             self.line_of[sid] = node.lineno
             self.label_of[sid] = self._snippet(node)
-            self.state = to                                       # advance the program point
-        elif isinstance(node, ast.Return) and node.value is not None:
+            return to                                             # advance the program point
+        if isinstance(node, ast.Return) and node.value is not None:
             sid = self._scope(self._fresh("s"))
             self._emit(sid, "is_a", "return")
-            self._emit(sid, "returns", self.expr(node.value))     # reads at the current point (terminal)
+            self._emit(sid, "returns", self.expr(node.value, state))   # reads at `state` (terminal)
             self.line_of[sid] = node.lineno
             self.label_of[sid] = self._snippet(node)
-        elif isinstance(node, ast.If):
-            # a `if VAR is not None:` guard is intaken as guard structure so the semantics can
-            # gate reachability on it — this is what makes the modification round-trip REAL: the
-            # transformer emits this exact source, and re-intake derives the guard facts (they
-            # are no longer hand-authored). Non-`is not None` conditions are treated as plain
-            # (body still recursed, no guard) — honest partiality. The body reads at the guard's
-            # own program point (single tail-guard shape — branch-refinement is a later slice).
-            guard_var = self._guard_var(node.test)
-            if guard_var is not None:
-                gid = self._in_state(self._scope(self._fresh("g")))
-                self._emit(gid, "is_a", "guard")
-                self._emit(gid, "tests", self._var(guard_var))
-                self.line_of[gid] = node.lineno
-                before = set(self.attributes)
-                for s in node.body:
-                    self.stmt(s)
-                for site in self.attributes:                 # attrs created inside this body ...
-                    if site not in before:
-                        self._emit(site, "within_guard", gid)   # ... are guarded by it
-            else:
-                for s in node.body:
-                    self.stmt(s)
-        # other statement kinds: skipped (honest partiality, not silent misreading)
+            return state
+        if isinstance(node, ast.If):
+            return self._if(node, state)
+        if isinstance(node, ast.While):
+            return self._while(node, state)
+        return state    # other statement kinds: skipped (honest partiality, not silent misreading)
+
+    def _if(self, node: ast.If, state: str) -> str:
+        """Two intake shapes for a conditional:
+
+        - a **tail** `if VAR is not None:` (no else) is kept as `guard` structure gated by the
+          reachability rules — this is what makes the repair round-trip real (the transformer emits
+          exactly this source and re-intake derives the guard). Body reads at the guard's own point.
+        - **any other** `if`/`if-else` is a control-flow **fork**: two edges out of `state` into a
+          then- and else-entry point, each body threaded independently, then two edges into a fresh
+          **merge** point. Value at the merge is the *union* of the branches — derived by the frame
+          rule firing once per merge edge (Horn disjunction), never a Python join.
+        """
+        guard_var = self._guard_var(node.test)
+        if guard_var is not None and not node.orelse:
+            gid = self._in_state(self._scope(self._fresh("g")), state)
+            self._emit(gid, "is_a", "guard")
+            self._emit(gid, "tests", self._var(guard_var))
+            self.line_of[gid] = node.lineno
+            before = set(self.attributes)
+            exit_state = self.block(node.body, state)
+            for site in self.attributes:                          # attrs created inside this body ...
+                if site not in before:
+                    self._emit(site, "within_guard", gid)         # ... are guarded by it
+            return exit_state
+
+        then_entry, else_entry = self._fresh_state(), self._fresh_state()
+        self._edge(state, then_entry)                             # fork: assume-cond / assume-not-cond
+        self._edge(state, else_entry)
+        then_exit = self.block(node.body, then_entry)
+        else_exit = self.block(node.orelse, else_entry) if node.orelse else else_entry
+        merge = self._fresh_state()
+        self._edge(then_exit, merge)                              # join: both paths flow to the merge
+        self._edge(else_exit, merge)
+        return merge
+
+    def _while(self, node: ast.While, state: str) -> str:
+        """A `while` loop, **unrolled** to `self.loop_unroll` iterations — the pre-materialized
+        state pool IS the fuel budget. Each unrolled head forks into *exit the loop* (an edge
+        straight to the post-loop merge) and *run the body once more* (thread the body, then a
+        back-edge to the next head). Every exit — after 0, 1, … k iterations — flows into the same
+        merge, so the post-loop value is the *union* over all iteration counts (frame-rule
+        disjunction; no Python join, no fixpoint). The condition itself is not evaluated: exit is
+        always possible (sound may-analysis). Iterations beyond k are not modelled (honest bound)."""
+        post = self._fresh_state()
+        head = state
+        for _ in range(max(0, self.loop_unroll)):
+            body_entry = self._fresh_state()
+            self._edge(head, body_entry)                         # take the body once more ...
+            self._edge(head, post)                               # ... or exit here (0..k iterations)
+            body_exit = self.block(node.body, body_entry)
+            nxt = self._fresh_state()
+            self._edge(body_exit, nxt)                           # back-edge to the next unrolled head
+            head = nxt
+        self._edge(head, post)                                   # fuel exhausted at depth k: exit
+        return post
 
     @staticmethod
     def _guard_var(test: ast.AST) -> str | None:
@@ -227,26 +327,39 @@ class _Walker:
         return None
 
 
-def intake_function(src: str) -> Intake:
-    """Parse one top-level function from `src` and materialize its AST+CFG base facts."""
+def intake_function(src: str, *, loop_unroll: int = 2, namespace: str = "") -> Intake:
+    """Parse one top-level function from `src` and materialize its AST+CFG base facts.
+
+    `loop_unroll` is the fuel budget: `while` bodies are pre-materialized (unrolled) to this many
+    iterations. Behaviour beyond it is not modelled — a bug that only manifests on iteration k+1 is
+    missed (honest, bounded partiality). Raising it costs more states, not new machinery.
+
+    `namespace` prefixes every structural node id (states, exprs, statements, transitions, cells,
+    variables, the function node) so several functions coexist in one shared Session graph without
+    colliding — the type/value vocabulary the rules match on (`assign`, `none`, `none_value`,
+    `attribute_error`, …) stays SHARED (unprefixed). Default `""` is single-function (today)."""
     tree = ast.parse(src)
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
-    w = _Walker(src)
-    w.func = fn.name                                      # the scope node every entity links to
+    w = _Walker(src, loop_unroll=loop_unroll, namespace=namespace)
+    func_node = namespace + fn.name                      # the scope node every entity links to
+    w.func = func_node
+    w.label_of[func_node] = fn.name
     params = [a.arg for a in fn.args.args]
-    w.facts.append((fn.name, "is_a", "function"))
+    w.facts.append((func_node, "is_a", "function"))
     for p in params:
-        w.facts.append((fn.name, "has_param", w._var(p)))   # a param is a variable, scoped
-    for s in fn.body:
-        w.stmt(s)
+        w.facts.append((func_node, "has_param", w._var(p)))   # a param is a variable, scoped
+    w.block(fn.body, w.entry_state)
     # pre-materialize the state x var cell lattice now that every state and variable is known —
     # the intake "mint" that lets the semantics thread state without existential rule heads.
     for st in w.states:
         for v in sorted(w._vars_seen):
-            cid = cell_name(st, v)
+            vid = w.ns + v
+            cid = cell_name(st, vid)
             w._emit(cid, "in_state", st)
-            w._emit(cid, "for_var", v)
+            w._emit(cid, "for_var", vid)
     return Intake(func=fn.name, params=params, facts=w.facts,
                   line_of=w.line_of, label_of=w.label_of, attributes=w.attributes,
                   source=src, attr_base_var=w.attr_base_var,
-                  entry_state=w.entry_state, states=w.states, state_of=w.state_of)
+                  call_target=w.call_target, call_args=w.call_args,
+                  entry_state=w.entry_state, states=w.states, state_of=w.state_of,
+                  namespace=namespace)
