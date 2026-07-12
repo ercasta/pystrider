@@ -18,7 +18,8 @@ For `def f(x): y = x; return y.bar()`:
 - under **SUPPOSE `x = None`**, CHAIN the semantics → derive `y.bar` **raises AttributeError**,
 - render the **RECORD trace** (real UGM provenance: `x=None → y binds None → y.bar on None → AttributeError`),
 - a benign hypothesis (`x = object`) fires **nothing** (no false positive), and
-- inserting an `if x is not None:` guard and **re-executing** clears the outcome.
+- **materializes a real edit** — rewrites the AST to `if y is not None: return y.bar()`, then
+  re-intakes and re-analyzes that edited source to confirm the outcome clears.
 
 ## Layout
 
@@ -26,7 +27,8 @@ For `def f(x): y = x; return y.bar()`:
 |---|---|
 | `pystrider/intake.py` | the §8 code-intake tool — `ast` → graph facts (materializes structure; *not* CNL) |
 | `pystrider/semantics.py` | the operational semantics as 6 Horn rules (machine-rule CNL — data) |
-| `pystrider/analysis.py` | the hypothesis loop on the public UGM firmware (`suppose` / `ask_goal`) |
+| `pystrider/analysis.py` | the hypothesis loop on the public UGM firmware (`suppose` / `ask_goal`) + `repair` |
+| `pystrider/transform.py` | transformation operator — rewrites the AST to materialize an edit as real source |
 | `pystrider/demo.py` | end-to-end five-step walkthrough |
 | `tests/test_spike.py` | behaviour pins (6, green) |
 | `docs/` | the design sketch + the spike findings |

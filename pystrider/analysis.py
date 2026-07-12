@@ -20,6 +20,7 @@ from ugm import suppose, ask_goal, CONFIRMED
 
 from .intake import Intake, intake_function
 from .semantics import build_rule_graph, rule_list
+from .transform import insert_none_guard
 
 
 # the value nodes a hypothesis can bind a parameter to, with their lattice type fact.
@@ -36,6 +37,7 @@ class Outcome:
     line: int
     kind: str                    # "attribute_error"
     hypothesis: dict[str, str]
+    base_var: str = ""           # the variable dereferenced at the site (what a guard would test)
     trace: list[str] = field(default_factory=list)
 
     def headline(self) -> str:
@@ -92,7 +94,8 @@ def analyze(intake: Intake, hypothesis: dict[str, str], *,
             outcomes.append(Outcome(
                 site=site, label=intake.label_of.get(site, site),
                 line=intake.line_of.get(site, 0), kind="attribute_error",
-                hypothesis=dict(hypothesis), trace=trace))
+                hypothesis=dict(hypothesis),
+                base_var=intake.attr_base_var.get(site, ""), trace=trace))
     return outcomes
 
 
@@ -107,6 +110,29 @@ def guarded_variant(intake: Intake, guard_var: str, site: str) -> list[tuple[str
         ("g_guard", "tests", guard_var),
         (site, "within_guard", "g_guard"),
     ]
+
+
+@dataclass
+class Repair:
+    """A materialized code edit and its verification-by-re-execution."""
+    var: str                     # the variable the inserted guard tests
+    v2_source: str               # the actual edited Python (a human can read/apply this)
+    cleared: bool                # did the original outcome disappear under re-analysis?
+    residual: list[Outcome]      # any outcomes STILL present under the same hypothesis (want [])
+
+
+def repair(intake: Intake, hypothesis: dict[str, str], outcome: Outcome) -> Repair:
+    """Materialize an `if <base_var> is not None:` guard around the deref, then VERIFY by
+    re-execution: re-intake the *edited source* (so the guard facts are derived, not
+    hand-authored) and re-run the analysis under the same hypothesis. The edit is trusted only
+    if the outcome clears on the real transformed code."""
+    var = outcome.base_var or hypothesis and next(iter(hypothesis))    # fall back to a param
+    v2_source = insert_none_guard(intake.source, var, outcome.line)
+    v2 = intake_function(v2_source)
+    residual = analyze(v2, hypothesis)
+    cleared = all(o.site != outcome.site and o.label != outcome.label for o in residual)
+    return Repair(var=var, v2_source=v2_source, cleared=cleared and not residual,
+                  residual=residual)
 
 
 def analyze_source(src: str, hypothesis: dict[str, str]) -> tuple[Intake, list[Outcome]]:

@@ -31,6 +31,12 @@ class Intake:
     line_of: dict[str, int]          # node id -> source line
     label_of: dict[str, str]         # node id -> short source-like label (for the trace)
     attributes: list[str]            # every attribute-access expr id (candidate None-deref sites)
+    source: str = ""                 # the source this was intaken from (for the transformer)
+    attr_base_var: dict[str, str] = None   # attribute site -> the Name variable it dereferences
+
+    def __post_init__(self) -> None:
+        if self.attr_base_var is None:
+            self.attr_base_var = {}
 
     def source_line(self, node_id: str) -> int | None:
         return self.line_of.get(node_id)
@@ -49,6 +55,7 @@ class _Walker:
         self.line_of: dict[str, int] = {}
         self.label_of: dict[str, str] = {}
         self.attributes: list[str] = []
+        self.attr_base_var: dict[str, str] = {}
         self._n = 0
 
     def _fresh(self, prefix: str) -> str:
@@ -80,6 +87,8 @@ class _Walker:
             self._emit(eid, "attr_of", base)
             self._emit(eid, "attr_name", node.attr)
             self.attributes.append(eid)
+            if isinstance(node.value, ast.Name):
+                self.attr_base_var[eid] = node.value.id
             self.label_of[eid] = self._snippet(node)
             self.line_of[eid] = node.lineno
             return eid
@@ -115,12 +124,39 @@ class _Walker:
             self.line_of[sid] = node.lineno
             self.label_of[sid] = self._snippet(node)
         elif isinstance(node, ast.If):
-            # branch intake is out of scope for the spike; we still recurse into the body so
-            # the guard-demo can *re-intake* a guarded version (the modification step models
-            # the guard's reachability effect explicitly — see analysis.guarded_variant).
-            for s in node.body:
-                self.stmt(s)
+            # a `if VAR is not None:` guard is intaken as guard structure so the semantics can
+            # gate reachability on it — this is what makes the modification round-trip REAL: the
+            # transformer emits this exact source, and re-intake derives the guard facts (they
+            # are no longer hand-authored). Non-`is not None` conditions are treated as plain
+            # (body still recursed, no guard) — honest partiality.
+            guard_var = self._guard_var(node.test)
+            if guard_var is not None:
+                gid = self._fresh("g")
+                self._emit(gid, "is_a", "guard")
+                self._emit(gid, "tests", guard_var)
+                self.line_of[gid] = node.lineno
+                before = set(self.attributes)
+                for s in node.body:
+                    self.stmt(s)
+                for site in self.attributes:                 # attrs created inside this body ...
+                    if site not in before:
+                        self._emit(site, "within_guard", gid)   # ... are guarded by it
+            else:
+                for s in node.body:
+                    self.stmt(s)
         # other statement kinds: skipped (honest partiality, not silent misreading)
+
+    @staticmethod
+    def _guard_var(test: ast.AST) -> str | None:
+        """The variable of a `VAR is not None` (or `None is not VAR`) test, else None."""
+        if isinstance(test, ast.Compare) and len(test.ops) == 1 \
+                and isinstance(test.ops[0], ast.IsNot):
+            l, r = test.left, test.comparators[0]
+            if isinstance(l, ast.Name) and isinstance(r, ast.Constant) and r.value is None:
+                return l.id
+            if isinstance(r, ast.Name) and isinstance(l, ast.Constant) and l.value is None:
+                return r.id
+        return None
 
 
 def intake_function(src: str) -> Intake:
@@ -135,4 +171,5 @@ def intake_function(src: str) -> Intake:
     for s in fn.body:
         w.stmt(s)
     return Intake(func=fn.name, params=params, facts=w.facts,
-                  line_of=w.line_of, label_of=w.label_of, attributes=w.attributes)
+                  line_of=w.line_of, label_of=w.label_of, attributes=w.attributes,
+                  source=src, attr_base_var=w.attr_base_var)

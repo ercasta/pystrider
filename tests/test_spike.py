@@ -2,7 +2,9 @@
 
 Each test corresponds to one feasibility claim the spike set out to answer.
 """
-from pystrider import intake_function, analyze, guarded_variant
+import ast
+
+from pystrider import intake_function, analyze, guarded_variant, repair
 from pystrider.analysis import VALUE_KINDS
 
 
@@ -65,14 +67,46 @@ def test_no_attribute_access_no_outcome():
 
 # --- claim 6 (modification closes the loop): inserting a guard clears the outcome ---
 
-def test_guard_insertion_clears_the_outcome():
+def test_guard_effect_clears_the_outcome():
+    # the semantic-effect path: add the guard's facts and re-run (no source produced)
     ik = intake_function(NONE_DEREF)
     site = ik.attributes[0]
-    # V1: the bug is present
-    assert analyze(ik, {"x": "none"}) != []
-    # V2: `if x is not None:` around the deref -> re-run -> outcome gone (verify-by-re-execution)
+    assert analyze(ik, {"x": "none"}) != []                 # V1: bug present
     guard = guarded_variant(ik, "x", site)
     assert analyze(ik, {"x": "none"}, extra_facts=guard) == []
+
+
+# --- claim 6b (materialize a REAL edit): produce V2 source, verify by re-execution ---
+
+def test_repair_materializes_edited_source_and_clears():
+    ik = intake_function(NONE_DEREF)
+    outcome = analyze(ik, {"x": "none"})[0]
+    rep = repair(ik, {"x": "none"}, outcome)
+    # the operator produced actual, parseable Python with the guard inserted ...
+    ast.parse(rep.v2_source)                                 # valid source
+    assert "if y is not None:" in rep.v2_source
+    assert "y.bar()" in rep.v2_source
+    # ... and the outcome is gone when the EDITED source is re-intaken and re-analyzed
+    assert rep.cleared is True
+    assert rep.residual == []
+
+
+def test_repair_guards_the_dereferenced_variable():
+    ik = intake_function(NONE_DEREF)
+    outcome = analyze(ik, {"x": "none"})[0]
+    assert outcome.base_var == "y"                           # the deref is on y
+    assert repair(ik, {"x": "none"}, outcome).var == "y"     # so the guard tests y
+
+
+def test_intake_reads_guarded_source():
+    # the round-trip's second leg: intake of guarded source derives the guard facts (not hand-authored)
+    guarded = "def f(x):\n    y = x\n    if y is not None:\n        return y.bar()\n"
+    ik = intake_function(guarded)
+    facts = set(ik.facts)
+    assert any(r == "is_a" and o == "guard" for (_, r, o) in facts)
+    assert any(r == "tests" and o == "y" for (_, r, o) in facts)
+    assert any(r == "within_guard" for (_, r, _o) in facts)
+    assert analyze(ik, {"x": "none"}) == []                  # guarded code is clean under x=None
 
 
 def test_value_kinds_are_the_declared_minimum_domain():

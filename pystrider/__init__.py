@@ -7,10 +7,12 @@ verify a guard-insertion modification clears the outcome.
 """
 from .intake import Intake, intake_function
 from .semantics import SEMANTICS, build_rule_graph, rule_list
-from .analysis import Outcome, analyze, analyze_source, guarded_variant
+from .analysis import Outcome, Repair, analyze, analyze_source, guarded_variant, repair
+from .transform import insert_none_guard
 
 __all__ = [
     "Intake", "intake_function",
     "SEMANTICS", "build_rule_graph", "rule_list",
-    "Outcome", "analyze", "analyze_source", "guarded_variant",
+    "Outcome", "Repair", "analyze", "analyze_source", "guarded_variant", "repair",
+    "insert_none_guard",
 ]

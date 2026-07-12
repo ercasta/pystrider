@@ -26,7 +26,7 @@ That loop works on the public firmware.
 | **Outcome = a runtime behavior under a hypothesis** | Under `x=None`, `attr5 raises attribute_error` is derived and CONFIRMED. |
 | **RECORD → human trace** | `ask_goal(kb, "why attr5 raises attribute_error")` returns the full derivation tree: `x=None → e2 evals None → y binds None → e4 evals None → y.bar on None → AttributeError`. This is the design's "great fit for RECORD-as-explanation" — realized verbatim. |
 | **Agent, not theorem prover** | Demand-driven `suppose`/`chain_sip`; only the hypothesized site is explored. A benign hypothesis (`x=object`) derives nothing — no path explosion, no over-firing. |
-| **Modification = verify by re-execution** | `guarded_variant()` adds the effect of `if x is not None:` as monotone V2 facts; re-running the same analysis inside that edit yields **no** outcome — the loop closes. |
+| **Modification = verify by re-execution** | `repair()` **materializes a real edit** — an AST transformer wraps the deref in `if y is not None:` and unparses V2 Python — then re-intakes that *edited source* and re-analyzes; the outcome is gone. The edit is trusted because it clears on the actual transformed code, not because the operator claims it will. |
 
 The trace, produced by the engine:
 
@@ -98,9 +98,12 @@ Reasoning-time predicates the *rules* derive (never materialized by intake): `ha
   (each variable assigned once). A **follow-up probe** (below) went further and settled the
   design's biggest open question — with a twist: "mint a successor state" is *not* expressible
   as a rule, but a clean workaround preserves feasibility.
-- **The transformation-rule library and backward means-ends.** Step 5 applied *one*
-  hand-picked operator (insert guard) and verified it forward. Backward-`CHAIN` from a desired
-  outcome over an effect-keyed operator library (design §3) is unbuilt.
+- **The transformation-rule library and backward means-ends.** Step 5 now *materializes real
+  edited source* (`transform.insert_none_guard` → V2 Python) and verifies it by re-intaking the
+  edit — the forward "apply + verify by re-execution" half is genuinely closed on actual code.
+  But it is still *one* hand-picked operator: **backward-`CHAIN` from a desired outcome over an
+  effect-keyed operator library (design §3) is unbuilt** — nothing yet *searches* for which edit
+  to make.
 - **The concrete-execution (concolic) tool** and the SMT/type-inference CALLs — all future.
 - **Scale.** One function. The "session-sized working set" claim is untested.
 

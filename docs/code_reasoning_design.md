@@ -197,10 +197,17 @@ object (`?g guard_open yes`, not `?g guard_open`), or it is silently mis-parsed;
 (`not ?e within_guard ?g`) **do** fire under the demand-driven `suppose`/`chain_sip` path, so
 guard reachability is expressible without leaving the firmware.
 
+**Modification materializes real code.** Step 5 is not just a semantic effect: `transform.py`
+rewrites the AST (`insert_none_guard`) and unparses **actual edited Python**; `analysis.repair`
+then re-intakes that edited source (so the guard facts are *derived*, not hand-authored) and
+re-analyzes — the outcome clears on the real transformed code. Intake grew `if VAR is not None:`
+recognition to make this round-trip honest.
+
 **What the spike did not build** (unchanged from the honest scope): the state-succession axis
-(the spike is SSA-style, sound only for straight-line single-assignment code), the
-effect-keyed transformation library with backward means-ends (step 5 applied *one* operator
-and verified it forward), the concolic/SMT/type CALLs, and anything past one function.
+(the main loop is SSA-style, sound only for straight-line single-assignment code — but see the
+state-succession probe), the effect-keyed transformation library with **backward means-ends**
+(step 5 materializes and verifies *one* hand-picked operator; nothing yet *searches* for the
+edit), the concolic/SMT/type CALLs, and anything past one function.
 
 ---
 

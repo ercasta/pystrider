@@ -5,7 +5,7 @@ Mirrors the design's vertical spike, steps 1-5, printing what the engine did at 
 from __future__ import annotations
 
 from .intake import intake_function
-from .analysis import analyze, guarded_variant
+from .analysis import analyze, repair
 
 SOURCE = """
 def f(x):
@@ -42,13 +42,16 @@ def main() -> None:
     _banner("5a. SOUNDNESS CHECK  -- SUPPOSE x = <non-None object>  (must NOT fire)")
     print("  outcomes:", analyze(ik, {"x": "object"}) or "none  OK (no false AttributeError)")
 
-    _banner("5b. MODIFICATION  -- insert `if x is not None:` guard, re-execute")
-    site = ik.attributes[0]
-    guard = guarded_variant(ik, "x", site)
-    after = analyze(ik, {"x": "none"}, extra_facts=guard)
-    print("  V2 facts added:", guard)
-    print("  outcomes under x=None after the edit:",
-          after or "none  OK (guard makes the deref unreachable -- outcome cleared)")
+    _banner("5b. MODIFICATION  -- materialize a real edit, then verify by re-execution")
+    if outs:
+        rep = repair(ik, {"x": "none"}, outs[0])
+        print(f"  operator: insert `if {rep.var} is not None:` around the deref")
+        print("  --- V2 SOURCE (actual edited Python, re-intaken & re-analyzed) ---")
+        for ln in rep.v2_source.splitlines():
+            print("    " + ln)
+        print("  ----------------------------------------------------------------")
+        print("  outcome under x=None after the edit:",
+              "CLEARED  OK" if rep.cleared else f"STILL PRESENT: {rep.residual}")
 
 
 if __name__ == "__main__":
