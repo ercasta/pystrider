@@ -264,6 +264,23 @@ class Selection:
     trace: list[str]             # explain_choice — the auditable CHOOSE why-trace
 
 
+def _choose(cands: list[Candidate],
+            fit_of: "Callable[[Candidate], float]") -> tuple[Candidate | None, list[str]]:
+    """Run the public CHOOSE firmware over `cands` with a graded fit, returning the winner + the
+    auditable `explain_choice` trace. The α-cut drops fit-0 (ineligible) candidates."""
+    g = h.Graph()
+    goal = g.add_node("repair_goal")
+    node_of: dict[str, Candidate] = {}
+    for c in cands:
+        opt = g.add_node(c.name)
+        node_of[c.name] = c
+        set_candidate(g, goal, opt, fit_of(c))
+    winners = choose(g, goal, alpha=0.01)
+    trace = explain_choice(g, goal)
+    winner = node_of[g.name(winners[0])] if winners else None
+    return winner, trace
+
+
 def choose_repair(intake: Intake, hypothesis: dict[str, str], outcome: Outcome, *,
                   provides_fn: "Callable[[Intake, str], set[str]]" = ops.provides,
                   analyzer: "Callable[..., list[Outcome]]" = analyze) -> Selection:
@@ -272,17 +289,112 @@ def choose_repair(intake: Intake, hypothesis: dict[str, str], outcome: Outcome, 
     `provides_fn` + `analyzer` select the effect (see `candidate_edits`)."""
     cands = candidate_edits(intake, hypothesis, outcome,
                             provides_fn=provides_fn, analyzer=analyzer)
-    g = h.Graph()
-    goal = g.add_node("repair_goal")
-    node_of: dict[str, Candidate] = {}
-    for c in cands:
-        opt = g.add_node(c.name)
-        node_of[c.name] = c
-        set_candidate(g, goal, opt, c.fit)          # only verified edits carry positive fit
-    winners = choose(g, goal, alpha=0.01)           # α-cut drops unverified (fit 0) candidates
-    trace = explain_choice(g, goal)
-    winner = node_of[g.name(winners[0])] if winners else None
+    winner, trace = _choose(cands, lambda c: c.fit)   # only verified edits carry positive fit
     return Selection(winner=winner, candidates=cands, trace=trace)
+
+
+# --- whole-function repair: iterate to a fixpoint, fixing EVERY outcome, regression-checked -----
+
+# the effect table: for each outcome kind, how to RETRIEVE its operators (provides) and how to
+# DETECT it (analyzer). `analyze_all` runs every effect; `repair_all` dispatches candidates by kind.
+EFFECTS: "dict[str, tuple[Callable, Callable]]" = {
+    "attribute_error": (ops.provides, analyze),
+    "returns_none": (ops.provides_return, analyze_return_none),
+}
+
+
+def analyze_all(intake: Intake, hypothesis: dict[str, str], *,
+                kb: "h.Graph | None" = None) -> list[Outcome]:
+    """Every outcome of every effect under `hypothesis` — the whole-function health check."""
+    out: list[Outcome] = []
+    for _kind, (_provides, analyzer) in EFFECTS.items():
+        out += analyzer(intake, hypothesis, kb=kb)
+    return out
+
+
+@dataclass
+class RepairStep:
+    """One edit in a repair plan: the outcome it targeted, the operator CHOSEN, and the state after."""
+    target_label: str
+    target_kind: str
+    target_line: int
+    operator: str
+    description: str
+    fit: float
+    remaining: int               # outcomes left after this edit (strictly fewer than before)
+    source_after: str
+
+
+@dataclass
+class RepairPlan:
+    """The result of repairing a whole function: the final source, the ordered audit log of edits,
+    and whether the function is now CLEAN (no outcome remains under the hypothesis). If not clean,
+    `stuck` is an outcome no regression-free edit could remove."""
+    source: str
+    steps: list[RepairStep]
+    clean: bool
+    stuck: Outcome | None = None
+
+    def summary(self) -> list[str]:
+        head = ("repaired to clean" if self.clean
+                else f"stuck on {self.stuck.label!r} ({self.stuck.kind})" if self.stuck
+                else "incomplete (step budget)")
+        lines = [f"{len(self.steps)} edit(s) -> {head}"]
+        for i, s in enumerate(self.steps, 1):
+            lines.append(f"  {i}. fix {s.target_label!r} ({s.target_kind}, line {s.target_line}) "
+                         f"via {s.operator} [fit {s.fit:.2f}] -> {s.remaining} left")
+        return lines
+
+
+def repair_all(intake: Intake, hypothesis: dict[str, str], *, max_steps: int = 12) -> RepairPlan:
+    """Repair a WHOLE function to a fixpoint: while any outcome remains under `hypothesis`, retrieve
+    + verify candidate edits for it, keep only those that **make progress** (strictly fewer outcomes)
+    AND introduce **no new outcome** (regression-checking — a new label appearing is rejected), CHOOSE
+    the graded-best, apply it, and re-analyze the edited source. Returns the clean source + an audit
+    log. Means-ends toward a goal STATE (a clean function), not a single-site patch.
+
+    Each candidate is judged by re-executing the edited source through `analyze_all` (every effect),
+    so a guard that clears an AttributeError but a lingering returns-None is still counted honestly,
+    and an edit that trades one bug for another is refused. If no regression-free edit removes the
+    current outcome, the plan stops with `stuck` set (an honest 'I can't fix this locally')."""
+    source = intake.source
+    steps: list[RepairStep] = []
+
+    for _ in range(max_steps):
+        cur = intake_function(source)
+        outcomes = analyze_all(cur, hypothesis)
+        if not outcomes:
+            return RepairPlan(source=source, steps=steps, clean=True)
+        target = outcomes[0]
+        prev_labels = {o.label for o in outcomes}
+        provides_fn, analyzer = EFFECTS[target.kind]
+
+        # retrieve + materialize edits for the target's effect, then keep the regression-free ones.
+        cands = candidate_edits(cur, hypothesis, target,
+                                provides_fn=provides_fn, analyzer=analyzer)
+        accepted: list[Candidate] = []
+        residual_of: dict[str, list[Outcome]] = {}
+        for c in cands:
+            resid = analyze_all(intake_function(c.v2_source), hypothesis)
+            makes_progress = len(resid) < len(outcomes)
+            introduces = {o.label for o in resid} - prev_labels     # a NEW outcome = regression
+            if makes_progress and not introduces:
+                accepted.append(c)
+                residual_of[c.name] = resid
+        if not accepted:
+            return RepairPlan(source=source, steps=steps, clean=False, stuck=target)
+
+        winner, _trace = _choose(accepted, lambda c: min(c.locality, c.compactness))
+        winner = winner or accepted[0]
+        source = winner.v2_source
+        steps.append(RepairStep(
+            target_label=target.label, target_kind=target.kind, target_line=target.line,
+            operator=winner.name, description=winner.description, fit=min(winner.locality, winner.compactness),
+            remaining=len(residual_of[winner.name]), source_after=source))
+
+    final = analyze_all(intake_function(source), hypothesis)
+    return RepairPlan(source=source, steps=steps, clean=not final,
+                      stuck=final[0] if final else None)
 
 
 def analyze_source(src: str, hypothesis: dict[str, str]) -> tuple[Intake, list[Outcome]]:

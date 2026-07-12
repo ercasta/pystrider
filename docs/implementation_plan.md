@@ -29,9 +29,13 @@ graph with value flow across call boundaries** (slice B), and **a second effect 
   wiring `f`'s arg cell → `g`'s param cell so a value flows **across the call boundary**.
 - **Second effect (slice C)**: `analyze_return_none` finds returns that yield None; authored as one
   more semantics rule (`?s returns_none yes`) + two coalesce operators — the loop is effect-generic.
+- **Whole-function auto-fix**: `repair_all` drives repair as a means-ends loop toward a *clean
+  function* — while any outcome (of any effect) remains, retrieve + verify edits, keep only those
+  that make **progress** and introduce **no regression** (a new outcome), CHOOSE, apply, re-analyze;
+  returns the clean source + an audit log (`RepairPlan`), or an honest `stuck`.
 
 **Run:** `pip install -e ../ugm -e .` · `python -m pystrider.demo` · `python demos/run.py` ·
-`pytest -q` (49 green).
+`pytest -q` (55 green).
 
 **Module map**
 
@@ -39,13 +43,13 @@ graph with value flow across call boundaries** (slice B), and **a second effect 
 |---|---|
 | `pystrider/intake.py` | §8 tool: `ast` → facts; **CFG** (states, assign+branch/merge/loop transitions, `(state×var)` cell lattice, `_if` fork/join + `_while` bounded unroll); structural scope (`in_function`); call args/callee; **per-function `namespace`** so functions coexist in a shared graph |
 | `pystrider/semantics.cnl` / `semantics.py` | operational semantics (**10 Horn rules**: value-flow 1–3, frame 2b + **refined frames 2c/2d** (path-sensitive), guard/reachability 3–5, the two OUTCOME rules `raises attribute_error` + `returns_none yes`, **state/cell-threaded**, CNL data) + loader |
-| `pystrider/analysis.py` | hypothesis loop on public firmware — a shared `_detect` core (**`suppose(commit=False)` read-only + `focus_scope`, one KB reused across sites**, optional external `kb`); `analyze` (None-deref) / `analyze_return_none` (returns-None); effect-generic `candidate_edits` / `choose_repair` |
+| `pystrider/analysis.py` | hypothesis loop on public firmware — a shared `_detect` core (**`suppose(commit=False)` read-only + `focus_scope`, one KB reused across sites**, optional external `kb`); `analyze` (None-deref) / `analyze_return_none` (returns-None) / `analyze_all` (every effect); effect-generic `candidate_edits` / `choose_repair`; **`repair_all` — whole-function auto-fix to a fixpoint** (progress + regression-checked, `RepairPlan` audit log) |
 | `pystrider/session.py` | **Session**: several functions in one shared graph; namespaced identity, per-function focus, cross-call value-flow linking (`link_calls` / `analyze_across_call`), label-rendered traces |
 | `pystrider/operators.cnl` / `operators.py` | effect-keyed operator library (None-deref guards + returns-None coalesce ops) + backward-CHAIN retrieval (source-name ⇄ namespaced graph-id at the fact boundary) |
 | `pystrider/transform.py` | AST-rewrite mechanism (guard insertion; `coalesce_return`) — materialize an edit as real source |
-| `demos/` | four focused, runnable walkthroughs (core loop, state-threading, Session/inter-procedural, second effect) + `run.py` |
+| `demos/` | five focused, runnable walkthroughs (core loop, state-threading, Session/inter-procedural, second effect, whole-function auto-fix) + `run.py` |
 | `experiments/state_threading.py` | the original **probe** that validated the cell-lattice approach (now productized in intake/semantics) |
-| `tests/` | 49 green: `test_spike.py` (33, slice-A/A′ + branch-refinement + boundary-guard), `test_state_threading.py` (4), `test_session.py` (7, slice-B), `test_effects.py` (5, slice-C) |
+| `tests/` | 55 green: `test_spike.py` (33, slice-A/A′ + branch-refinement + boundary-guard), `test_state_threading.py` (4), `test_session.py` (7, slice-B), `test_effects.py` (5, slice-C), `test_repair.py` (6, whole-function auto-fix) |
 
 **Conventions / gotchas (don't relearn these the hard way):**
 - Reasoning goes through the **public firmware only** (`suppose`/`chain_sip`/`ask_goal`/`choose`).
