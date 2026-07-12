@@ -94,11 +94,10 @@ Reasoning-time predicates the *rules* derive (never materialized by intake): `ha
 
 ## What the spike deliberately did NOT prove (the honest edges)
 
-- **State-succession / the frame problem.** The spike models value flow SSA-style
-  (each variable assigned once), which is sound for straight-line code but sidesteps the
-  design's "mint a successor state" axis. Reassignment, loops, and general branch merging need
-  the monotone state-successor structure of §2 — untested here, and the design's own biggest
-  open question (guard cost of *two* monotone axes).
+- **State-succession / the frame problem.** The main spike models value flow SSA-style
+  (each variable assigned once). A **follow-up probe** (below) went further and settled the
+  design's biggest open question — with a twist: "mint a successor state" is *not* expressible
+  as a rule, but a clean workaround preserves feasibility.
 - **The transformation-rule library and backward means-ends.** Step 5 applied *one*
   hand-picked operator (insert guard) and verified it forward. Backward-`CHAIN` from a desired
   outcome over an effect-keyed operator library (design §3) is unbuilt.
@@ -107,6 +106,65 @@ Reasoning-time predicates the *rules* derive (never materialized by intake): `ha
 
 None of these are blocked by what we found; they are the next slices, in the order the design
 already lists them.
+
+---
+
+## Follow-up: state-succession (the frame problem) — a wall *and* a way through
+
+Probe: `experiments/state_threading.py`, pinned by `tests/test_state_threading.py` (4 tests).
+Test case is the reassignment the SSA model gets wrong:
+
+```python
+def f(x, z):
+    y = x       # y = None
+    y = z       # y reassigned to a non-None object
+    return y.bar()   # must NOT raise
+```
+
+**Finding 1 — the wall.** The design's §2 move "**mint a successor state**" cannot be written
+as an ordinary Horn rule. An existential head variable (`?s next_state ?s2`, `?s2` RHS-only) is
+**not Skolem-minted** by ugm's public rule drivers: `chain_sip` collapses `?s2` onto the
+demand goal's object (SIP), and `run_rules`/`run_bank` derive nothing. Two different firings
+share one node — no fresh state per statement. (Logged as issue #2 in
+[`../../ugm/docs/feedback_from_pystrider.md`](../../ugm/docs/feedback_from_pystrider.md).)
+
+**Finding 2 — the way through.** Move the minting to the **intake tool**, which already knows
+the CFG statically. Intake **pre-materializes the state×var "cell" lattice** (one node per
+`(program-point, variable)`); the semantics rules then only *bind* pre-existing cells — pure
+Datalog, no existential heads. The frame axiom is a single NAC: carry a variable's value across
+a transition that does **not** assign it —
+
+```
+?c2 has_value ?val  when  <transition s1->s2>  and  ?c1 in_state ?s1 and ?c1 for_var ?v
+                          and ?c1 has_value ?val  and  ?c2 in_state ?s2 and ?c2 for_var ?v
+                          and not ?t assigns_var ?v
+```
+
+This threads correctly: `y = None` at p1, `y = obj` (and **not** None) at p2 after the
+reassignment, `x` framed forward unchanged, no false AttributeError at the p2 deref — but a
+real one if the deref is moved to p1. All four pins pass.
+
+**What it means for the design.** The "two monotone axes, both mint-successor" framing of §2 is
+half-wrong: **execution states cannot be minted by rules; intake pre-mints them.** This is
+actually a *good* constraint — the size of the pre-materialized state pool **is** the
+fuel/unrolling budget (a loop becomes a bounded pre-materialized state chain), which unifies the
+"state-succession" and "fuel/world budget" open questions into one knob set at intake time. It
+does *not* touch the "owns no engine code" line (the minting stays in the intake tool, the
+sanctioned §8 boundary) — but it does retire the idea that states thread themselves via rules.
+
+Still unproven past this probe: deriving the cell lattice + transitions from real `ast`
+(the probe hand-builds the CFG), branch-merge (two predecessors → a join rule over cells), and
+loop unrolling to a chosen depth.
+
+---
+
+## ugm issues found
+
+Six bugs / limitations / surprises hit while building this are written up with minimal repros in
+[`../../ugm/docs/feedback_from_pystrider.md`](../../ugm/docs/feedback_from_pystrider.md) — most
+are **silent-failure** modes (mis-parsed rule clauses, undropped facts, case-folded queries,
+un-minted existentials). None blocked the spike, but a strict/verbose mode in ugm would have
+saved most of the debugging time.
 
 ---
 

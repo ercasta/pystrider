@@ -64,6 +64,10 @@ call f(a)      in state S   ⟹   enter f's body with params bound to eval(a, S)
   `supersedes`, and the same shape as the ISA's own "one `State` → zero-or-more" threading
   (`ugm/machine.py`), lifted from the opcode fold to the KB level. A branch on an unknown
   condition **forks the state set** for free.
+  > **Spike correction.** Successor states cannot be *minted by a rule* — an existential head
+  > var isn't Skolem-minted through ugm's rule drivers (see Open questions / `spike_findings.md`).
+  > The successor structure must be **pre-materialized by the intake tool** (which knows the CFG),
+  > and the rules only *bind* it. "Mint" moves to intake; the monotone-successor reading holds.
 - **The DFG overlay dissolves.** Value flow is computed by executing, not precomputed. So
   intake gets *lighter*: **AST + CFG** carry the structure; the semantics rules carry the
   behavior. (This is the biggest simplification vs. the static sketch — no separate def-use
@@ -207,11 +211,17 @@ and verified it forward), the concolic/SMT/type CALLs, and anything past one fun
   later via CALL. What's the minimum that finds *interesting* bugs?
 - **Fuel / world budget** — per-hypothesis fuel, loop unrolling depth, recursion cap. Where
   does UNKNOWN get returned, and is that honestly useful? *(Untested — the spike has no loops.)*
-- **State-succession vs. SSA** — *the newly load-bearing question the spike surfaced.* The
-  spike sidesteps the frame problem with single-assignment value-of facts; reassignment,
-  loops, and branch-merge need the "mint a successor state" axis of §2. Getting the frame
-  propagation right in Horn rules (which vars carry unchanged across `succ`) is the next real
-  risk, and it interacts with the guard-cost question below.
+- **State-succession vs. SSA** — *probed and largely settled* (`experiments/state_threading.py`,
+  4 pins; see `spike_findings.md`). Two-sided: (a) **"mint a successor state" is NOT expressible
+  as a Horn rule** — an existential head var is not Skolem-minted by ugm's drivers (`chain_sip`
+  SIP-collapses it, forward drivers derive nothing); but (b) **intake can pre-materialize the
+  state×var cell lattice** (it knows the CFG statically), after which the rules only *bind*
+  pre-existing cells — pure Datalog, frame axiom as one NAC (`not ?t assigns_var ?v`). This
+  threads reassignment and framing correctly. **Design revision:** §2's "both axes
+  mint-successor" is half-wrong — states are pre-minted by the intake tool, not threaded by
+  rules; the state-pool size *is* the unrolling/fuel budget (next bullet), so the two questions
+  merge. Still open: deriving the cell lattice from real `ast`, branch-merge (join over cells),
+  loop unrolling.
 - **Transformation-rule library** — how are edit operators authored and keyed by effect? Is
   the effect language the same outcome vocabulary the analysis produces? (It should be — that
   shared vocabulary is what lets backward-CHAIN connect goal to operator.) *(Spike proved the
