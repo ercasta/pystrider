@@ -37,6 +37,21 @@ def drain(seed, item):
     return y.run()
 """
 
+# PATH REFINEMENT: when the fork condition is a None-test the analyzer understands, each branch
+# ASSUMES the condition — so the deref on the safe branch is not a spurious may-None.
+REFINE_THEN = """
+def use(v):
+    if v is not None:
+        return v.run()    # v is known non-None here -> safe
+    return 0
+"""
+REFINE_ELSE = """
+def use(v):
+    if v is not None:
+        return 0
+    return v.run()        # v is known None here -> raises
+"""
+
 
 def _report(title: str, src: str, hypotheses: list[dict]) -> None:
     banner(title)
@@ -62,6 +77,12 @@ def main() -> None:
         {"seed": "none", "item": "object"},   # 0 iterations: y stays seed=None -> may raise
         {"seed": "object", "item": "none"},   # >=1 iteration: y becomes item=None -> may raise
         {"seed": "object", "item": "object"},  # every path non-None -> safe
+    ])
+    _report("PATH REFINEMENT - the deref on the NON-None branch is not a false positive", REFINE_THEN, [
+        {"v": "none"},                        # then-branch assumes v is non-None -> safe (no false +)
+    ])
+    _report("PATH REFINEMENT - ...but the None branch still raises (two-sided)", REFINE_ELSE, [
+        {"v": "none"},                        # else-branch assumes v is None -> raises
     ])
 
     try_changing(

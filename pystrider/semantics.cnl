@@ -16,9 +16,20 @@
 ?c2 has_value ?v when ?stmt is_a assign and ?stmt assigns ?var and ?stmt from_expr ?e and ?e eval_to ?v and ?stmt to_state ?s2 and ?c2 in_state ?s2 and ?c2 for_var ?var
 
 # (2b) FRAME: carry a var's value across ANY CFG edge (assign or plain branch/merge edge) that does
-# NOT assign it (the frame axiom, one NAC). A merge point has two incoming edges, so this fires once
-# per edge — the value UNION at a join is Horn disjunction, not a Python-computed lattice meet.
-?c2 has_value ?v when ?t from_state ?s1 and ?t to_state ?s2 and ?c1 in_state ?s1 and ?c1 for_var ?var and ?c1 has_value ?v and ?c2 in_state ?s2 and ?c2 for_var ?var and not ?t assigns ?var
+# NOT assign it AND does NOT refine it (the frame axiom, NACs). A merge point has two incoming edges,
+# so this fires once per edge — the value UNION at a join is Horn disjunction, not a Python meet. An
+# edge that ASSUMES a constraint on ?var (a refined fork edge) is handled by 2c/2d instead.
+?c2 has_value ?v when ?t from_state ?s1 and ?t to_state ?s2 and ?c1 in_state ?s1 and ?c1 for_var ?var and ?c1 has_value ?v and ?c2 in_state ?s2 and ?c2 for_var ?var and not ?t assigns ?var and not ?t assume_nonnull ?var and not ?t assume_null ?var
+
+# (2c) REFINED FRAME (path-sensitive): across a fork edge that ASSUMES ?var is non-None (the
+# true-branch of `if ?var is not None:`), carry only the NON-none values — the None is filtered, so a
+# deref of ?var on this branch cannot see None. This is what makes a hand-written not-None check with
+# an else precise, not a spurious may-None.
+?c2 has_value ?v when ?t assume_nonnull ?var and ?t from_state ?s1 and ?t to_state ?s2 and ?c1 in_state ?s1 and ?c1 for_var ?var and ?c1 has_value ?v and ?c2 in_state ?s2 and ?c2 for_var ?var and not ?v is_a none_value
+
+# (2d) REFINED FRAME: across a fork edge that ASSUMES ?var is None (the false-branch of the same
+# test, or the true-branch of `if ?var is None:`), carry only the none value — non-None is filtered.
+?c2 has_value ?v when ?t assume_null ?var and ?t from_state ?s1 and ?t to_state ?s2 and ?c1 in_state ?s1 and ?c1 for_var ?var and ?c1 has_value ?v and ?c2 in_state ?s2 and ?c2 for_var ?var and ?v is_a none_value
 
 # (3) a guard `if VAR is not None:` opens only when its tested var's cell in the guard's state is not none
 ?g guard_open yes when ?g is_a guard and ?g tests ?var and ?g in_state ?s and ?c in_state ?s and ?c for_var ?var and ?c has_value ?v and not ?v is_a none_value

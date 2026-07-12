@@ -259,6 +259,58 @@ def test_merged_value_is_derived_by_a_rule_not_a_python_join():
     assert "reads z" in joined                       # ... threaded back through the else branch (y = z)
 
 
+# --- branch/path refinement: a fork ASSUMES its condition when it understands it --------------
+
+REFINE_NOTNULL = """
+def f(v):
+    if v is not None:
+        a = v.go()
+    else:
+        a = 0
+    return a
+"""
+
+REFINE_ISNONE = """
+def f(v):
+    if v is None:
+        return v.go()
+    return 0
+"""
+
+
+def test_then_branch_of_is_not_none_narrows_the_var_to_nonnull():
+    # the deref is on the TRUE branch of `if v is not None:`, so v cannot be None there — no
+    # spurious outcome. (With a pure may-union this was a FALSE POSITIVE.)
+    assert analyze(intake_function(REFINE_NOTNULL), {"v": "none"}) == []
+
+
+def test_else_branch_of_is_not_none_still_sees_none():
+    # move the deref to the FALSE branch: there v IS None, so it must raise. Refinement is
+    # two-sided — it narrows each branch, it doesn't blanket-suppress.
+    src = "def f(v):\n    if v is not None:\n        a = 0\n    else:\n        a = v.go()\n    return a\n"
+    outs = analyze(intake_function(src), {"v": "none"})
+    assert outs and outs[0].label == "v.go"
+
+
+def test_is_none_narrows_the_opposite_way():
+    # `if v is None:` -> the THEN branch derefs a known-None v (raises); refinement handles both
+    # comparison directions (Is and IsNot).
+    outs = analyze(intake_function(REFINE_ISNONE), {"v": "none"})
+    assert any(o.label == "v.go" for o in outs)
+
+
+def test_object_hypothesis_is_unaffected_by_refinement():
+    # soundness the other way: under v=object, the not-None branch keeps v=object (deref safe),
+    # and nothing spurious appears.
+    assert analyze(intake_function(REFINE_NOTNULL), {"v": "object"}) == []
+
+
+def test_unknown_condition_is_still_a_sound_may_union():
+    # a fork on a condition we DON'T understand (`if c:`) gets no refinement — both arms keep
+    # every value, so a None in either arm still surfaces (no precision, but sound).
+    assert analyze(intake_function(BRANCH), {"c": "object", "x": "none", "z": "object"}) != []
+
+
 # --- slice A' (loop unrolling): the pre-materialized state pool is the fuel budget -----------
 
 MAY_SKIP = """

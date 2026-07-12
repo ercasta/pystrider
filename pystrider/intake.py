@@ -291,8 +291,20 @@ class _Walker:
             return exit_state
 
         then_entry, else_entry = self._fresh_state(), self._fresh_state()
-        self._edge(state, then_entry)                             # fork: assume-cond / assume-not-cond
-        self._edge(state, else_entry)
+        then_edge = self._edge(state, then_entry)                 # fork: assume-cond / assume-not-cond
+        else_edge = self._edge(state, else_entry)
+        # PATH REFINEMENT: when the condition is a `VAR is [not] None` test we understand, tag each
+        # fork edge with what it ASSUMES about VAR. The refined-frame rules then carry only values
+        # consistent with the assumption (none filtered out on the non-null branch, and vice versa),
+        # so a deref of VAR on its safe branch no longer reports a spurious None outcome. A condition
+        # we don't understand gets no tag → the sound may-union (both branches keep every value).
+        ref = self._none_compare(node.test)
+        if ref is not None:
+            rvar, kind = ref
+            vid = self._var(rvar)
+            then_kind, else_kind = ("nonnull", "null") if kind == "nonnull" else ("null", "nonnull")
+            self._emit(then_edge, f"assume_{then_kind}", vid)     # true-branch of the test
+            self._emit(else_edge, f"assume_{else_kind}", vid)     # false-branch of the test
         then_exit = self.block(node.body, then_entry)
         else_exit = self.block(node.orelse, else_entry) if node.orelse else else_entry
         merge = self._fresh_state()
@@ -331,6 +343,27 @@ class _Walker:
                 return l.id
             if isinstance(r, ast.Name) and isinstance(l, ast.Constant) and l.value is None:
                 return r.id
+        return None
+
+    @staticmethod
+    def _none_compare(test: ast.AST) -> tuple[str, str] | None:
+        """`(var, 'nonnull')` for a `VAR is not None` test, `(var, 'null')` for `VAR is None`
+        (either operand order), else None. Drives fork PATH REFINEMENT: 'nonnull' = the true-branch
+        assumes VAR is non-None, 'null' = it assumes VAR is None."""
+        if not (isinstance(test, ast.Compare) and len(test.ops) == 1):
+            return None
+        op, l, r = test.ops[0], test.left, test.comparators[0]
+        name = None
+        if isinstance(l, ast.Name) and isinstance(r, ast.Constant) and r.value is None:
+            name = l.id
+        elif isinstance(r, ast.Name) and isinstance(l, ast.Constant) and l.value is None:
+            name = r.id
+        if name is None:
+            return None
+        if isinstance(op, ast.IsNot):
+            return (name, "nonnull")
+        if isinstance(op, ast.Is):
+            return (name, "null")
         return None
 
 

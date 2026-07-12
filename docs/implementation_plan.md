@@ -31,21 +31,21 @@ graph with value flow across call boundaries** (slice B), and **a second effect 
   more semantics rule (`?s returns_none yes`) + two coalesce operators — the loop is effect-generic.
 
 **Run:** `pip install -e ../ugm -e .` · `python -m pystrider.demo` · `python demos/run.py` ·
-`pytest -q` (44 green).
+`pytest -q` (49 green).
 
 **Module map**
 
 | File | Role |
 |---|---|
 | `pystrider/intake.py` | §8 tool: `ast` → facts; **CFG** (states, assign+branch/merge/loop transitions, `(state×var)` cell lattice, `_if` fork/join + `_while` bounded unroll); structural scope (`in_function`); call args/callee; **per-function `namespace`** so functions coexist in a shared graph |
-| `pystrider/semantics.cnl` / `semantics.py` | operational semantics (**8 Horn rules**: value-flow 1–5, the two OUTCOME rules `raises attribute_error` + `returns_none yes`, **state/cell-threaded**, frame keyed on any CFG edge, CNL data) + loader |
+| `pystrider/semantics.cnl` / `semantics.py` | operational semantics (**10 Horn rules**: value-flow 1–3, frame 2b + **refined frames 2c/2d** (path-sensitive), guard/reachability 3–5, the two OUTCOME rules `raises attribute_error` + `returns_none yes`, **state/cell-threaded**, CNL data) + loader |
 | `pystrider/analysis.py` | hypothesis loop on public firmware — a shared `_detect` core (**`suppose(commit=False)` read-only + `focus_scope`, one KB reused across sites**, optional external `kb`); `analyze` (None-deref) / `analyze_return_none` (returns-None); effect-generic `candidate_edits` / `choose_repair` |
 | `pystrider/session.py` | **Session**: several functions in one shared graph; namespaced identity, per-function focus, cross-call value-flow linking (`link_calls` / `analyze_across_call`), label-rendered traces |
 | `pystrider/operators.cnl` / `operators.py` | effect-keyed operator library (None-deref guards + returns-None coalesce ops) + backward-CHAIN retrieval (source-name ⇄ namespaced graph-id at the fact boundary) |
 | `pystrider/transform.py` | AST-rewrite mechanism (guard insertion; `coalesce_return`) — materialize an edit as real source |
 | `demos/` | four focused, runnable walkthroughs (core loop, state-threading, Session/inter-procedural, second effect) + `run.py` |
 | `experiments/state_threading.py` | the original **probe** that validated the cell-lattice approach (now productized in intake/semantics) |
-| `tests/` | 44 green: `test_spike.py` (28, slice-A/A′ + boundary-guard), `test_state_threading.py` (4), `test_session.py` (7, slice-B), `test_effects.py` (5, slice-C: returns-None effect, effect independence, CHOOSE for the new effect, None-deref path unchanged) |
+| `tests/` | 49 green: `test_spike.py` (33, slice-A/A′ + branch-refinement + boundary-guard), `test_state_threading.py` (4), `test_session.py` (7, slice-B), `test_effects.py` (5, slice-C) |
 
 **Conventions / gotchas (don't relearn these the hard way):**
 - Reasoning goes through the **public firmware only** (`suppose`/`chain_sip`/`ask_goal`/`choose`).
@@ -57,8 +57,9 @@ graph with value flow across call boundaries** (slice B), and **a second effect 
 - Every machine-rule clause must be a **3-token triple** (`?g guard_open yes`, not `?g guard_open`).
 - CNL queries **case-fold** identifiers → use lowercase node names (`attr5`, not `eA`).
 - Abstract domain today: `none` / `object` / UNKNOWN. Value flow is **state-threaded** through
-  the `(state×var)` cell lattice — reassignment (A), branch-merge + loop unrolling (A′), and
-  **inter-procedural flow across a call** (B) are all correct.
+  the `(state×var)` cell lattice — reassignment (A), branch-merge + loop unrolling (A′),
+  **inter-procedural flow across a call** (B), and **path-sensitive fork refinement** (a `VAR is
+  [not] None` fork assumes its condition per branch; refined-frame rules 2c/2d) are all correct.
 - Identity across functions is by **`(function, source_name)`**: intake takes a `namespace` that
   prefixes every *structural* node id (states, exprs, cells, variables, the function node); the
   *type/value* vocabulary the rules match on (`assign`, `none`, `none_value`, `attribute_error`, …)
@@ -147,12 +148,18 @@ bound, not a fixpoint. The condition is not evaluated (exit always possible → 
   "the analysis lives in ugm, not Python" a *checked invariant*. A companion pin proves a join value
   is rule-derived (its trace threads back through a branch/loop assignment), not given. 32 green.
 
-**Left for a follow-on (branch/path refinement):** (1) a general fork does not yet *assume its
-condition* (e.g. narrow a var to non-None on the then-path of a non-guard `if v is not None:`);
-today it is a sound path-union (may-analysis), not a refined per-path domain. (2) a hand-written
-`if VAR is not None:` **with an else** routes to the fork path (loses guard-open gating) — acceptable
-partiality, noted. (3) loop `else`, `break`/`continue` are unmodelled. (4) fixed-depth unroll is not
-a fixpoint — widening / UNKNOWN-on-exhaustion is the honest next refinement of the fuel knob.
+**Branch/path refinement — ✅ LANDED (2026-07-12).** A general fork now *assumes its condition* when
+it understands it: intake tags each fork edge of a `VAR is [not] None` test with `assume_nonnull` /
+`assume_null` (`_none_compare`), and two REFINED-FRAME rules (semantics 2c/2d) carry only values
+consistent with the assumption across that edge — none is filtered on the non-null branch, non-None
+on the null branch (the plain frame 2b gets NACs so it defers on a refined edge). So the deref on the
+then-path of `if v is not None:` (even **with an else**, the old partiality #2) is precise, not a
+spurious may-None, while the else-path still sees None — two-sided, both comparison directions. A
+condition intake does *not* understand (`if c:`) gets no tag → the sound may-union, unchanged. Pinned
+in `test_spike.py` (5). **Still open:** (3) loop `else`, `break`/`continue` are unmodelled; (4)
+fixed-depth unroll is not a fixpoint — widening / UNKNOWN-on-exhaustion is the honest next refinement
+of the fuel knob; (5) refinement is limited to direct `VAR is [not] None` tests (no `and`/`or`/`not`
+compound conditions, no narrowing through an alias).
 
 ### Slice B — inter-procedural / persistent session graph  ✅ **DONE (2026-07-12)**
 
@@ -223,8 +230,8 @@ its condition) and **guard cost of two monotone axes**. Slice B put several func
 one shared graph (the first axis at session scale) — the guard-cost benchmark is now runnable there;
 the second axis (code *versions* as `<version>` hyperedges) is still unbuilt.
 
-**Recommended next:** either (a) **branch/path refinement** (the biggest correctness gap — a general
-fork should narrow its var on the then-path; today it is a sound may-union), or (b) **breadth via
-more effects/operators** (unhandled-exception paths, early-return/default operators), or (c) the
-**code-versioning axis** (`<version>` hyperedges, `corresponds_to`) to exercise the second monotone
-axis and the guard-cost benchmark.
+**Recommended next** (branch/path refinement now landed): either (a) **more control flow** (loop
+`break`/`continue`/`else`, and compound `and`/`or`/`not` conditions for refinement — the remaining
+precision gaps), or (b) **breadth via more effects/operators** (unhandled-exception paths,
+early-return/default operators), or (c) the **code-versioning axis** (`<version>` hyperedges,
+`corresponds_to`) to exercise the second monotone axis and the guard-cost benchmark.

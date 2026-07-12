@@ -11,12 +11,13 @@ downstream reasons through the public UGM firmware (`suppose` / `ask_goal` / `ch
 
 ## What it does (today)
 
-The vertical loop is proven and productized across four slices — all green (44 tests):
+The vertical loop is proven and productized across four slices — all green (49 tests):
 
 - **Slice A — correct value flow.** Value lives in a per-`(program-point, variable)` **cell
-  lattice**, so reassignment (`y = a; y = b`), **branch-merge** (union of both arms), and bounded
-  **loop unrolling** are all correct. Every value union at a join is a rule *derivation* (the frame
-  rule firing once per incoming edge), never a Python-computed lattice meet.
+  lattice**, so reassignment (`y = a; y = b`), **branch-merge** (union of both arms), bounded
+  **loop unrolling**, and **path-sensitive refinement** (a `if v is not None:` fork narrows `v` per
+  branch, so the deref on the safe branch is not a false positive) are all correct. Every value
+  union at a join is a rule *derivation* (the frame rule firing once per edge), never a Python meet.
 - **Slice B — a Session.** Several functions coexist in **one shared graph** (identity by
   `(function, source_name)`), each analyzed under its own `focus_scope`, detection read-only so
   functions/hypotheses never contaminate one another — and a **value flows across a call boundary**
@@ -84,7 +85,7 @@ For the multi-function / inter-procedural version, see [`demos/03_session_interp
 | `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
 | `pystrider/demo.py` | end-to-end packaged walkthrough (`python -m pystrider.demo`) |
 | `demos/` | four focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](demos/README.md) |
-| `tests/` | behaviour pins (44 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py` |
+| `tests/` | behaviour pins (49 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py` |
 | `docs/` | the design (`code_reasoning_design.md`), the plan (`implementation_plan.md`), the spike findings |
 
 ## Run
@@ -93,5 +94,5 @@ For the multi-function / inter-procedural version, see [`demos/03_session_interp
 pip install -e ../ugm -e .    # the ugm sibling + this package
 python -m pystrider.demo      # the packaged end-to-end walkthrough
 python demos/run.py           # the four focused demos
-pytest -q                     # the behaviour pins (44 green)
+pytest -q                     # the behaviour pins (49 green)
 ```
