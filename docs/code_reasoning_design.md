@@ -173,12 +173,30 @@ pass. Full evidence and the feasibility verdict are in
 - `intake.py` — the §8 tool. Walks `ast`, **materializes** AST+CFG base facts as graph
   structure (the one sanctioned place to author the graph directly — intake is *not* CNL). No
   DFG overlay: value flow is left to the rules.
-- `semantics.py` — the operational semantics as **6 Horn rules in machine-rule CNL** (data,
-  not Python). Value flow, guard reachability, and the AttributeError outcome are all derived.
+- `semantics.py` — loads the operational semantics from **`semantics.cnl`** (6 Horn rules,
+  authored CNL data, not Python). Value flow, guard reachability, and the AttributeError outcome
+  are all derived. `operators.py` + **`operators.cnl`** likewise hold the repair operators and
+  their backward-CHAIN retrieval rule as data.
 - `analysis.py` — the hypothesis loop, entirely on the **public firmware**: `suppose(...)`
   opens the hypothesis world; the CONFIRMED verdict *is* the outcome; `ask_goal("why …")`
   renders the RECORD provenance as the human execution trace. The graph is never touched after
   intake.
+
+### The Python / CNL boundary (why not author everything in CNL?)
+
+The split follows the engine_developer_guide's golden rule — *push behaviour to the highest
+layer that can express it* — and lands in three tiers:
+
+| Layer | Where | Why |
+|---|---|---|
+| Domain **rules** (semantics, operator retrieval) | **CNL** — `semantics.cnl`, `operators.cnl` | Machine-rule CNL expresses Horn rules directly and loads from files (comments, blank lines OK). These are data; a domain author edits the `.cnl`, not Python. |
+| Domain **facts** with open code vocabulary (intake output, operator records) | **materialized by a tool** (Python) | `load_facts` recognizes a *declared/known* verb lexicon and silently drops open vocabulary (`assigns`, `attr_of`, `prevents`) single-pass — feedback #5. Code vocabulary is large and open, so facts are materialized. The design already reserves intake as "§8 tool, not CNL"; operator records are the same shape (and carry `float` fits CNL handles awkwardly). |
+| **Mechanism** (`ast` parse, AST rewrite, firmware orchestration) | **Python** | CNL cannot parse or rewrite Python source, and the consuming-app glue that calls `suppose`/`ask_goal`/`choose` is exactly the Python the engine_user_guide expects a consumer to write. |
+
+So the rules *are* CNL files now; what stays Python is either mechanism that cannot be CNL
+(parsing/rewriting/orchestration) or open-vocabulary facts that CNL's fact grammar can't cheaply
+carry. If ugm gains cheap open-predicate fact authoring, the intake/operator facts could move to
+CNL too — but the rule/mechanism split above would not change.
 
 **The fact vocabulary** intake emits (structure only): `is_a {function,assign,return,name,`
 `attribute,call,none_value,object_value,guard}`, `has_param`, `assigns`, `from_expr`,

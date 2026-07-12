@@ -28,7 +28,8 @@ For `def f(x): y = x; return y.bar()`:
 | Path | Role |
 |---|---|
 | `pystrider/intake.py` | the §8 code-intake tool — `ast` → graph facts (materializes structure; *not* CNL) |
-| `pystrider/semantics.py` | the operational semantics as 6 Horn rules (machine-rule CNL — data) |
+| `pystrider/semantics.cnl` | the operational semantics — 6 Horn rules, authored CNL data (`semantics.py` loads it) |
+| `pystrider/operators.cnl` | the operator-retrieval rule, authored CNL data |
 | `pystrider/analysis.py` | the hypothesis loop on the public UGM firmware (`suppose` / `ask_goal`) + `repair` / `choose_repair` |
 | `pystrider/operators.py` | effect-keyed transformation-operator library, retrieved by backward-CHAIN |
 | `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |

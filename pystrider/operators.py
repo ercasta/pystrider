@@ -15,7 +15,8 @@ the shared vocabulary the design says lets backward-CHAIN connect goal to operat
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 import ugm as h
@@ -90,16 +91,13 @@ STRATEGIES: dict[str, Callable[[Intake, "Outcome"], tuple[str, str]]] = {
 
 # --- retrieval via backward-CHAIN over the effect key + precondition -------------------------
 
-_RETRIEVAL_RULE = (
-    "?op applies_to ?site when ?op is_a operator and ?op prevents ?err "
-    "and ?site raises ?err and ?op needs ?cond and ?site provides ?cond"
-)
+_RETRIEVAL_CNL = Path(__file__).with_name("operators.cnl").read_text(encoding="utf-8")
 
 
 def retrieve(site: str, error_kind: str, site_provides: set[str]) -> list[Operator]:
     """Backward-CHAIN the operator library: which operators prevent `error_kind` at `site` AND
     have a precondition the site provides? Runs entirely through the public `ask_goal`."""
-    rules = load_machine_rules(_RETRIEVAL_RULE)
+    rules = load_machine_rules(_RETRIEVAL_CNL)
     g = h.Graph(); ids: dict[str, str] = {}
     def n(x):
         if x not in ids: ids[x] = g.add_node(x)

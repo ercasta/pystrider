@@ -1,0 +1,4 @@
+# Operator-retrieval rule — a ugm rule bank, authored as CNL data (design §3, step 2).
+# Backward-CHAIN from the goal "which operators apply to this site?": an operator applies iff it
+# prevents the error the site raises AND its precondition is one the site provides.
+?op applies_to ?site when ?op is_a operator and ?op prevents ?err and ?site raises ?err and ?op needs ?cond and ?site provides ?cond
