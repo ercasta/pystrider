@@ -36,6 +36,18 @@ def test_intake_produces_expected_frame():
     assert ik.label_of[site] == "y.bar"
 
 
+def test_scope_is_represented_structurally():
+    # function membership is a graph EDGE (in_function), not a name prefix — the ugm-idiomatic
+    # representation and the anchor for focus / inter-procedural links later.
+    ik = intake_function(NONE_DEREF)
+    facts = set(ik.facts)
+    assert ("x", "is_a", "variable") in facts and ("y", "is_a", "variable") in facts
+    # every function-local entity links to the function node
+    entities = {s for (s, p, _o) in facts if p == "in_function"}
+    assert {"x", "y", ik.attributes[0]} <= entities
+    assert all(o == "f" for (_s, p, o) in facts if p == "in_function")
+
+
 # --- claim 2+3+4: SUPPOSE(x=None) reaches the AttributeError outcome, with a trace ---
 
 def test_none_hypothesis_confirms_attribute_error():

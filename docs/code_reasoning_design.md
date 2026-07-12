@@ -199,9 +199,10 @@ carry. If ugm gains cheap open-predicate fact authoring, the intake/operator fac
 CNL too — but the rule/mechanism split above would not change.
 
 **The fact vocabulary** intake emits (structure only): `is_a {function,assign,return,name,`
-`attribute,call,none_value,object_value,guard}`, `has_param`, `assigns`, `from_expr`,
-`returns`, `reads`, `attr_of`, `attr_name`, `calls`, and (for the edit) `within_guard` /
-`tests`. The *rules* derive `has_value`, `eval_to`, `guard_open`, `reached`, `raises` — never
+`attribute,call,variable,none_value,object_value,guard}`, `has_param`, `assigns`, `from_expr`,
+`returns`, `reads`, `attr_of`, `attr_name`, `calls`, **`in_function`** (every entity's scope,
+as a structural edge — see the Session section), and (for the edit) `within_guard` / `tests`.
+The *rules* derive `has_value`, `eval_to`, `guard_open`, `reached`, `raises` — never
 materialized by intake. This is the "AST+CFG carry structure, semantics carries behavior"
 split, concretized.
 
@@ -231,6 +232,56 @@ state-succession probe), the concolic/SMT/type CALLs, and anything past one func
 means-ends loop is complete in *shape* (retrieve→choose→materialize→verify) but narrow in
 *breadth*: one effect kind and three guard operators — widening it is library authoring, not new
 machinery.
+
+### Session / focus — the working-set architecture (evaluated, not yet built)
+
+ugm added a **Session** layer (`architecture.md` §8: `ingest`/`converse`, streaming events,
+**focus**, runtime rule authoring). Assessment for this project:
+
+- **`ingest`/`converse` don't fit wholesale.** They route *CNL utterances* to fact/question/
+  rule/focus. pystrider is driven by *code + a hypothesis*, not English — it sits at the same
+  consumer tier as the Session driver (a thin client over the firmware), so it is a *peer* of
+  Session, not a caller of it.
+- **`focus` is the piece that matters — it is the concrete form of this design's "session-sized
+  working set".** `chain_sip`/`ask_goal` already accept `focus_scope` (a fact is visible only if
+  it touches the in-play entity set), so reasoning cost tracks the working set, not the accreted
+  graph. That is exactly the mechanism the "State vs. version guard cost" and honest-scope
+  questions call for — once pystrider holds a *persistent multi-function graph* it must bound
+  attention to the function under analysis.
+- **Streaming events** map onto the RECORD trace: a live `derive`-per-firing stream is the
+  symbolic-execution trace as it happens (today we render it after the fact with `ask_goal
+  "why"`). **`converse`'s ask/suspend-resume** is the natural channel for the future concolic
+  CALL (pause to run a snippet for ground truth, resume with the result).
+
+**Scope is now structural, not mangled.** Intake represents function membership as a graph
+edge — every entity carries `in_function <fn>`, variables are typed `is_a variable` — rather
+than by prefixing names (`f/y`). This is the ugm-idiomatic representation (relation-as-node)
+and the anchor a focus frame or an inter-procedural call-link would attach to. It is additive
+(single-function analysis is unchanged) and in place today.
+
+**What structure does *not* settle — the identity/addressing follow-on (probed).** Three
+concerns hide in "namespacing"; structure fixes the first two:
+1. **Representation** ("which function owns this?") → the `in_function` edge. **Done.**
+2. **Identity** ("is this the same `y`?") → distinct nodes per `(function, name)`. In one graph
+   per function (today) this is automatic; a *shared* multi-function graph needs intake to key
+   node identity by `(function, name)`, not bare name. **Needed for a shared graph.**
+3. **Addressing** — the firmware resolves a goal by *name* (`nodes_named(...)[0]` on a tie), so
+   the specific nodes we seed/query need unique names even when structurally distinct. The clean
+   fix is **opaque unique ids as node names + source names as labels** (already how statements/
+   exprs are named; extend to variables/functions), rendering the trace from labels so it still
+   reads `y has_value none`. This reinforces the ugm ask for an **id-addressed** firmware goal
+   API. **Needed for a shared graph.**
+
+Since 2–3 only bite in a *shared* graph (inter-procedural), the intra-procedural working set can
+use one graph per function (ugm "banks") today — readable names, no collision. And
+**`suppose` lacks `focus_scope`** (ugm feedback #7): the outcome path can't be attention-bounded
+until that lands, though the trace/`ask_goal` path already can.
+
+**Verdict:** adopt the *concept* — a `PystriderSession` owning a persistent, per-function-
+namespaced analysis graph with a focus frame per function/hypothesis under investigation — as the
+architecture for the multi-function working set. It is premature until multi-function analysis
+exists and the `suppose` gap is closed, but it is the right home for scale, versioning, and the
+concolic ask-channel.
 
 ---
 

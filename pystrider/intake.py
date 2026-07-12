@@ -56,6 +56,8 @@ class _Walker:
         self.label_of: dict[str, str] = {}
         self.attributes: list[str] = []
         self.attr_base_var: dict[str, str] = {}
+        self.func: str = ""              # the enclosing function node (set by intake_function)
+        self._vars_seen: set[str] = set()
         self._n = 0
 
     def _fresh(self, prefix: str) -> str:
@@ -64,6 +66,24 @@ class _Walker:
 
     def _emit(self, s: str, p: str, o: str) -> None:
         self.facts.append((s, p, o))
+
+    def _scope(self, entity: str) -> str:
+        """Record `entity`'s membership in the enclosing function STRUCTURALLY — an
+        `in_function` edge to the function node, not a name prefix. Scope is thus queryable
+        graph structure (and the anchor a focus frame / inter-procedural link would use)."""
+        if self.func:
+            self._emit(entity, "in_function", self.func)
+        return entity
+
+    def _var(self, name: str) -> str:
+        """A variable mention: type it `variable` and scope it to the function on first sight.
+        (Identity is still by bare name within this one function — distinct-node identity across
+        functions in a shared graph is the inter-procedural follow-on; see the design doc.)"""
+        if name not in self._vars_seen:
+            self._vars_seen.add(name)
+            self._emit(name, "is_a", "variable")
+            self._scope(name)
+        return name
 
     def _snippet(self, node: ast.AST) -> str:
         try:
@@ -74,15 +94,15 @@ class _Walker:
     # --- expressions: return the node-id standing for the expression's value ---
     def expr(self, node: ast.AST) -> str:
         if isinstance(node, ast.Name):
-            eid = self._fresh("e")
+            eid = self._scope(self._fresh("e"))
             self._emit(eid, "is_a", "name")
-            self._emit(eid, "reads", node.id)
+            self._emit(eid, "reads", self._var(node.id))
             self.label_of[eid] = node.id
             self.line_of[eid] = node.lineno
             return eid
         if isinstance(node, ast.Attribute):
             base = self.expr(node.value)
-            eid = self._fresh("attr")
+            eid = self._scope(self._fresh("attr"))
             self._emit(eid, "is_a", "attribute")
             self._emit(eid, "attr_of", base)
             self._emit(eid, "attr_name", node.attr)
@@ -94,14 +114,14 @@ class _Walker:
             return eid
         if isinstance(node, ast.Call):
             fn = self.expr(node.func)
-            eid = self._fresh("call")
+            eid = self._scope(self._fresh("call"))
             self._emit(eid, "is_a", "call")
             self._emit(eid, "calls", fn)
             self.label_of[eid] = self._snippet(node)
             self.line_of[eid] = node.lineno
             return eid
         # unsupported expression: an opaque value node, typed `unknown_value` (honest UNKNOWN)
-        eid = self._fresh("u")
+        eid = self._scope(self._fresh("u"))
         self._emit(eid, "is_a", "unknown_expr")
         self.label_of[eid] = self._snippet(node)
         self.line_of[eid] = getattr(node, "lineno", 0)
@@ -111,14 +131,14 @@ class _Walker:
     def stmt(self, node: ast.AST) -> None:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 \
                 and isinstance(node.targets[0], ast.Name):
-            sid = self._fresh("s")
+            sid = self._scope(self._fresh("s"))
             self._emit(sid, "is_a", "assign")
-            self._emit(sid, "assigns", node.targets[0].id)
+            self._emit(sid, "assigns", self._var(node.targets[0].id))
             self._emit(sid, "from_expr", self.expr(node.value))
             self.line_of[sid] = node.lineno
             self.label_of[sid] = self._snippet(node)
         elif isinstance(node, ast.Return) and node.value is not None:
-            sid = self._fresh("s")
+            sid = self._scope(self._fresh("s"))
             self._emit(sid, "is_a", "return")
             self._emit(sid, "returns", self.expr(node.value))
             self.line_of[sid] = node.lineno
@@ -131,9 +151,9 @@ class _Walker:
             # (body still recursed, no guard) — honest partiality.
             guard_var = self._guard_var(node.test)
             if guard_var is not None:
-                gid = self._fresh("g")
+                gid = self._scope(self._fresh("g"))
                 self._emit(gid, "is_a", "guard")
-                self._emit(gid, "tests", guard_var)
+                self._emit(gid, "tests", self._var(guard_var))
                 self.line_of[gid] = node.lineno
                 before = set(self.attributes)
                 for s in node.body:
@@ -164,10 +184,11 @@ def intake_function(src: str) -> Intake:
     tree = ast.parse(src)
     fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
     w = _Walker(src)
+    w.func = fn.name                                      # the scope node every entity links to
     params = [a.arg for a in fn.args.args]
     w.facts.append((fn.name, "is_a", "function"))
     for p in params:
-        w.facts.append((fn.name, "has_param", p))
+        w.facts.append((fn.name, "has_param", w._var(p)))   # a param is a variable, scoped
     for s in fn.body:
         w.stmt(s)
     return Intake(func=fn.name, params=params, facts=w.facts,
