@@ -177,3 +177,36 @@ def test_candidate_fit_is_zero_when_unverified():
 def test_value_kinds_are_the_declared_minimum_domain():
     # the spike's abstract domain is deliberately concrete-or-None first
     assert set(VALUE_KINDS) == {"none", "object"}
+
+
+# --- slice A (state-threading in the MAIN analyzer): reassignment is correct, not SSA-wrong ---
+
+REASSIGN = """
+def f(x, z):
+    y = x
+    y = z
+    return y.bar()
+"""
+
+
+def test_reassignment_threads_through_the_main_analyzer():
+    # y is bound to None (x) then REASSIGNED to a non-None object (z); the deref must NOT raise.
+    # The old SSA-per-variable model got this wrong (y held both None and obj at once); value now
+    # lives in per-state cells threaded across the two assignments.
+    ik = intake_function(REASSIGN)
+    assert ik.states == ["p0", "p1", "p2"]                # one program point per assignment + entry
+    assert analyze(ik, {"x": "none", "z": "object"}) == []
+
+
+def test_reassignment_to_none_still_raises():
+    # if the reassigned value is also None, the deref still raises — threading is sound both ways
+    ik = intake_function(REASSIGN)
+    assert analyze(ik, {"x": "none", "z": "none"}) != []
+
+
+def test_deref_before_reassignment_still_raises():
+    # control: a deref that happens BEFORE the safe reassignment reads the None value and raises
+    ik = intake_function(
+        "def f(x, z):\n    y = x\n    w = y.bar()\n    y = z\n    return w\n")
+    outs = analyze(ik, {"x": "none", "z": "object"})
+    assert len(outs) == 1 and outs[0].label == "y.bar"

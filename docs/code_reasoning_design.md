@@ -301,8 +301,10 @@ concolic ask-channel.
   threads reassignment and framing correctly. **Design revision:** §2's "both axes
   mint-successor" is half-wrong — states are pre-minted by the intake tool, not threaded by
   rules; the state-pool size *is* the unrolling/fuel budget (next bullet), so the two questions
-  merge. Still open: deriving the cell lattice from real `ast`, branch-merge (join over cells),
-  loop unrolling.
+  merge. **Update (slice A, 2026-07-12):** deriving the cell lattice from real `ast` is now
+  **done in the main analyzer** — intake emits states/transitions/cells from the CFG and
+  `analyze` threads value through them (reassignment correct, pinned in `test_spike.py`). Still
+  open: branch-merge (a join over two predecessor states) and loop unrolling.
 - **Transformation-rule library** — *built* (`operators.py`). Operators are data keyed by the
   effect they prevent, with preconditions, retrieved by backward-CHAIN (`retrieve` →
   `who applies_to <site>`); the effect vocabulary IS the analysis's outcome vocabulary

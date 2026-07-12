@@ -65,12 +65,13 @@ def _kb_from(intake: Intake, extra: list[tuple[str, str, str]]) -> "h.Graph":
     return g
 
 
-def _hypothesis_facts(hypothesis: dict[str, str]):
-    """(assumptions, extra type facts) for a param->value-kind hypothesis."""
+def _hypothesis_facts(intake: Intake, hypothesis: dict[str, str]):
+    """(assumptions, extra type facts) for a param->value-kind hypothesis. The value is seeded into
+    the parameter's ENTRY-STATE cell (its value at function entry); the semantics thread it forward."""
     assumptions, extra = [], []
     for param, kind in hypothesis.items():
         node, type_fact = VALUE_KINDS[kind]
-        assumptions.append((param, "has_value", node))
+        assumptions.append((intake.entry_cell(param), "has_value", node))
         if type_fact:
             extra.append(type_fact)
     return assumptions, extra
@@ -82,7 +83,7 @@ def analyze(intake: Intake, hypothesis: dict[str, str], *,
     AttributeError. Each confirmed site carries its RECORD provenance trace."""
     rg = build_rule_graph()
     rules = rule_list()
-    assumptions, type_extra = _hypothesis_facts(hypothesis)
+    assumptions, type_extra = _hypothesis_facts(intake, hypothesis)
     extra = type_extra + list(extra_facts or [])
 
     outcomes: list[Outcome] = []
@@ -106,10 +107,12 @@ def analyze(intake: Intake, hypothesis: dict[str, str], *,
 def guarded_variant(intake: Intake, guard_var: str, site: str) -> list[tuple[str, str, str]]:
     """The effect of inserting `if GUARD_VAR is not None:` around `site`, as added facts (a new
     monotone code version V2). Reachability of `site` now depends on the guard opening, which the
-    semantics ties to `guard_var` not being None."""
+    semantics ties to `guard_var`'s cell (in the site's state) not being None."""
+    state = intake.state_of.get(site, intake.entry_state)
     return [
         ("g_guard", "is_a", "guard"),
         ("g_guard", "tests", guard_var),
+        ("g_guard", "in_state", state),
         (site, "within_guard", "g_guard"),
     ]
 

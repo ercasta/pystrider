@@ -8,29 +8,33 @@ built and green; this plan is what's next.
 
 ## Where we are (2026-07-12)
 
-A working dynamic, hypothesis-driven code analyzer on ugm. The full design loop runs on one
-straight-line function:
+A working dynamic, hypothesis-driven code analyzer on ugm. The full design loop runs on a
+straight-line function **with correct reassignment** (slice A landed — value flow is
+state-threaded, no longer SSA-wrong):
 
-- **intake** (`ast` → AST+CFG facts, scope as structural `in_function` edges) →
-- **analyze** under a value hypothesis (`suppose` + CHAIN over `semantics.cnl`) → an outcome
-  with a real RECORD trace (`ask_goal "why"`) →
+- **intake** (`ast` → AST+CFG facts + a **CFG**: per-statement program-point *states*,
+  `from_state`/`to_state` on assigns, `in_state` on every expr/guard, and a pre-materialized
+  `(state × var)` **cell lattice**; scope as structural `in_function` edges) →
+- **analyze** under a value hypothesis (`suppose` seeds the param's **entry-state cell** + CHAIN
+  over `semantics.cnl`, whose rules thread value through cells) → an outcome with a real RECORD
+  trace (`ask_goal "why"`, now showing `c_p1_y has_value none ← assign ← c_p0_x`) →
 - **repair**: retrieve edit operators by effect (backward-CHAIN over `operators.cnl`),
   materialize each as real Python (AST rewrite), verify by re-intake, and **CHOOSE** the
   graded-best.
 
-**Run:** `pip install -e ../ugm -e .` · `python -m pystrider.demo` · `pytest -q` (19 green).
+**Run:** `pip install -e ../ugm -e .` · `python -m pystrider.demo` · `pytest -q` (22 green).
 
 **Module map**
 
 | File | Role |
 |---|---|
-| `pystrider/intake.py` | §8 tool: `ast` → facts; structural scope (`in_function`, `is_a variable`) |
-| `pystrider/semantics.cnl` / `semantics.py` | operational semantics (6 Horn rules, CNL data) + loader |
-| `pystrider/analysis.py` | hypothesis loop on public firmware (`suppose`/`ask_goal`) + `repair` / `choose_repair` |
+| `pystrider/intake.py` | §8 tool: `ast` → facts; **CFG** (states, transitions, `(state×var)` cell lattice); structural scope (`in_function`) |
+| `pystrider/semantics.cnl` / `semantics.py` | operational semantics (7 Horn rules, **state/cell-threaded**, CNL data) + loader |
+| `pystrider/analysis.py` | hypothesis loop on public firmware (`suppose` seeds entry-state cell / `ask_goal`) + `repair` / `choose_repair` |
 | `pystrider/operators.cnl` / `operators.py` | effect-keyed operator library + backward-CHAIN retrieval |
 | `pystrider/transform.py` | AST-rewrite mechanism (materialize an edit as real source) |
-| `experiments/state_threading.py` | **validated probe** — state-succession via pre-materialized cell lattice |
-| `tests/` | `test_spike.py` (19), `test_state_threading.py` (4) |
+| `experiments/state_threading.py` | the original **probe** that validated the cell-lattice approach (now productized in intake/semantics) |
+| `tests/` | `test_spike.py` (18, incl. slice-A reassignment pins), `test_state_threading.py` (4) |
 
 **Conventions / gotchas (don't relearn these the hard way):**
 - Reasoning goes through the **public firmware only** (`suppose`/`chain_sip`/`ask_goal`/`choose`).
@@ -41,8 +45,9 @@ straight-line function:
   See the design doc's "Python / CNL boundary" table.
 - Every machine-rule clause must be a **3-token triple** (`?g guard_open yes`, not `?g guard_open`).
 - CNL queries **case-fold** identifiers → use lowercase node names (`attr5`, not `eA`).
-- Abstract domain today: `none` / `object` / UNKNOWN. Value flow is SSA-style (sound only for
-  straight-line single-assignment code — see slice B).
+- Abstract domain today: `none` / `object` / UNKNOWN. Value flow is **state-threaded** through
+  the `(state×var)` cell lattice — reassignment is correct on straight-line code. Branch-merge
+  (join over predecessor states) and loop unrolling are not yet built.
 
 ---
 
@@ -50,9 +55,14 @@ straight-line function:
 
 - **`focus_scope` on `suppose`/`chain_sip`/`ask_goal` — LANDED.** `suppose(..., focus_scope=frozenset(names))`
   now exists (feedback #7 fixed). Attention-bounding the outcome path is unblocked.
-- **Id-addressed firmware goals — being added.** ugm is adding the ability to address a goal by
-  node **id** instead of by name. Confirm the exact API (`suppose`/`ask_goal` accepting ids)
-  before slice C relies on it. Until confirmed, keep node names unique.
+- **Id-addressed firmware goals — LANDED (unblocks slice B).** ugm shipped `ById(node_id)`: an
+  explicit node-ID endpoint for a bound-tuple goal, accepted in `suppose` assumptions/predictions
+  and `chain_sip`/`ask_goal`-materialize endpoints. `ById` PINS to exactly that node instead of the
+  `nodes_named(...)[0]` silent pick, so a shared multi-function graph can hold legitimately
+  distinct same-named nodes. Companions: `validate_ids` (a `ById` on a missing node raises — the
+  stale-id silent→loud fix) and `resolve_write_node` (WARNS when a *name* resolves to >1 node before
+  the [0]-pick). Exported from `ugm`. NB the CNL *string* `ask_goal("why …")` path is still
+  name-based + case-folded — id-addressing is the tuple/firmware path. (ugm working tree, uncommitted.)
 - Other feedback fixed: strict `load_machine_rules` (clause validation), `apply_*` rule-node
   `TypeError`, `load_facts(strict=)`. See `../ugm/docs/feedback_from_pystrider.md`.
 
@@ -60,27 +70,31 @@ straight-line function:
 
 ## Next slices (recommended order)
 
-### Slice A — `ast` state-threading in the main analyzer  *(highest analysis value; no ugm dependency)*
+### Slice A — `ast` state-threading in the main analyzer  ✅ **DONE (2026-07-12)**
 
-**Goal.** Make reassignment / branches correct in the real analyzer, not just the probe. Today
-value flow is SSA-style and wrong on `y = a; y = b`. The **validated** fix is
-`experiments/state_threading.py`: intake pre-materializes the state×var **cell lattice** (it
-knows the CFG statically) and rules only *bind* pre-existing cells — pure Datalog, frame axiom as
-one NAC (`not ?t assigns_var ?v`). Existential state-minting is NOT rule-expressible (feedback
-#2), so pre-materialization is the way.
+**Goal (met).** Reassignment is now correct in the real analyzer, not just the probe. Value flow
+was SSA-style and wrong on `y = a; y = b`; it is now state-threaded over the pre-materialized
+`(state×var)` cell lattice (intake knows the CFG statically; rules only *bind* cells — existential
+state-minting is NOT rule-expressible, feedback #2).
 
-**Steps.**
-1. Extend intake to emit a CFG: per-statement **program points** (states) + `transition`
-   facts (`from_state`/`to_state`/`assigns_var`/`reads_var`), and one **cell** node per
-   `(state, var)` — reusing the probe's schema. Attribute sites get `in_state <point>`.
-2. Replace `semantics.cnl` value-flow rules (1–2) with the probe's state-threaded rules
-   (assign + frame + outcome, keyed on cells/states). Keep the guard/reachability rules.
-3. Update `analysis.analyze` to seed the hypothesis at the **entry state's** cells and read the
-   outcome at the deref's state.
-4. Choose an **unrolling budget** (design "fuel / world budget") — states pre-materialized per
-   statement; a loop = a bounded pre-materialized chain. Straight-line first, then a single `if`.
-**Done when:** the reassignment case (`test_state_threading` shape) passes through the *main*
-`analyze`, and the existing None-deref demo still holds.
+**What shipped.**
+- `intake.py` emits a CFG: `entry_state` + one **program point** per statement, `from_state`/
+  `to_state` on each assign, `in_state` on every expression + guard, and a pre-materialized cell
+  per `(state, var)` (`cell_name`, exposed via `Intake.states` / `state_of` / `entry_cell`).
+- `semantics.cnl` value-flow rules are state/cell-threaded: name-eval reads the var's cell **in the
+  expr's state** (1); ASSIGN writes the target cell in the to-state (2); a **FRAME** NAC carries
+  every other var across the transition (2b, `not ?stmt assigns ?var`); the guard reads its tested
+  var's cell in the guard's state (3). Reachability/outcome (4–6) unchanged.
+- `analysis.analyze` seeds each param hypothesis into its **entry-state cell** (`entry_cell`);
+  `guarded_variant` stamps the guard's `in_state`.
+- Pins in `test_spike.py`: reassignment-to-object clears, reassignment-to-None still raises,
+  deref-before-reassignment still raises. None-deref demo + all prior pins hold (22 green).
+
+**Left for a follow-on (branches/loops):** the `if` body currently reads at the guard's own
+program point (correct for the tail-guard shape the repair emits) — no branch **refinement** (a
+then-state that assumes the condition) and no **join** over two predecessor states yet; loop
+unrolling to a chosen depth (the state-pool size *is* the fuel budget) is unbuilt. These are the
+natural "slice A′".
 
 ### Slice B — inter-procedural / persistent session graph  *(now unblocked by focus_scope + id-addressing)*
 
@@ -121,6 +135,7 @@ re-execution, with the None-deref path unchanged.
 
 ## Open questions still live
 
-See `docs/code_reasoning_design.md` "Open questions" — the load-bearing ones now are the
-**unrolling/fuel budget** (slice A) and **guard cost of two monotone axes** (benchmark once
-slices A+B put states × versions in one graph).
+See `docs/code_reasoning_design.md` "Open questions" — with slice A landed, the load-bearing ones
+now are **branch-merge + loop unrolling / fuel budget** (slice A′: join over predecessor states,
+bounded pre-materialized loop chains) and **guard cost of two monotone axes** (benchmark once
+slices A′+B put states × versions in one graph).

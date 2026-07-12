@@ -165,6 +165,13 @@ Still unproven past this probe: deriving the cell lattice + transitions from rea
 (the probe hand-builds the CFG), branch-merge (two predecessors → a join rule over cells), and
 loop unrolling to a chosen depth.
 
+> **Update (slice A, 2026-07-12).** The first of these is now **productized**: `intake.py` derives
+> the states / transitions / cell lattice from real `ast`, and the *main* `analyze` threads value
+> through them (`semantics.cnl` rules 1–3 rewritten to bind cells, frame axiom as one NAC). The
+> reassignment case that motivated the probe now passes through the production analyzer, pinned in
+> `tests/test_spike.py`. `experiments/state_threading.py` remains as the original feasibility probe.
+> Branch-merge (join over predecessor states) and loop unrolling are still open.
+
 ---
 
 ## ugm issues found

@@ -2,17 +2,24 @@
 # Each line is one Horn rule:  HEAD when BODY1 and BODY2 ...   (a `not` clause is a NAC).
 # Value flow is COMPUTED by these rules (no precomputed DFG) — the design's central move.
 #
+# Value lives in per-state CELLS, not in bare variables: intake pre-materializes one cell per
+# (program-point, variable) and stamps every expression with the point it reads in, so
+# reassignment threads correctly (y = a; y = b) instead of the SSA "y is both a and b" bug.
+#
 # Authoring note: every clause must be a 3-token triple `S P O`; a boolean predicate takes an
 # explicit object (`?g guard_open yes`, not `?g guard_open`).
 
-# (1) a Name expression evaluates to the current value of the variable it reads
-?e eval_to ?v when ?e is_a name and ?e reads ?var and ?var has_value ?v
+# (1) a Name expression evaluates to the value of its variable's cell IN THE EXPRESSION'S STATE
+?e eval_to ?v when ?e is_a name and ?e reads ?var and ?e in_state ?s and ?c in_state ?s and ?c for_var ?var and ?c has_value ?v
 
-# (2) an assignment propagates its source expression's value to the target variable
-?var has_value ?v when ?stmt is_a assign and ?stmt assigns ?var and ?stmt from_expr ?e and ?e eval_to ?v
+# (2) ASSIGN: the target's cell in the to-state takes the RHS expression's value (read at from-state)
+?c2 has_value ?v when ?stmt is_a assign and ?stmt assigns ?var and ?stmt from_expr ?e and ?e eval_to ?v and ?stmt to_state ?s2 and ?c2 in_state ?s2 and ?c2 for_var ?var
 
-# (3) a guard `if VAR is not None:` opens only when its tested var is not a none value
-?g guard_open yes when ?g is_a guard and ?g tests ?var and ?var has_value ?v and not ?v is_a none_value
+# (2b) FRAME: carry a var's value across a transition that does NOT assign it (the frame axiom, one NAC)
+?c2 has_value ?v when ?stmt is_a assign and ?stmt from_state ?s1 and ?stmt to_state ?s2 and ?c1 in_state ?s1 and ?c1 for_var ?var and ?c1 has_value ?v and ?c2 in_state ?s2 and ?c2 for_var ?var and not ?stmt assigns ?var
+
+# (3) a guard `if VAR is not None:` opens only when its tested var's cell in the guard's state is not none
+?g guard_open yes when ?g is_a guard and ?g tests ?var and ?g in_state ?s and ?c in_state ?s and ?c for_var ?var and ?c has_value ?v and not ?v is_a none_value
 
 # (4) reachability: a guarded expression needs its guard open ...
 ?e reached yes when ?e within_guard ?g and ?g guard_open yes
