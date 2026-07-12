@@ -23,7 +23,7 @@ import ugm as h
 from ugm import load_machine_rules, ask_goal
 
 from .intake import Intake
-from .transform import insert_none_guard, insert_none_guard_range
+from .transform import insert_none_guard, insert_none_guard_range, coalesce_return
 
 
 @dataclass(frozen=True)
@@ -67,9 +67,19 @@ def provides(intake: Intake, base_var: str) -> set[str]:
     return conds
 
 
+def provides_return(intake: Intake, base_var: str) -> set[str]:
+    """The precondition tokens a returns-None site satisfies. `return_var_known` = the return is a
+    bare variable a coalesce can default; `root_param_known` = that value traces to a parameter."""
+    conds = {"return_var_known"} if base_var else set()
+    if root_param(intake, base_var):
+        conds.add("root_param_known")
+    return conds
+
+
 # --- the library (DATA) --------------------------------------------------------------------
 
 LIBRARY: list[Operator] = [
+    # effect 1 — None-deref (AttributeError)
     Operator("guard_base", "attribute_error", "deref_base_known", "guard_deref_base",
              "wrap the deref in `if {var} is not None:` (most local)", locality=1.0, compactness=1.0),
     Operator("guard_param", "attribute_error", "root_param_known", "guard_root_param",
@@ -77,9 +87,16 @@ LIBRARY: list[Operator] = [
     Operator("guard_param_wide", "attribute_error", "root_param_known", "guard_root_param_wide",
              "wrap the assignment through the deref in `if {var} is not None:` (wider)",
              locality=0.7, compactness=0.5),
+    # effect 2 — returns-None (Slice C): same retrieval + CHOOSE, a different effect key
+    Operator("coalesce_or", "returns_none", "return_var_known", "coalesce_return_or",
+             "coalesce the return with a non-None default: `return {var} or {{}}`",
+             locality=1.0, compactness=1.0),
+    Operator("coalesce_ifexp", "returns_none", "return_var_known", "coalesce_return_ifexp",
+             "return an explicit default when None: `return {var} if {var} is not None else {{}}`",
+             locality=1.0, compactness=0.7),
 ]
 
-# strategy -> (guard variable, source transform). The only Python mechanism; everything above is data.
+# strategy -> (edit variable, source transform). The only Python mechanism; everything above is data.
 STRATEGIES: dict[str, Callable[[Intake, "Outcome"], tuple[str, str]]] = {
     "guard_deref_base": lambda ik, oc: (
         oc.base_var, insert_none_guard(ik.source, oc.base_var, oc.line)),
@@ -90,6 +107,10 @@ STRATEGIES: dict[str, Callable[[Intake, "Outcome"], tuple[str, str]]] = {
         root_param(ik, oc.base_var),
         insert_none_guard_range(ik.source, root_param(ik, oc.base_var),
                                 assign_line(ik, oc.base_var), oc.line)),
+    "coalesce_return_or": lambda ik, oc: (
+        oc.base_var, coalesce_return(ik.source, oc.base_var, oc.line, explicit=False)),
+    "coalesce_return_ifexp": lambda ik, oc: (
+        oc.base_var, coalesce_return(ik.source, oc.base_var, oc.line, explicit=True)),
 }
 
 

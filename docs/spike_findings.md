@@ -110,6 +110,13 @@ Reasoning-time predicates the *rules* derive (never materialized by intake): `ha
   one effect kind (`attribute_error`) and three guard operators. Adding effects (e.g. wrong
   return value) and operators (change-default, early-return) is now authoring in the library +
   a strategy function — no new machinery.
+
+  > **Update (slice C, 2026-07-12).** Confirmed: a **second effect kind** (`returns_none` — a
+  > function returns None when a non-None was intended) landed as exactly one more semantics rule +
+  > two coalesce operators, reusing the whole retrieve/verify/CHOOSE loop. `analyze_return_none`
+  > shares a factored `_detect` core with the None-deref `analyze`; `candidate_edits`/`choose_repair`
+  > took a `provides_fn`+`analyzer` parameter. No new machinery, as predicted. Pinned in
+  > `tests/test_effects.py`.
 - **The concrete-execution (concolic) tool** and the SMT/type-inference CALLs — all future.
 - **Scale.** One function. The "session-sized working set" claim is untested.
 

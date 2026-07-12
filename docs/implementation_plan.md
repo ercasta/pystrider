@@ -8,10 +8,10 @@ built and green; this plan is what's next.
 
 ## Where we are (2026-07-12)
 
-A working dynamic, hypothesis-driven code analyzer on ugm. The full design loop runs on a
-straight-line function **with correct reassignment** (slice A), **branch-merge + loop unrolling**
-(slice A′), and now **several functions in one shared graph with value flow across call boundaries**
-(slice B):
+A working dynamic, hypothesis-driven code analyzer on ugm. The full design loop runs with correct
+reassignment (slice A), branch-merge + loop unrolling (slice A′), **several functions in one shared
+graph with value flow across call boundaries** (slice B), and **a second effect kind — returns-None
+— proving the operator library + retrieval + CHOOSE generalize** (slice C):
 
 - **intake** (`ast` → AST+CFG facts + a **CFG**: per-statement program-point *states*,
   `from_state`/`to_state` on assigns, `in_state` on every expr/guard, and a pre-materialized
@@ -22,25 +22,30 @@ straight-line function **with correct reassignment** (slice A), **branch-merge +
   threads value through cells) → an outcome with a real RECORD trace (`ask_goal "why"`) →
 - **repair**: retrieve edit operators by effect (backward-CHAIN over `operators.cnl`),
   materialize each as real Python (AST rewrite), verify by re-intake, and **CHOOSE** the
-  graded-best.
+  graded-best — for **either effect** (None-deref *or* returns-None; `candidate_edits`/`choose_repair`
+  take a `provides_fn` + `analyzer`, no new machinery).
 - **Session**: several functions in **one shared graph** (identity by `(function, source_name)` via
   per-function namespaces), each analyzed under its own `focus_scope`, with a `call` in `f` to `g`
   wiring `f`'s arg cell → `g`'s param cell so a value flows **across the call boundary**.
+- **Second effect (slice C)**: `analyze_return_none` finds returns that yield None; authored as one
+  more semantics rule (`?s returns_none yes`) + two coalesce operators — the loop is effect-generic.
 
-**Run:** `pip install -e ../ugm -e .` · `python -m pystrider.demo` · `pytest -q` (39 green).
+**Run:** `pip install -e ../ugm -e .` · `python -m pystrider.demo` · `python demos/run.py` ·
+`pytest -q` (44 green).
 
 **Module map**
 
 | File | Role |
 |---|---|
 | `pystrider/intake.py` | §8 tool: `ast` → facts; **CFG** (states, assign+branch/merge/loop transitions, `(state×var)` cell lattice, `_if` fork/join + `_while` bounded unroll); structural scope (`in_function`); call args/callee; **per-function `namespace`** so functions coexist in a shared graph |
-| `pystrider/semantics.cnl` / `semantics.py` | operational semantics (7 Horn rules, **state/cell-threaded**, frame keyed on any CFG edge, CNL data) + loader |
-| `pystrider/analysis.py` | hypothesis loop on public firmware — **`suppose(commit=False)` read-only + `focus_scope`, one KB reused across sites** (optionally an external shared `kb`) + `repair` / `choose_repair` |
+| `pystrider/semantics.cnl` / `semantics.py` | operational semantics (**8 Horn rules**: value-flow 1–5, the two OUTCOME rules `raises attribute_error` + `returns_none yes`, **state/cell-threaded**, frame keyed on any CFG edge, CNL data) + loader |
+| `pystrider/analysis.py` | hypothesis loop on public firmware — a shared `_detect` core (**`suppose(commit=False)` read-only + `focus_scope`, one KB reused across sites**, optional external `kb`); `analyze` (None-deref) / `analyze_return_none` (returns-None); effect-generic `candidate_edits` / `choose_repair` |
 | `pystrider/session.py` | **Session**: several functions in one shared graph; namespaced identity, per-function focus, cross-call value-flow linking (`link_calls` / `analyze_across_call`), label-rendered traces |
-| `pystrider/operators.cnl` / `operators.py` | effect-keyed operator library + backward-CHAIN retrieval (source-name ⇄ namespaced graph-id at the fact boundary) |
-| `pystrider/transform.py` | AST-rewrite mechanism (materialize an edit as real source) |
+| `pystrider/operators.cnl` / `operators.py` | effect-keyed operator library (None-deref guards + returns-None coalesce ops) + backward-CHAIN retrieval (source-name ⇄ namespaced graph-id at the fact boundary) |
+| `pystrider/transform.py` | AST-rewrite mechanism (guard insertion; `coalesce_return`) — materialize an edit as real source |
+| `demos/` | four focused, runnable walkthroughs (core loop, state-threading, Session/inter-procedural, second effect) + `run.py` |
 | `experiments/state_threading.py` | the original **probe** that validated the cell-lattice approach (now productized in intake/semantics) |
-| `tests/` | `test_spike.py` (28, slice-A/A′ + boundary-guard pins), `test_state_threading.py` (4), `test_session.py` (7, slice-B: distinct same-named nodes, per-function focus, read-only isolation, cross-call flow) |
+| `tests/` | 44 green: `test_spike.py` (28, slice-A/A′ + boundary-guard), `test_state_threading.py` (4), `test_session.py` (7, slice-B), `test_effects.py` (5, slice-C: returns-None effect, effect independence, CHOOSE for the new effect, None-deref path unchanged) |
 
 **Conventions / gotchas (don't relearn these the hard way):**
 - Reasoning goes through the **public firmware only** (`suppose`/`chain_sip`/`ask_goal`/`choose`).
@@ -179,15 +184,25 @@ each analyzed under its own focus, with value flow across a call boundary.
 caller (return-value threading); today the link is one-directional arg→param. A `converse`
 ask/suspend channel for concolic grounding is still future (see "Not started").
 
-### Slice C — breadth: a second effect kind  *(low-risk validation; small)*
+### Slice C — breadth: a second effect kind  ✅ **DONE (2026-07-12)**
 
-**Goal.** Prove the operator library + retrieval generalize past None-derefs. Add one new
-outcome (e.g. **wrong return value** — "returns None when a non-None was intended", or an
-**unhandled exception** path) with its own semantics rule(s), and 1–2 operators in
-`operators.cnl` keyed to the new effect (e.g. change-default, early-return). No new machinery —
-authoring in the `.cnl` + a strategy function in `operators.STRATEGIES`.
-**Done when:** `choose_repair` retrieves and selects an edit for the new effect, verified by
-re-execution, with the None-deref path unchanged.
+**Goal (met).** The operator library + retrieval + CHOOSE + verify-by-re-execution generalize past
+None-derefs.
+
+**What shipped.**
+- **New effect `returns_none`** — semantics rule (7): `?s returns_none yes when ?s is_a return and
+  ?s returns ?e and ?e eval_to ?v and ?v is_a none_value`. Over the *same* value-flow rules; no new
+  machinery. Intake tracks `returns` / `return_var` (structural only — the boundary-guard pin now
+  also forbids `returns_none` from intake).
+- **`analyze_return_none`** via a factored `_detect` core shared with `analyze` (the None-deref path
+  is byte-identical — the prediction `(pred, obj)` and the `kind`/`base_of` are the only knobs).
+- **Two library operators** keyed to `returns_none` (`coalesce_or` → `return v or {}`,
+  `coalesce_ifexp` → `return v if v is not None else {}`) + `provides_return` + `coalesce_return`
+  transform. `candidate_edits`/`choose_repair` gained a `provides_fn` + `analyzer` parameter (default
+  = the None-deref effect), so the *same* retrieve/verify/CHOOSE loop serves both effects.
+- **Pins** (`test_effects.py`, 5): the effect fires + is sound, the two effects are independent and
+  can coexist on one function, `choose_repair` retrieves + verifies + selects the graded-best
+  coalesce edit, and the None-deref selection is unchanged.
 
 ---
 
@@ -200,10 +215,16 @@ re-execution, with the None-deref path unchanged.
 
 ## Open questions still live
 
-See `docs/code_reasoning_design.md` "Open questions" — with slices A, A′, **and B** landed, the
+See `docs/code_reasoning_design.md` "Open questions" — with slices A, A′, B, **and C** landed, the
 load-bearing ones now are **fuel-knob refinement** (fixed-depth unroll → a fixpoint / widening, or
-an explicit UNKNOWN-on-exhaustion, and per-path branch refinement) and **guard cost of two monotone
-axes**. Slice B put several functions' *states* in one shared graph (the first axis at session
-scale) — the guard-cost benchmark is now runnable there; the second axis (code *versions* as
-`<version>` hyperedges) is still unbuilt. The recommended next slice is **C** (a second effect kind
-— breadth, low-risk) to validate the operator library generalizes past None-derefs.
+an explicit UNKNOWN-on-exhaustion, and per-path branch refinement — including the noted partiality
+that a tail `if v is not None:` guard threads its body linearly and a general fork does not assume
+its condition) and **guard cost of two monotone axes**. Slice B put several functions' *states* in
+one shared graph (the first axis at session scale) — the guard-cost benchmark is now runnable there;
+the second axis (code *versions* as `<version>` hyperedges) is still unbuilt.
+
+**Recommended next:** either (a) **branch/path refinement** (the biggest correctness gap — a general
+fork should narrow its var on the then-path; today it is a sound may-union), or (b) **breadth via
+more effects/operators** (unhandled-exception paths, early-return/default operators), or (c) the
+**code-versioning axis** (`<version>` hyperedges, `corresponds_to`) to exercise the second monotone
+axis and the guard-cost benchmark.

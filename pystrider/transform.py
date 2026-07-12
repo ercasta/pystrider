@@ -47,6 +47,32 @@ def insert_none_guard(src: str, var: str, line: int) -> str:
     return ast.unparse(tree)
 
 
+def coalesce_return(src: str, var: str, line: int, *, explicit: bool = False) -> str:
+    """Return `src` with the `return <expr>` at `line` rewritten to yield a non-None default when
+    the value is None — the fix for the `returns_none` effect (Slice C). Two graded styles:
+
+    - compact (`explicit=False`):  `return {var} or {{}}`
+    - explicit (`explicit=True`):  `return {var} if {var} is not None else {{}}`
+
+    Both are genuinely non-None; re-intake models the rewritten value conservatively (not provably
+    None), so `returns_none` clears under verification-by-re-execution."""
+    tree = ast.parse(src)
+    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
+    body, idx = _covering_stmt(func, line)
+    default = ast.Dict(keys=[], values=[])                    # a concrete non-None default: `{}`
+    name = ast.Name(id=var, ctx=ast.Load())
+    if explicit:
+        value: ast.expr = ast.IfExp(
+            test=ast.Compare(left=ast.Name(id=var, ctx=ast.Load()),
+                             ops=[ast.IsNot()], comparators=[ast.Constant(value=None)]),
+            body=name, orelse=default)
+    else:
+        value = ast.BoolOp(op=ast.Or(), values=[name, default])
+    body[idx] = ast.Return(value=value)
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
+
+
 def _guard_if(var: str, body: list[ast.stmt]) -> ast.If:
     return ast.If(
         test=ast.Compare(left=ast.Name(id=var, ctx=ast.Load()),

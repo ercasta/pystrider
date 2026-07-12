@@ -45,6 +45,8 @@ class Intake:
     attributes: list[str]            # every attribute-access expr id (candidate None-deref sites)
     source: str = ""                 # the source this was intaken from (for the transformer)
     attr_base_var: dict[str, str] = None   # attribute site -> the Name variable it dereferences
+    returns: list[str] = field(default_factory=list)            # every return-statement id
+    return_var: dict[str, str] = field(default_factory=dict)    # return id -> returned source var
     call_target: dict[str, str] = field(default_factory=dict)   # call id -> callee source name
     call_args: dict[str, list[str]] = field(default_factory=dict)  # call id -> positional arg exprs
     entry_state: str = "p0"          # the program point before the first statement
@@ -100,6 +102,8 @@ class _Walker:
         self.label_of: dict[str, str] = {}
         self.attributes: list[str] = []
         self.attr_base_var: dict[str, str] = {}
+        self.returns: list[str] = []              # every return-statement id (candidate returns-None sites)
+        self.return_var: dict[str, str] = {}      # return id -> the source Name it returns (if a bare var)
         self.call_target: dict[str, str] = {}     # call id -> callee SOURCE name (free-function calls)
         self.call_args: dict[str, list[str]] = {}  # call id -> positional argument expr ids
         self.func: str = ""              # the enclosing function NODE (namespaced; set by intake_function)
@@ -250,6 +254,9 @@ class _Walker:
             sid = self._scope(self._fresh("s"))
             self._emit(sid, "is_a", "return")
             self._emit(sid, "returns", self.expr(node.value, state))   # reads at `state` (terminal)
+            self.returns.append(sid)                                   # a candidate returns-None site
+            if isinstance(node.value, ast.Name):
+                self.return_var[sid] = node.value.id                   # the var a coalesce would default
             self.line_of[sid] = node.lineno
             self.label_of[sid] = self._snippet(node)
             return state
@@ -360,6 +367,7 @@ def intake_function(src: str, *, loop_unroll: int = 2, namespace: str = "") -> I
     return Intake(func=fn.name, params=params, facts=w.facts,
                   line_of=w.line_of, label_of=w.label_of, attributes=w.attributes,
                   source=src, attr_base_var=w.attr_base_var,
+                  returns=w.returns, return_var=w.return_var,
                   call_target=w.call_target, call_args=w.call_args,
                   entry_state=w.entry_state, states=w.states, state_of=w.state_of,
                   namespace=namespace)

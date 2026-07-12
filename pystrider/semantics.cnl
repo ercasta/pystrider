@@ -29,5 +29,10 @@
 # (5) ... an unguarded attribute access is reached by default
 ?e reached yes when ?e is_a attribute and not ?e within_guard ?g
 
-# (6) THE OUTCOME: a reached attribute access on a none-valued base raises AttributeError
+# (6) OUTCOME (effect 1): a reached attribute access on a none-valued base raises AttributeError
 ?e raises attribute_error when ?e is_a attribute and ?e reached yes and ?e attr_of ?base and ?base eval_to ?v and ?v is_a none_value
+
+# (7) OUTCOME (effect 2 — Slice C): a return statement whose expression evaluates to none returns
+# None. Proves the operator library + retrieval + CHOOSE generalize past the None-deref effect: a
+# SECOND outcome, authored as one more rule over the same value-flow, needing no new machinery.
+?s returns_none yes when ?s is_a return and ?s returns ?e and ?e eval_to ?v and ?v is_a none_value

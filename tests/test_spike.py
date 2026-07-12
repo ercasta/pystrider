@@ -317,7 +317,7 @@ def test_intake_emits_only_structure_never_reasoning():
     # The load-bearing design claim: intake materializes STRUCTURE; every value/outcome fact is
     # DERIVED by a ugm rule, never written by Python. If a reasoning predicate ever leaks into
     # intake, the analysis has silently migrated out of the engine — this pin catches that.
-    REASONING = {"has_value", "eval_to", "guard_open", "reached", "raises"}
+    REASONING = {"has_value", "eval_to", "guard_open", "reached", "raises", "returns_none"}
     for src in (NONE_DEREF, REASSIGN, BRANCH, MAY_SKIP, DEPTH2,
                 "def f(x):\n    y = x\n    if y is not None:\n        return y.bar()\n"):
         emitted = {p for _, p, _ in intake_function(src).facts}

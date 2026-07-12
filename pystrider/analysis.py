@@ -14,6 +14,7 @@ version — and re-runs the analysis inside it to confirm the outcome clears.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 import ugm as h
 from ugm import suppose, ask_goal, CONFIRMED
@@ -83,17 +84,20 @@ def _hypothesis_facts(intake: Intake, hypothesis: dict[str, str]):
     return assumptions, extra
 
 
+# the outcome vocabulary the rules key on — always kept in focus so any effect stays derivable.
+_OUTCOME_VOCAB = frozenset({"attribute_error", "returns_none", "yes", "none"})
+
+
 def _focus_of(intake: Intake, assumptions: list[tuple[str, str, str]],
               extra: list[tuple[str, str, str]]) -> frozenset[str]:
     """The attention bound for this hypothesis: the function's own entity names plus the value /
-    outcome vocab the assumptions + predictions reference (`attribute_error`, the value nodes). One
-    function = the whole graph (no-op); the bound bites once a Session holds several functions."""
+    outcome vocab the assumptions + predictions reference. One function = the whole graph (no-op);
+    the bound bites once a Session holds several functions."""
     names = set(intake.entity_names())
     for s, _p, o in list(assumptions) + list(extra):
         names.add(s)
         names.add(o)
-    names.add("attribute_error")
-    return frozenset(names)
+    return frozenset(names) | _OUTCOME_VOCAB
 
 
 def _ensure_facts(g: "h.Graph", facts: list[tuple[str, str, str]]) -> None:
@@ -105,23 +109,19 @@ def _ensure_facts(g: "h.Graph", facts: list[tuple[str, str, str]]) -> None:
             g.add_relation(_node(g, s), p, _node(g, o))
 
 
-def analyze(intake: Intake, hypothesis: dict[str, str], *,
+def _detect(intake: Intake, hypothesis: dict[str, str], *,
+            targets: list[str], pred: str, obj: str, kind: str,
+            base_of: "Callable[[str], str]",
             extra_facts: list[tuple[str, str, str]] | None = None,
             focus_scope: frozenset[str] | None = None,
             kb: "h.Graph | None" = None) -> list[Outcome]:
-    """Under `hypothesis` (param -> 'none'|'object'), find every attribute site that raises
-    AttributeError. Each confirmed site carries its RECORD provenance trace.
+    """The shared detection core for ANY effect: seed `hypothesis`, then for each `target` node check
+    the prediction `(pred, target, obj)` under `suppose(commit=False)` (read-only), and render the
+    RECORD trace for the confirmed ones. `kind` + `base_of` shape the resulting `Outcome`s.
 
-    Detection is a **pure query over the KB** — `suppose(commit=False)` inks nothing, so the world
-    is reused across every site (ugm feedback #6 retired the old rebuild-per-site dance). Attention
-    is bounded by `focus_scope` (feedback #7), defaulting to this function's working set.
-
-    `kb` lets a `Session` run this against a **shared, accreting graph** holding several functions:
-    detection stays read-only (nothing inked into the shared graph — so other functions and other
-    hypotheses are never contaminated), and `focus_scope` keeps the cost tracking this function, not
-    the whole graph. Trace rendering (which needs the hypothesis present to re-derive the RECORD
-    tree) then happens on a private scratch KB, never the shared one. `kb=None` builds a private
-    world from `intake` (the single-function default)."""
+    Detection reuses one KB read-only (feedback #6) and is `focus_scope`-bounded (feedback #7). `kb`
+    lets a Session share one accreting graph across functions without contaminating it; traces then
+    render on a private scratch KB. `kb=None` builds a private world (single-function default)."""
     rg = build_rule_graph()
     rules = rule_list()
     assumptions, type_extra = _hypothesis_facts(intake, hypothesis)
@@ -132,9 +132,9 @@ def analyze(intake: Intake, hypothesis: dict[str, str], *,
     detect_kb = _kb_from(intake, extra) if own else kb
     if not own:
         _ensure_facts(detect_kb, extra)                    # shared value vocab (e.g. obj), monotone
-    confirmed = [site for site in intake.attributes
+    confirmed = [t for t in targets
                  if suppose(detect_kb, rg, assumptions=assumptions,
-                            predictions=[("raises", site, "attribute_error")],
+                            predictions=[(pred, t, obj)],
                             commit=False, focus_scope=focus).status == CONFIRMED]
     if not confirmed:
         return []
@@ -144,14 +144,37 @@ def analyze(intake: Intake, hypothesis: dict[str, str], *,
     for s, p, o in assumptions:                            # ink the hypothesis ONCE to render traces
         trace_kb.add_relation(_node(trace_kb, s), p, _node(trace_kb, o))
     outcomes: list[Outcome] = []
-    for site in confirmed:
-        trace = ask_goal(trace_kb, f"why {site} raises attribute_error", rules)
+    for t in confirmed:
+        trace = ask_goal(trace_kb, f"why {t} {pred} {obj}", rules)
         outcomes.append(Outcome(
-            site=site, label=intake.label_of.get(site, site),
-            line=intake.line_of.get(site, 0), kind="attribute_error",
-            hypothesis=dict(hypothesis),
-            base_var=intake.attr_base_var.get(site, ""), trace=trace))
+            site=t, label=intake.label_of.get(t, t),
+            line=intake.line_of.get(t, 0), kind=kind,
+            hypothesis=dict(hypothesis), base_var=base_of(t), trace=trace))
     return outcomes
+
+
+def analyze(intake: Intake, hypothesis: dict[str, str], *,
+            extra_facts: list[tuple[str, str, str]] | None = None,
+            focus_scope: frozenset[str] | None = None,
+            kb: "h.Graph | None" = None) -> list[Outcome]:
+    """Under `hypothesis` (param -> 'none'|'object'), find every attribute site that raises
+    AttributeError (effect 1). Each confirmed site carries its RECORD provenance trace."""
+    return _detect(intake, hypothesis, targets=intake.attributes,
+                   pred="raises", obj="attribute_error", kind="attribute_error",
+                   base_of=lambda t: intake.attr_base_var.get(t, ""),
+                   extra_facts=extra_facts, focus_scope=focus_scope, kb=kb)
+
+
+def analyze_return_none(intake: Intake, hypothesis: dict[str, str], *,
+                        extra_facts: list[tuple[str, str, str]] | None = None,
+                        focus_scope: frozenset[str] | None = None,
+                        kb: "h.Graph | None" = None) -> list[Outcome]:
+    """Under `hypothesis`, find every return statement that yields None (effect 2 — Slice C). Same
+    machinery as `analyze`, a different effect key: proves the loop generalizes past None-derefs."""
+    return _detect(intake, hypothesis, targets=intake.returns,
+                   pred="returns_none", obj="yes", kind="returns_none",
+                   base_of=lambda t: intake.return_var.get(t, ""),
+                   extra_facts=extra_facts, focus_scope=focus_scope, kb=kb)
 
 
 # --- modification (step 5): the "insert a guard" transformation operator -----------------
@@ -212,18 +235,21 @@ class Candidate:
         return min(self.locality, self.compactness) if self.cleared else 0.0
 
 
-def candidate_edits(intake: Intake, hypothesis: dict[str, str],
-                    outcome: Outcome) -> list[Candidate]:
-    """RETRIEVE applicable operators from the effect-keyed library by backward-CHAIN, materialize
-    each as real source, and VERIFY each by re-execution. The candidate set is chosen by the
-    library (operators-as-data), not a hard-coded Python list; fit weights come from the library."""
-    site_provides = ops.provides(intake, outcome.base_var)
+def candidate_edits(intake: Intake, hypothesis: dict[str, str], outcome: Outcome, *,
+                    provides_fn: "Callable[[Intake, str], set[str]]" = ops.provides,
+                    analyzer: "Callable[..., list[Outcome]]" = analyze) -> list[Candidate]:
+    """RETRIEVE applicable operators from the effect-keyed library by backward-CHAIN (keyed on
+    `outcome.kind`), materialize each as real source, and VERIFY each by re-execution. The candidate
+    set is chosen by the library (operators-as-data), not a hard-coded Python list; fit weights come
+    from the library. `provides_fn` + `analyzer` swap the effect (None-deref by default; a
+    returns-None outcome passes `ops.provides_return` + `analyze_return_none`) with no new machinery."""
+    site_provides = provides_fn(intake, outcome.base_var)
     applicable = ops.retrieve(outcome.site, outcome.kind, site_provides)
 
     out: list[Candidate] = []
     for op in applicable:
         var, v2 = ops.STRATEGIES[op.strategy](intake, outcome)
-        residual = analyze(intake_function(v2), hypothesis)
+        residual = analyzer(intake_function(v2), hypothesis)
         cleared = not any(o.label == outcome.label for o in residual)
         out.append(Candidate(name=op.name, var=var, description=op.description.format(var=var),
                              v2_source=v2, cleared=cleared,
@@ -238,11 +264,14 @@ class Selection:
     trace: list[str]             # explain_choice — the auditable CHOOSE why-trace
 
 
-def choose_repair(intake: Intake, hypothesis: dict[str, str],
-                  outcome: Outcome) -> Selection:
+def choose_repair(intake: Intake, hypothesis: dict[str, str], outcome: Outcome, *,
+                  provides_fn: "Callable[[Intake, str], set[str]]" = ops.provides,
+                  analyzer: "Callable[..., list[Outcome]]" = analyze) -> Selection:
     """Generate + verify candidate edits, then use the public CHOOSE firmware mode to pick the
-    graded-best (smallest / most-local edit wins). Losers are retained + auditable (monotone)."""
-    cands = candidate_edits(intake, hypothesis, outcome)
+    graded-best (smallest / most-local edit wins). Losers are retained + auditable (monotone).
+    `provides_fn` + `analyzer` select the effect (see `candidate_edits`)."""
+    cands = candidate_edits(intake, hypothesis, outcome,
+                            provides_fn=provides_fn, analyzer=analyzer)
     g = h.Graph()
     goal = g.add_node("repair_goal")
     node_of: dict[str, Candidate] = {}

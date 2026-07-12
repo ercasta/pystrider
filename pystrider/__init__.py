@@ -9,7 +9,7 @@ from .intake import Intake, intake_function
 from .semantics import SEMANTICS, build_rule_graph, rule_list
 from .analysis import (
     Outcome, Repair, Candidate, Selection,
-    analyze, analyze_source, guarded_variant, repair,
+    analyze, analyze_return_none, analyze_source, guarded_variant, repair,
     candidate_edits, choose_repair,
 )
 from .transform import insert_none_guard, insert_none_guard_range
@@ -20,7 +20,7 @@ __all__ = [
     "Intake", "intake_function",
     "SEMANTICS", "build_rule_graph", "rule_list",
     "Outcome", "Repair", "Candidate", "Selection",
-    "analyze", "analyze_source", "guarded_variant", "repair",
+    "analyze", "analyze_return_none", "analyze_source", "guarded_variant", "repair",
     "candidate_edits", "choose_repair",
     "insert_none_guard", "insert_none_guard_range",
     "Operator", "LIBRARY", "retrieve",
