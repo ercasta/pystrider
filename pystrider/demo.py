@@ -53,10 +53,11 @@ def main() -> None:
         print("  outcome under x=None after the edit:",
               "CLEARED  OK" if rep.cleared else f"STILL PRESENT: {rep.residual}")
 
-    _banner("5c. MEANS-ENDS SELECTION  -- propose several edits, verify each, CHOOSE the best")
+    _banner("5c. MEANS-ENDS  -- RETRIEVE operators by effect (backward-CHAIN), verify, CHOOSE")
     if outs:
         sel = choose_repair(ik, {"x": "none"}, outs[0])
-        print("  candidates (all materialized as real source, each verified by re-execution):")
+        print("  operators retrieved from the effect-keyed library for `attribute_error`,")
+        print("  each materialized as real source and verified by re-execution:")
         for c in sel.candidates:
             mark = "verified" if c.cleared else "UNVERIFIED"
             print(f"    - {c.name:16} tests {c.var:2} | fit {c.fit:.2f} | {mark} | {c.description}")

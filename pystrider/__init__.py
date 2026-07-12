@@ -13,6 +13,7 @@ from .analysis import (
     candidate_edits, choose_repair,
 )
 from .transform import insert_none_guard, insert_none_guard_range
+from .operators import Operator, LIBRARY, retrieve
 
 __all__ = [
     "Intake", "intake_function",
@@ -21,4 +22,5 @@ __all__ = [
     "analyze", "analyze_source", "guarded_variant", "repair",
     "candidate_edits", "choose_repair",
     "insert_none_guard", "insert_none_guard_range",
+    "Operator", "LIBRARY", "retrieve",
 ]

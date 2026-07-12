@@ -18,8 +18,10 @@ For `def f(x): y = x; return y.bar()`:
 - under **SUPPOSE `x = None`**, CHAIN the semantics → derive `y.bar` **raises AttributeError**,
 - render the **RECORD trace** (real UGM provenance: `x=None → y binds None → y.bar on None → AttributeError`),
 - a benign hypothesis (`x = object`) fires **nothing** (no false positive), and
-- **materializes a real edit** — rewrites the AST to `if y is not None: return y.bar()`, then
-  re-intakes and re-analyzes that edited source to confirm the outcome clears.
+- runs the full **means-ends repair loop**: **retrieves** applicable edit operators from an
+  effect-keyed library by backward-CHAIN, **materializes** each as real Python (AST rewrite),
+  **verifies** each by re-intaking + re-analyzing the edited source, and **CHOOSEs** the
+  smallest/most-local one (`if y is not None: return y.bar()`).
 
 ## Layout
 
@@ -27,8 +29,9 @@ For `def f(x): y = x; return y.bar()`:
 |---|---|
 | `pystrider/intake.py` | the §8 code-intake tool — `ast` → graph facts (materializes structure; *not* CNL) |
 | `pystrider/semantics.py` | the operational semantics as 6 Horn rules (machine-rule CNL — data) |
-| `pystrider/analysis.py` | the hypothesis loop on the public UGM firmware (`suppose` / `ask_goal`) + `repair` |
-| `pystrider/transform.py` | transformation operator — rewrites the AST to materialize an edit as real source |
+| `pystrider/analysis.py` | the hypothesis loop on the public UGM firmware (`suppose` / `ask_goal`) + `repair` / `choose_repair` |
+| `pystrider/operators.py` | effect-keyed transformation-operator library, retrieved by backward-CHAIN |
+| `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
 | `pystrider/demo.py` | end-to-end five-step walkthrough |
 | `tests/test_spike.py` | behaviour pins (6, green) |
 | `docs/` | the design sketch + the spike findings |

@@ -21,7 +21,8 @@ from ugm import set_candidate, choose, explain_choice, winners_of
 
 from .intake import Intake, intake_function
 from .semantics import build_rule_graph, rule_list
-from .transform import insert_none_guard, insert_none_guard_range
+from .transform import insert_none_guard
+from . import operators as ops
 
 
 # the value nodes a hypothesis can bind a parameter to, with their lattice type fact.
@@ -156,53 +157,22 @@ class Candidate:
         return min(self.locality, self.compactness) if self.cleared else 0.0
 
 
-def _assign_line_of(intake: Intake, var: str) -> int | None:
-    """Line of the assignment that sets `var` (for a range-wrapping edit)."""
-    stmt = next((s for (s, p, o) in intake.facts if p == "assigns" and o == var), None)
-    return intake.line_of.get(stmt) if stmt else None
-
-
-def _root_param(intake: Intake, var: str) -> str | None:
-    """The parameter `var`'s value traces back to (via a single `var = <param>` assignment)."""
-    facts = intake.facts
-    stmt = next((s for (s, p, o) in facts if p == "assigns" and o == var), None)
-    if not stmt:
-        return None
-    e = next((o for (s, p, o) in facts if s == stmt and p == "from_expr"), None)
-    src = next((o for (s, p, o) in facts if s == e and p == "reads"), None)
-    return src if src in intake.params else None
-
-
 def candidate_edits(intake: Intake, hypothesis: dict[str, str],
                     outcome: Outcome) -> list[Candidate]:
-    """Propose several repair operators for `outcome`, materialize each as real source, and VERIFY
-    each by re-execution. Returns every candidate (verified or not) with its graded fit."""
-    base = outcome.base_var
-    root = _root_param(intake, base)
-    assign_line = _assign_line_of(intake, base)
-    src = intake.source
-
-    specs = [
-        ("guard-base", base, f"wrap the deref in `if {base} is not None:` (most local)",
-         lambda: insert_none_guard(src, base, outcome.line), 1.0, 1.0),
-    ]
-    if root and root != base:
-        specs.append(
-            ("guard-param", root, f"wrap the deref in `if {root} is not None:` (root cause)",
-             lambda: insert_none_guard(src, root, outcome.line), 0.7, 1.0))
-        if assign_line is not None:
-            specs.append(
-                ("guard-param-wide", root,
-                 f"wrap `{base} = {root}` through the deref in `if {root} is not None:` (wider)",
-                 lambda: insert_none_guard_range(src, root, assign_line, outcome.line), 0.7, 0.5))
+    """RETRIEVE applicable operators from the effect-keyed library by backward-CHAIN, materialize
+    each as real source, and VERIFY each by re-execution. The candidate set is chosen by the
+    library (operators-as-data), not a hard-coded Python list; fit weights come from the library."""
+    site_provides = ops.provides(intake, outcome.base_var)
+    applicable = ops.retrieve(outcome.site, outcome.kind, site_provides)
 
     out: list[Candidate] = []
-    for name, var, desc, make, locality, compact in specs:
-        v2 = make()
+    for op in applicable:
+        var, v2 = ops.STRATEGIES[op.strategy](intake, outcome)
         residual = analyze(intake_function(v2), hypothesis)
         cleared = not any(o.label == outcome.label for o in residual)
-        out.append(Candidate(name=name, var=var, description=desc, v2_source=v2,
-                             cleared=cleared, locality=locality, compactness=compact))
+        out.append(Candidate(name=op.name, var=var, description=op.description.format(var=var),
+                             v2_source=v2, cleared=cleared,
+                             locality=op.locality, compactness=op.compactness))
     return out
 
 

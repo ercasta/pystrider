@@ -117,11 +117,11 @@ def test_choose_repair_prefers_the_most_local_edit():
     sel = choose_repair(ik, {"x": "none"}, outcome)
     # several distinct candidates were proposed ...
     names = {c.name for c in sel.candidates}
-    assert {"guard-base", "guard-param"} <= names
+    assert {"guard_base", "guard_param"} <= names
     # ... every one materialized real source that actually clears the outcome ...
     assert all(c.cleared for c in sel.candidates)
     # ... and CHOOSE picked the most-local / smallest edit (guard the deref's own base var)
-    assert sel.winner is not None and sel.winner.name == "guard-base"
+    assert sel.winner is not None and sel.winner.name == "guard_base"
     assert sel.winner.var == "y"
 
 
@@ -130,8 +130,28 @@ def test_choose_repair_trace_retains_beaten_alternatives():
     outcome = analyze(ik, {"x": "none"})[0]
     sel = choose_repair(ik, {"x": "none"}, outcome)
     joined = "\n".join(sel.trace)
-    assert "satisfied_by guard-base" in joined          # the winner
+    assert "satisfied_by guard_base" in joined          # the winner
     assert "beaten" in joined                            # losers retained + auditable (monotone)
+
+
+def test_operator_retrieval_discriminates_on_precondition():
+    # a DIRECT param deref (`return x.bar()`) has no root-param chain, so the root-guard
+    # operators are not retrieved by backward-CHAIN — only the local guard applies.
+    ik = intake_function("def f(x):\n    return x.bar()\n")
+    outcome = analyze(ik, {"x": "none"})[0]
+    sel = choose_repair(ik, {"x": "none"}, outcome)
+    assert {c.name for c in sel.candidates} == {"guard_base"}
+    assert sel.winner.name == "guard_base" and sel.winner.var == "x"
+
+
+def test_operators_are_retrieved_by_effect_from_the_library():
+    from pystrider import operators as ops
+    # all three ops prevent attribute_error when the site provides both preconditions ...
+    both = ops.retrieve("attr5", "attribute_error", {"deref_base_known", "root_param_known"})
+    assert {op.name for op in both} == {"guard_base", "guard_param", "guard_param_wide"}
+    # ... but an operator for a DIFFERENT effect is never retrieved
+    none = ops.retrieve("attr5", "some_other_error", {"deref_base_known", "root_param_known"})
+    assert none == []
 
 
 def test_candidate_fit_is_zero_when_unverified():
