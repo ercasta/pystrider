@@ -17,10 +17,11 @@ from dataclasses import dataclass, field
 
 import ugm as h
 from ugm import suppose, ask_goal, CONFIRMED
+from ugm import set_candidate, choose, explain_choice, winners_of
 
 from .intake import Intake, intake_function
 from .semantics import build_rule_graph, rule_list
-from .transform import insert_none_guard
+from .transform import insert_none_guard, insert_none_guard_range
 
 
 # the value nodes a hypothesis can bind a parameter to, with their lattice type fact.
@@ -133,6 +134,101 @@ def repair(intake: Intake, hypothesis: dict[str, str], outcome: Outcome) -> Repa
     cleared = all(o.site != outcome.site and o.label != outcome.label for o in residual)
     return Repair(var=var, v2_source=v2_source, cleared=cleared and not residual,
                   residual=residual)
+
+
+# --- means-ends SELECTION: several candidate edits, verified, then CHOOSE the graded-best ------
+
+@dataclass
+class Candidate:
+    """One proposed edit: its materialized source, whether it verifies, and its graded fit."""
+    name: str
+    var: str                     # the variable the guard tests
+    description: str
+    v2_source: str
+    cleared: bool                # did it verify (outcome gone under re-execution)?
+    locality: float              # 1.0 = acts at the deref's own base var; lower = upstream/wider
+    compactness: float           # 1.0 = smallest edit; lower = wraps more code
+
+    @property
+    def fit(self) -> float:
+        # non-compensatory (min) — matches ugm's t-norm graded reading; an edit is only as good
+        # as its weakest dimension. Unverified edits are ineligible (fit 0).
+        return min(self.locality, self.compactness) if self.cleared else 0.0
+
+
+def _assign_line_of(intake: Intake, var: str) -> int | None:
+    """Line of the assignment that sets `var` (for a range-wrapping edit)."""
+    stmt = next((s for (s, p, o) in intake.facts if p == "assigns" and o == var), None)
+    return intake.line_of.get(stmt) if stmt else None
+
+
+def _root_param(intake: Intake, var: str) -> str | None:
+    """The parameter `var`'s value traces back to (via a single `var = <param>` assignment)."""
+    facts = intake.facts
+    stmt = next((s for (s, p, o) in facts if p == "assigns" and o == var), None)
+    if not stmt:
+        return None
+    e = next((o for (s, p, o) in facts if s == stmt and p == "from_expr"), None)
+    src = next((o for (s, p, o) in facts if s == e and p == "reads"), None)
+    return src if src in intake.params else None
+
+
+def candidate_edits(intake: Intake, hypothesis: dict[str, str],
+                    outcome: Outcome) -> list[Candidate]:
+    """Propose several repair operators for `outcome`, materialize each as real source, and VERIFY
+    each by re-execution. Returns every candidate (verified or not) with its graded fit."""
+    base = outcome.base_var
+    root = _root_param(intake, base)
+    assign_line = _assign_line_of(intake, base)
+    src = intake.source
+
+    specs = [
+        ("guard-base", base, f"wrap the deref in `if {base} is not None:` (most local)",
+         lambda: insert_none_guard(src, base, outcome.line), 1.0, 1.0),
+    ]
+    if root and root != base:
+        specs.append(
+            ("guard-param", root, f"wrap the deref in `if {root} is not None:` (root cause)",
+             lambda: insert_none_guard(src, root, outcome.line), 0.7, 1.0))
+        if assign_line is not None:
+            specs.append(
+                ("guard-param-wide", root,
+                 f"wrap `{base} = {root}` through the deref in `if {root} is not None:` (wider)",
+                 lambda: insert_none_guard_range(src, root, assign_line, outcome.line), 0.7, 0.5))
+
+    out: list[Candidate] = []
+    for name, var, desc, make, locality, compact in specs:
+        v2 = make()
+        residual = analyze(intake_function(v2), hypothesis)
+        cleared = not any(o.label == outcome.label for o in residual)
+        out.append(Candidate(name=name, var=var, description=desc, v2_source=v2,
+                             cleared=cleared, locality=locality, compactness=compact))
+    return out
+
+
+@dataclass
+class Selection:
+    winner: Candidate | None
+    candidates: list[Candidate]
+    trace: list[str]             # explain_choice — the auditable CHOOSE why-trace
+
+
+def choose_repair(intake: Intake, hypothesis: dict[str, str],
+                  outcome: Outcome) -> Selection:
+    """Generate + verify candidate edits, then use the public CHOOSE firmware mode to pick the
+    graded-best (smallest / most-local edit wins). Losers are retained + auditable (monotone)."""
+    cands = candidate_edits(intake, hypothesis, outcome)
+    g = h.Graph()
+    goal = g.add_node("repair_goal")
+    node_of: dict[str, Candidate] = {}
+    for c in cands:
+        opt = g.add_node(c.name)
+        node_of[c.name] = c
+        set_candidate(g, goal, opt, c.fit)          # only verified edits carry positive fit
+    winners = choose(g, goal, alpha=0.01)           # α-cut drops unverified (fit 0) candidates
+    trace = explain_choice(g, goal)
+    winner = node_of[g.name(winners[0])] if winners else None
+    return Selection(winner=winner, candidates=cands, trace=trace)
 
 
 def analyze_source(src: str, hypothesis: dict[str, str]) -> tuple[Intake, list[Outcome]]:

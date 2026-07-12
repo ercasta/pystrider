@@ -45,3 +45,30 @@ def insert_none_guard(src: str, var: str, line: int) -> str:
     body[idx] = guard
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
+
+
+def _guard_if(var: str, body: list[ast.stmt]) -> ast.If:
+    return ast.If(
+        test=ast.Compare(left=ast.Name(id=var, ctx=ast.Load()),
+                         ops=[ast.IsNot()], comparators=[ast.Constant(value=None)]),
+        body=body, orelse=[])
+
+
+def insert_none_guard_range(src: str, var: str, from_line: int, to_line: int) -> str:
+    """Wrap the contiguous run of top-level statements spanning `from_line..to_line` in a single
+    `if {var} is not None:`. A wider (larger) edit than `insert_none_guard` — used to give CHOOSE
+    a real size gradient among candidate repairs."""
+    tree = ast.parse(src)
+    func = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
+    lo = hi = None
+    for i, stmt in enumerate(func.body):
+        end = getattr(stmt, "end_lineno", stmt.lineno)
+        if stmt.lineno <= to_line and end >= from_line:          # overlaps the range
+            lo = i if lo is None else lo
+            hi = i
+    if lo is None:
+        raise ValueError(f"no statements span lines {from_line}..{to_line}")
+    guarded = func.body[lo:hi + 1]
+    func.body[lo:hi + 1] = [_guard_if(var, guarded)]
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)

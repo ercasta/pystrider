@@ -4,7 +4,7 @@ Each test corresponds to one feasibility claim the spike set out to answer.
 """
 import ast
 
-from pystrider import intake_function, analyze, guarded_variant, repair
+from pystrider import intake_function, analyze, guarded_variant, repair, choose_repair
 from pystrider.analysis import VALUE_KINDS
 
 
@@ -107,6 +107,39 @@ def test_intake_reads_guarded_source():
     assert any(r == "tests" and o == "y" for (_, r, o) in facts)
     assert any(r == "within_guard" for (_, r, _o) in facts)
     assert analyze(ik, {"x": "none"}) == []                  # guarded code is clean under x=None
+
+
+# --- claim 7 (means-ends selection): propose several verified edits, CHOOSE the graded-best ---
+
+def test_choose_repair_prefers_the_most_local_edit():
+    ik = intake_function(NONE_DEREF)
+    outcome = analyze(ik, {"x": "none"})[0]
+    sel = choose_repair(ik, {"x": "none"}, outcome)
+    # several distinct candidates were proposed ...
+    names = {c.name for c in sel.candidates}
+    assert {"guard-base", "guard-param"} <= names
+    # ... every one materialized real source that actually clears the outcome ...
+    assert all(c.cleared for c in sel.candidates)
+    # ... and CHOOSE picked the most-local / smallest edit (guard the deref's own base var)
+    assert sel.winner is not None and sel.winner.name == "guard-base"
+    assert sel.winner.var == "y"
+
+
+def test_choose_repair_trace_retains_beaten_alternatives():
+    ik = intake_function(NONE_DEREF)
+    outcome = analyze(ik, {"x": "none"})[0]
+    sel = choose_repair(ik, {"x": "none"}, outcome)
+    joined = "\n".join(sel.trace)
+    assert "satisfied_by guard-base" in joined          # the winner
+    assert "beaten" in joined                            # losers retained + auditable (monotone)
+
+
+def test_candidate_fit_is_zero_when_unverified():
+    # fit is gated on verification: an edit that doesn't clear the outcome is ineligible
+    from pystrider.analysis import Candidate
+    c = Candidate(name="x", var="x", description="", v2_source="", cleared=False,
+                  locality=1.0, compactness=1.0)
+    assert c.fit == 0.0
 
 
 def test_value_kinds_are_the_declared_minimum_domain():

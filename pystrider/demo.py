@@ -5,7 +5,7 @@ Mirrors the design's vertical spike, steps 1-5, printing what the engine did at 
 from __future__ import annotations
 
 from .intake import intake_function
-from .analysis import analyze, repair
+from .analysis import analyze, repair, choose_repair
 
 SOURCE = """
 def f(x):
@@ -52,6 +52,18 @@ def main() -> None:
         print("  ----------------------------------------------------------------")
         print("  outcome under x=None after the edit:",
               "CLEARED  OK" if rep.cleared else f"STILL PRESENT: {rep.residual}")
+
+    _banner("5c. MEANS-ENDS SELECTION  -- propose several edits, verify each, CHOOSE the best")
+    if outs:
+        sel = choose_repair(ik, {"x": "none"}, outs[0])
+        print("  candidates (all materialized as real source, each verified by re-execution):")
+        for c in sel.candidates:
+            mark = "verified" if c.cleared else "UNVERIFIED"
+            print(f"    - {c.name:16} tests {c.var:2} | fit {c.fit:.2f} | {mark} | {c.description}")
+        print("  CHOOSE (ugm firmware, graded — smallest/most-local wins):")
+        for ln in sel.trace:
+            print("    " + ln)
+        print(f"  -> winner: {sel.winner.name} (`if {sel.winner.var} is not None:`)")
 
 
 if __name__ == "__main__":
