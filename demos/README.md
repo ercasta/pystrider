@@ -1,12 +1,12 @@
 # pystrider demos
 
-Four runnable, self-contained walkthroughs. Unlike the [UGM demos](../../ugm/demos) (each a
+Five runnable, self-contained walkthroughs. Unlike the [UGM demos](../../ugm/demos) (each a
 `.cnl` corpus), pystrider's demos are **Python scripts** — the analysis is a program (SUPPOSE a
 value, CHAIN the semantics, read the OUTCOME, CHOOSE a repair), not a corpus of facts. Each demo
 narrates what the engine does at each step and ends with a **NOW TRY CHANGING IT** section.
 
 ```bash
-python demos/run.py                          # run all four, in order
+python demos/run.py                          # run all five, in order
 python demos/run.py demos/01_none_deref.py   # run just one
 python demos/01_none_deref.py                # or run a demo directly
 ```
@@ -20,10 +20,11 @@ The runner adds the repo root to the path, so no install is required (though `pi
 | 2 | [`02_state_threading.py`](02_state_threading.py) | **Value flow that is correct.** Reassignment (the last write wins), branch-merge (union of both arms), and bounded loop unrolling — every join is a rule derivation, never a Python lattice meet. |
 | 3 | [`03_session_interprocedural.py`](03_session_interprocedural.py) | **A Session.** Several functions in ONE shared graph (identity by `(function, source_name)`), each analyzed under its own focus, with a value flowing **across a call boundary** into the callee. |
 | 4 | [`04_returns_none.py`](04_returns_none.py) | **A second effect kind.** "Returns None when a non-None was intended" — authored as one more semantics rule + two library operators, reusing the entire retrieve/verify/CHOOSE loop with no new machinery. |
+| 5 | [`05_whole_function_repair.py`](05_whole_function_repair.py) | **Whole-function auto-fix.** Repair to a fixpoint: fix *every* outcome (of any effect), each edit verified to make progress and introduce no regression, until the function is clean — with an audit log. |
 
-Read them in order: 1 is the whole idea in one screen; 2–4 each add one capability (correct value
-flow, cross-function reasoning, a second effect). Every conclusion the demos print is backed by a
-UGM derivation — the traces are real provenance, not hand-built strings.
+Read them in order: 1 is the whole idea in one screen; 2–5 each add one capability (correct value
+flow, cross-function reasoning, a second effect, whole-function auto-fix). Every conclusion the demos
+print is backed by a UGM derivation — the traces are real provenance, not hand-built strings.
 
 ## The shape of every demo
 
