@@ -20,7 +20,9 @@ The vertical loop is proven and productized across four analysis/repair slices; 
 spec → code synthesis** — is proven across six probes (compositional codegen from a business rule,
 control-flow synthesis gated by the analyzer, multi-function synthesis verified cross-call, and the
 call-graph shape itself), with its shared **selection loop now productized** in `pystrider/emit.py`.
-All green (128 tests):
+A **fourth axis — crash → root cause (diagnosis)** is proven as a seventh probe: the loop run backwards
+over the *hypothesis* space, abducing the input that reproduces an observed exception, then handing the
+cause to the repair axis. All green (138 tests):
 
 - **Slice A — correct value flow.** Value lives in a per-`(program-point, variable)` **cell
   lattice**, so reassignment (`y = a; y = b`), **branch-merge** (union of both arms), bounded
@@ -325,6 +327,62 @@ verification **re-parses the emitted program** to derive the real call graph fro
 it against the spec's requirements — trust by inspection of the artifact, never the claim. Run it:
 `python -m experiments.callgraph_synthesis`.
 
+## A fourth axis: crash → root cause (diagnosis)
+
+Analysis reads code; synthesis writes it; **diagnosis explains a crash**. Analysis runs the loop
+*forward* — you SUPPOSE an input and it derives what happens. But a real debugging session starts at
+the other end: you have a **traceback** — `AttributeError`, one line — and *no* input, and you must
+work out *what must have been true* for that to happen. That is **abduction**, and it is the analysis
+loop run **backwards over the hypothesis space** (as synthesis is it run backwards over the *code*
+space). A seventh probe ([`experiments/diagnosis.py`](experiments/diagnosis.py)) proves it:
+
+```python
+from experiments.diagnosis import Observation, diagnose, diagnose_and_fix
+
+src = (
+    "def pipeline(raw):\n"
+    "    data = validate(raw)\n"     # data is the validated (non-None) result ...
+    "    data = raw\n"               # ... clobbered by the raw input
+    "    return data.rows()\n"       # line 4: this is where AttributeError was seen
+)
+
+# given ONLY "AttributeError at line 4" — no input — abduce the cause:
+dx = diagnose(Observation(source=src, line=4, exc="AttributeError"))
+print(dx.explanation()[0])
+#   root cause: AttributeError at line 4 happens when raw is None
+
+# ...and hand the abduced cause straight to the productized repair axis:
+_dx, plan = diagnose_and_fix(Observation(source=src, line=4, exc="AttributeError"))
+print(plan.summary()[0])            # 1 edit(s) -> repaired to clean
+```
+
+The mirror is exact — same firmware, run the other way:
+
+| analysis (forward, productized) | diagnosis (this probe) |
+|---|---|
+| SUPPOSE input → derive every outcome | OBSERVE one outcome → abduce the inputs that entail it |
+| the value hypothesis is **given** | the value hypothesis is the **unknown**, solved for |
+| RECORD trace = why this input crashes | RECORD trace = why **this** crash happened (the reaching write) |
+| CHOOSE the graded-best **repair** | CHOOSE the graded-best **explanation** (Occam: the most specific cause) |
+| verify a repair by re-execution | verify a cause by re-execution (the *same* forward analyzer) |
+
+Three moves make it real. **(1) The root cause is *abduced*, not supplied** — `analyze` requires you
+to name the None parameter; diagnosis is handed only the crash and searches the hypothesis space
+(subsets of parameters supposed None, minimal-first) for the input that reproduces it, recovering
+`raw` plus the reaching-write chain that carried its None past the *second* assignment to the deref.
+**(2) CHOOSE picks the minimal cause** — many hypotheses reproduce a crash ("everything is None"
+always does); the *root* cause is the smallest set that still does, so an Occam prior is realized as a
+graded selection over the public CHOOSE firmware, a single-variable cause outgrading a
+supposing-everything one. **(3) A suspect is exonerated by re-execution** — in a two-parameter
+`process(cfg, data)` where each None crashes a *different* line, the cause of the line-3 crash is
+`cfg` alone: `data`'s None derives a line-*5* crash, so the forward semantics never derive the
+observed outcome under it and it never enters the candidate set (trust by the checker, as everywhere
+else). And because the abduced cause is a value hypothesis of exactly `repair_all`'s shape,
+**"understand the root cause" flows straight into "and fix it, verified by re-execution"** — the front
+half of a debugger wired to the productized repair axis as its back half, with no new machinery. Still
+a probe (see [`tests/test_diagnosis.py`](tests/test_diagnosis.py)); run it:
+`python -m experiments.diagnosis`.
+
 ## Layout
 
 | Path | Role |
@@ -338,8 +396,8 @@ it against the spec's requirements — trust by inspection of the artifact, neve
 | `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
 | `pystrider/demo.py` | end-to-end packaged walkthrough (`python -m pystrider.demo`) |
 | `demos/` | five focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](demos/README.md) |
-| `experiments/` | feasibility probes — `state_threading.py` (state-succession), `spec_synthesis.py` (the spec→code synthesis axis), `codegen_understand.py` (compositional codegen from a business rule + round-trip recognition), `controlflow_synthesis.py` (control-flow synthesis, demand-driven minting, analyzer-gated), `multifunction_synthesis.py` (emit + call a helper, verified cross-call), `minting_comparison.py` (rule-grown vs tool-minted candidate pools), and `callgraph_synthesis.py` (synthesizing the call-graph shape / factoring) |
-| `tests/` | behaviour pins (128 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_spec_synthesis.py`, `test_codegen_understand.py`, `test_controlflow_synthesis.py`, `test_multifunction_synthesis.py`, `test_minting_comparison.py`, `test_callgraph_synthesis.py`, `test_caveats.py`, `test_emit.py` |
+| `experiments/` | feasibility probes — `state_threading.py` (state-succession), `spec_synthesis.py` (the spec→code synthesis axis), `codegen_understand.py` (compositional codegen from a business rule + round-trip recognition), `controlflow_synthesis.py` (control-flow synthesis, demand-driven minting, analyzer-gated), `multifunction_synthesis.py` (emit + call a helper, verified cross-call), `minting_comparison.py` (rule-grown vs tool-minted candidate pools), `callgraph_synthesis.py` (synthesizing the call-graph shape / factoring), and `diagnosis.py` (the fourth axis — abduce a crash's root cause from an observed exception, then fix) |
+| `tests/` | behaviour pins (138 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_spec_synthesis.py`, `test_codegen_understand.py`, `test_controlflow_synthesis.py`, `test_multifunction_synthesis.py`, `test_minting_comparison.py`, `test_callgraph_synthesis.py`, `test_diagnosis.py`, `test_caveats.py`, `test_emit.py` |
 | `docs/` | the design (`code_reasoning_design.md`), the plan (`implementation_plan.md`), the spike findings |
 
 ## Run
@@ -354,5 +412,6 @@ python -m experiments.controlflow_synthesis # control-flow synthesis, demand-dri
 python -m experiments.multifunction_synthesis # emit + call a helper, verified cross-call
 python -m experiments.minting_comparison # rule-grown vs tool-minted candidate pools
 python -m experiments.callgraph_synthesis # synthesizing the call-graph shape / factoring
-pytest -q                            # the behaviour pins (128 green)
+python -m experiments.diagnosis      # the fourth axis: crash -> root cause (abduction) + fix
+pytest -q                            # the behaviour pins (138 green)
 ```
