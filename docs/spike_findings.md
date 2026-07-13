@@ -181,6 +181,56 @@ loop unrolling to a chosen depth.
 
 ---
 
+## Follow-up: spec → code synthesis (a third axis) — feasible, and the mirror of analysis
+
+Probe: `experiments/spec_synthesis.py`, pinned by `tests/test_spec_synthesis.py` (10 tests).
+Question: is a succinct **technical specification**, *expanded by CNL rules* into real code, a
+worthwhile third axis? **Verdict: yes — and it reuses the entire firmware.** Synthesis is analysis
+run backwards:
+
+| analysis (built) | synthesis (this probe) |
+|---|---|
+| `ast → facts` (intake, a tool) | `spec-facts → ast → source` (an *emit* tool — the boundary in reverse) |
+| operational semantics as Horn rules | **refinement** rules *expand* a succinct spec |
+| operator lib keyed by *effect prevented* | skeleton lib keyed by *intent realized* |
+| SUPPOSE → CHAIN → **CHOOSE** a repair | (spec) → CHAIN refine → **CHOOSE** an expansion |
+| RECORD → execution trace | RECORD → **spec→code rationale** trace |
+| verify a repair by re-execution | verify a spec by re-execution (the *same* analyzer) |
+
+**Intent:** `lookup_with_default` — return a possibly-None input, or a non-None `{}` default, never
+None. The refinement rules (five Horn clauses) *decompose* the intent into concrete required
+features, then *realize* it: a skeleton realizes a spec iff it is for that intent and MISSES none of
+the required features. `who realizes <spec>` backward-CHAINs this — the exact mirror of
+`who applies_to <site>` operator retrieval. CHOOSE grades the realizers by compactness.
+
+**The non-trivial finding — a strictness flip verified two ways.** `return v or {}` and
+`return v if v is not None else {}` are **not** equivalent: on a *falsy* non-None input (`0`, `""`,
+`[]`), `v or {}` silently returns `{}` — it fails to *preserve* the input. So a spec that also
+requires `preserves_input` excludes the compact `coalesce_or` outright and flips CHOOSE's winner to
+the explicit ifexp. This forced the refinement rules to handle a **conjunction of requirements** (a
+skeleton must provide *every* one), expressed as **stratified negation** (`realizes` iff it `misses`
+nothing — `misses` via `lacks` via `not provides`, two levels of NAC) — which ugm's backward-CHAIN
+stratifies correctly. And the flip is validated by execution, not annotation:
+
+- **symbolic** — re-intake the emitted source + run the existing `analyze_return_none` (input IS
+  None): confirms `nonnull_return`.
+- **concrete** — RUN the emitted function on a falsy-non-None sentinel (the design's concrete-exec
+  tool in miniature; safe on our own pure, side-effect-free skeletons): confirms `preserves_input`.
+
+`coalesce_or` PASSES the symbolic check yet FAILS the concrete one — exactly why the strict spec
+excludes it. The rule-level `provides` annotation is checked by execution, never merely trusted.
+
+**The pre-mint constraint reappears — and that is the reassuring part.** Generating fresh code nodes
+(new statements/variables) is the SAME existential-minting wall Finding 1 hit: ugm rules cannot
+Skolem-mint. So, exactly as intake pre-mints the state×var lattice, the emit tool pre-mints a bounded
+pool of candidate code **skeletons** and the rules only *select* among them; the skeleton-pool size
+IS the synthesis fuel budget (mirror of state-pool = unroll budget). The honest scope of a first
+slice is therefore **template/skeleton synthesis over a tiny intent vocabulary**, not free-form
+codegen. Still a probe (like `state_threading.py`); not yet productized into the package. **Still
+open:** deriving the skeleton pool compositionally (slot-filling beyond whole-function templates), a
+real spec language beyond one intent + one flag, and the concrete-exec tool's sandboxing for
+non-pure fragments.
+
 ## ugm issues found
 
 Six bugs / limitations / surprises hit while building this are written up with minimal repros in

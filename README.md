@@ -6,12 +6,18 @@ Instead of matching static bug patterns, it reasons about a Python function the 
 expressed as UGM rules, and read what *happens* — with a human-readable trace behind every
 conclusion. Then it *repairs* the code and *verifies* the fix by re-running the analysis.
 
+The same firmware runs in **both directions**. Reading code (**analysis**) is the productized loop
+above. Writing code (**synthesis**) is its mirror — a succinct spec *expanded* by CNL rules into
+real Python, then *verified by re-execution* exactly as a repair is. That third axis is proven
+end-to-end as a probe (see [_A third axis: spec → code_](#a-third-axis-spec--code-synthesis)).
+
 pystrider owns **no** engine code. Intake materializes graph structure from `ast`; everything
 downstream reasons through the public UGM firmware (`suppose` / `ask_goal` / `choose`).
 
 ## What it does (today)
 
-The vertical loop is proven and productized across four slices — all green (55 tests):
+The vertical loop is proven and productized across four analysis/repair slices; a **third axis —
+spec → code synthesis** — is proven as a probe. All green (65 tests):
 
 - **Slice A — correct value flow.** Value lives in a per-`(program-point, variable)` **cell
   lattice**, so reassignment (`y = a; y = b`), **branch-merge** (union of both arms), bounded
@@ -31,6 +37,10 @@ The vertical loop is proven and productized across four slices — all green (55
 - **Whole-function auto-fix.** `repair_all` drives repair to a fixpoint — fix *every* outcome (of any
   effect), each edit verified to make progress **and** introduce no regression, until the function is
   clean — returning the edited source plus an audit log of what it changed and why.
+- **A third axis — spec → code (probe).** The same SUPPOSE / CHAIN / CHOOSE / RECORD firmware runs in
+  **reverse**: a terse spec is *expanded* by CNL refinement rules into real Python and *verified by
+  re-execution*. Proven end-to-end in [`experiments/spec_synthesis.py`](experiments/spec_synthesis.py)
+  ([_below_](#a-third-axis-spec--code-synthesis)); not yet productized into the package.
 
 ## A small, nontrivial example
 
@@ -117,6 +127,53 @@ until the function is clean (or reports an honest `stuck`). So the fix is truste
 `plan.steps` is the audit log of what changed and why. (For a single site with the full CHOOSE
 trace, use `choose_repair`, above.)
 
+## A third axis: spec → code (synthesis)
+
+Analysis reads code; **synthesis writes it** — and it is the *same loop run backwards*, over the
+same firmware:
+
+| analysis (productized) | synthesis (this probe) |
+|---|---|
+| `ast → facts` (intake, a tool) | `spec-facts → ast → source` (an *emit* tool — the boundary in reverse) |
+| operational semantics as rules | **refinement** rules *expand* a succinct spec |
+| operator library, keyed by *effect prevented* | skeleton library, keyed by *intent realized* |
+| SUPPOSE → CHAIN → **CHOOSE** a repair | (spec) → CHAIN refine → **CHOOSE** an expansion |
+| RECORD → execution trace | RECORD → **spec→code rationale** trace |
+| verify a repair by re-execution | verify a spec by re-execution (the *same* analyzer) |
+
+```python
+from experiments.spec_synthesis import Spec, synthesize
+
+base = dict(name="lookup_spec", intent="lookup_with_default", fn_name="lookup", input_var="v")
+
+# a lenient spec — "return the input, or a non-None {} default; never None":
+lenient = synthesize(Spec(**base))
+print(lenient.winner, "→", lenient.source.splitlines()[-1].strip())
+#   coalesce_or → return v or {}                    (the most COMPACT realizer wins)
+
+# one stricter word — ALSO preserve a non-None input unchanged:
+strict = synthesize(Spec(**base, strict=True))
+print(strict.winner, "→", strict.source.splitlines()[-1].strip())
+#   coalesce_ifexp → return v if v is not None else {}     (the winner FLIPS)
+```
+
+The flip is the interesting part. `return v or {}` and `return v if v is not None else {}` are
+**not** equivalent: on a *falsy but non-None* input (`0`, `""`, `[]`), `v or {}` silently returns
+`{}` — it fails to *preserve* the input. So the moment the spec also requires `preserves_input`, the
+compact form stops being a realizer at all, and CHOOSE must pick the explicit ifexp — the refinement
+rules handle the **conjunction of requirements** (a skeleton must provide *every* one) as stratified
+negation. The generated code is trusted only because it is **checked two ways**: `nonnull_return`
+**symbolically** (re-intake + the existing `analyze_return_none`) and `preserves_input`
+**concretely** (running the emitted function on a falsy sentinel — the design's concrete-exec tool in
+miniature, safe on our own pure skeletons). `coalesce_or` *passes* the symbolic check yet *fails* the
+concrete one, which is exactly why the strict spec excludes it — the rule-level annotation is
+validated by execution, never merely trusted.
+
+Like `experiments/state_threading.py`, this is a **probe** — it re-confirms the project's core
+constraint (rules cannot mint fresh nodes, so the emit tool pre-mints a bounded skeleton pool and the
+rules only *select*; the pool size is the synthesis fuel budget, the mirror of the unroll budget) and
+is not yet productized into the package. Run it: `python -m experiments.spec_synthesis`.
+
 ## Layout
 
 | Path | Role |
@@ -129,14 +186,16 @@ trace, use `choose_repair`, above.)
 | `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
 | `pystrider/demo.py` | end-to-end packaged walkthrough (`python -m pystrider.demo`) |
 | `demos/` | five focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](demos/README.md) |
-| `tests/` | behaviour pins (55 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py` |
+| `experiments/` | feasibility probes — `state_threading.py` (state-succession) and `spec_synthesis.py` (the spec→code synthesis axis) |
+| `tests/` | behaviour pins (65 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_spec_synthesis.py` |
 | `docs/` | the design (`code_reasoning_design.md`), the plan (`implementation_plan.md`), the spike findings |
 
 ## Run
 
 ```bash
 pip install -e ../ugm -e .    # the ugm sibling + this package
-python -m pystrider.demo      # the packaged end-to-end walkthrough
-python demos/run.py           # the five focused demos
-pytest -q                     # the behaviour pins (55 green)
+python -m pystrider.demo             # the packaged end-to-end walkthrough
+python demos/run.py                  # the five focused demos
+python -m experiments.spec_synthesis # the spec → code synthesis probe (the third axis)
+pytest -q                            # the behaviour pins (65 green)
 ```

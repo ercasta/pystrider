@@ -34,8 +34,14 @@ graph with value flow across call boundaries** (slice B), and **a second effect 
   that make **progress** and introduce **no regression** (a new outcome), CHOOSE, apply, re-analyze;
   returns the clean source + an audit log (`RepairPlan`), or an honest `stuck`.
 
+Beyond the analysis/repair loop, a **third axis — spec → code synthesis — is now probed** (2026-07-13,
+`experiments/spec_synthesis.py`): a succinct spec is *expanded* by CNL refinement rules into real
+Python and *verified by re-execution* (symbolic + concrete). It is analysis run backwards over the
+same firmware; still a probe (like `state_threading.py`), not productized. See `spike_findings.md`
+§"Follow-up: spec → code synthesis".
+
 **Run:** `pip install -e ../ugm -e .` · `python -m pystrider.demo` · `python demos/run.py` ·
-`pytest -q` (55 green).
+`python -m experiments.spec_synthesis` · `pytest -q` (65 green).
 
 **Module map**
 
@@ -49,7 +55,8 @@ graph with value flow across call boundaries** (slice B), and **a second effect 
 | `pystrider/transform.py` | AST-rewrite mechanism (guard insertion; `coalesce_return`) — materialize an edit as real source |
 | `demos/` | five focused, runnable walkthroughs (core loop, state-threading, Session/inter-procedural, second effect, whole-function auto-fix) + `run.py` |
 | `experiments/state_threading.py` | the original **probe** that validated the cell-lattice approach (now productized in intake/semantics) |
-| `tests/` | 55 green: `test_spike.py` (33, slice-A/A′ + branch-refinement + boundary-guard), `test_state_threading.py` (4), `test_session.py` (7, slice-B), `test_effects.py` (5, slice-C), `test_repair.py` (6, whole-function auto-fix) |
+| `experiments/spec_synthesis.py` | **probe** for the third axis — spec → code synthesis (refinement rules + emit tool + verify-by-re-execution); the mirror of analysis, not yet productized |
+| `tests/` | 65 green: `test_spike.py` (33, slice-A/A′ + branch-refinement + boundary-guard), `test_state_threading.py` (4), `test_session.py` (7, slice-B), `test_effects.py` (5, slice-C), `test_repair.py` (6, whole-function auto-fix), `test_spec_synthesis.py` (10, spec→code synthesis) |
 
 **Conventions / gotchas (don't relearn these the hard way):**
 - Reasoning goes through the **public firmware only** (`suppose`/`chain_sip`/`ask_goal`/`choose`).
@@ -238,4 +245,8 @@ the second axis (code *versions* as `<version>` hyperedges) is still unbuilt.
 `break`/`continue`/`else`, and compound `and`/`or`/`not` conditions for refinement — the remaining
 precision gaps), or (b) **breadth via more effects/operators** (unhandled-exception paths,
 early-return/default operators), or (c) the **code-versioning axis** (`<version>` hyperedges,
-`corresponds_to`) to exercise the second monotone axis and the guard-cost benchmark.
+`corresponds_to`) to exercise the second monotone axis and the guard-cost benchmark, or (d)
+**productize the spec → code synthesis axis** now probed in `experiments/spec_synthesis.py` — the
+honest next steps there are a compositional skeleton pool (slot-filling beyond whole-function
+templates), a real spec language (beyond one intent + one flag), and sandboxing the concrete-exec
+check for non-pure fragments.
