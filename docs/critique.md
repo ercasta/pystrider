@@ -1,229 +1,369 @@
 # A critique of pystrider (and the ugm engine under it)
 
-*Written 2026-07-12, against the working tree at that date (49 tests green, including the
-uncommitted path-refinement slice; README still says 44). Empirical checks: full suite runs in
-~75s; a single `analyze` of the 4-line README example takes ~1.3s over 74 facts.*
+*Written 2026-07-12; revised 2026-07-13 against the working tree at that date (102 tests
+collected and green, including the uncommitted path-sensitive-cross-call and minting-comparison
+slices; README says 101). Empirical checks re-run for this revision: a single `analyze` of the
+4-line README example takes ~1.4s over 74 facts (unchanged per-fact cost since yesterday); the
+full suite now runs in ~295s (vs. ~75s for 49 tests yesterday — 2.1× the tests, 3.9× the time).*
+
+---
+
+## What changed since the first version (one day, a lot)
+
+The 2026-07-12 critique was written against a three-slice analyzer + single-site repair. Since
+then:
+
+- **A third axis — spec → code synthesis — appeared and was probed end-to-end four times**
+  (`spec_synthesis`, `codegen_understand`, `controlflow_synthesis`, `multifunction_synthesis`):
+  whole-function templates, then compositional recipe expansion from a business rule with
+  round-trip recognition, then synthesized control flow with demand-driven pool minting, then a
+  synthesized helper verified *across a call boundary* through the productized Session.
+- **Whole-function repair (`repair_all`) landed productized**, driving repair to a fixpoint with
+  cross-effect regression checking — the first version's recommendation #2, done within a day.
+- **The cross-call link became path-sensitive** (`refine_nonnull` on guarded calls, semantics
+  rule 2e) — and notably it was the *synthesis* probe that surfaced the false positive the
+  refinement fixes.
+- **ugm resolved feedback #2 upstream**: rules can now genuinely Skolem-mint (`n?`). The
+  `minting_comparison` probe immediately re-examined the axis-shaping constraint that fix
+  removed, and concluded tool-minting remains right for synthesis — by reason now, not by force.
+
+The revision below keeps the original's structure; each section says what still stands, what
+moved, and what is new.
 
 ---
 
 ## Verdict up front
 
-The engineering discipline is unusually good, the intellectual honesty of the docs is rare, and
-the loop that has been closed (hypothesize → derive → explain → repair → verify → choose) is a
-real, coherent thing that few systems offer end-to-end. But the "dynamic, hypothesis-driven, not
-static Datalog" framing is partly a story the system tells about itself: what has actually been
-built — and this is not an insult — is a **demand-driven, flow-sensitive may-dataflow analysis
-expressed in Datalog, with first-class provenance and a generate-and-validate repair loop**.
-That is a known family. The genuinely novel part is not the analysis semantics; it is that the
-*entire* loop, including repair retrieval and choice, runs on one auditable substrate where
-every conclusion is a proof object. Whether the system is useful depends on building toward the
-place where that property is the product.
+The engineering discipline is still unusually good and now demonstrably *repeatable*: the
+probe → findings → productize → pin pipeline has run five more times since yesterday without
+loosening. The headline claim has also honestly grown: this is no longer only a
+**demand-driven, flow-sensitive may-dataflow analysis in Datalog with first-class provenance
+and a generate-and-validate repair loop** — it is that, *plus* a template-selection synthesis
+loop (CEGIS-shaped: a generator proposes, the productized analyzer disposes) running backwards
+over the same firmware. The characterization from the first version stands for the analysis
+half: the semantics is classic bounded abstract interpretation, not a new kind of "dynamic"
+analysis. What is genuinely novel is unchanged in kind but stronger in degree: the *entire*
+loop — hypothesize, derive, explain, repair, verify, choose, and now *generate* — runs on one
+auditable substrate where every conclusion is a proof object, and the analyzer and the
+synthesizer are literally the same rules. No system I know of closes that particular loop in
+both directions on one engine. Whether it is useful still depends on building toward the place
+where that property is the product.
 
 ---
 
 ## Strengths
 
-**1. The provenance is real, and that is the crown jewel.** The trace in the README is not a
-rendered narrative — it is the RECORD journal of actual rule firings (`ask_goal("why …")`).
-Mainstream tools cannot do this: CodeQL gives a path, mypy gives an error string, an LLM gives
-plausible prose. A derivation tree that a machine can re-check and a human can read is a
-differentiated artifact.
+**1. The provenance is real, and that is still the crown jewel.** Unchanged, and now it spans
+both directions: an analysis outcome carries its derivation tree, and a synthesized function
+carries a spec→code rationale trace from the same RECORD journal.
 
-**2. The spike methodology is exemplary.** `spike_findings.md` maps claims to evidence,
-documents walls (existential heads are not Skolem-minted), records workarounds with their
-design implications ("mint moves to intake"), and keeps negative results
-(`experiments/state_threading.py` preserved as the probe). The boundary-guard test that pins
-"intake emits no reasoning predicates" keeps the structure/behavior separation
-machine-enforced — the kind of discipline that prevents slow architectural rot.
+**2. The probe methodology is exemplary — and it survived a 2× growth spurt.** Five new probes
+in two days, each with the same shape: a sharp question, a minimal artifact, findings mapped to
+evidence, an honest "still open" list, and pins. Two deserve singling out. The
+`multifunction_synthesis` probe *found a precision bug in the analyzer* (the path-insensitive
+cross-call link rejected a runtime-safe composition) and the fix was productized with a pin in
+`tests/test_session.py` — synthesis acting as a fuzzer for analysis is the two-axes-one-firmware
+bet paying off concretely. And `minting_comparison` re-opened a settled design choice the moment
+its forcing constraint disappeared upstream, and re-closed it with a head-to-head experiment.
+Most projects never re-examine a workaround that turned out convenient; this one did it within
+hours of the upstream fix.
 
-**3. The repair loop is architecturally right.** Retrieve operators by effect key via
-backward-CHAIN, materialize as real AST rewrites, verify by re-intake and re-analysis, CHOOSE
-graded-best with losers retained. "The edit is trusted because it clears on the actual
-transformed code, not because the operator claims it will" is exactly the right trust model.
+**3. The repair loop is architecturally right, and now stronger.** `repair_all` iterates to a
+fixpoint, judging every candidate by re-running `analyze_all` (every known effect) on the edited
+source: an edit must make progress *and* introduce no new outcome, or it is refused, and an
+unfixable outcome yields an honest `stuck` rather than a lie. This is exactly the cross-effect
+verification the first version asked for (weakness #6 there); the residual gaps are noted below.
 
-**4. The pre-materialized cell lattice discovery is a good constraint, honestly absorbed.**
-Turning "rules can't mint states" into "the state pool *is* the fuel budget" unified two open
-questions into one knob. That is the sign of a design listening to its implementation.
+**4. The synthesis-verification closure is the strongest architecture validation yet.** In
+`controlflow_synthesis`, CHOOSE prefers the compact unguarded form and the *productized
+analyzer* rejects it, forcing the guarded form; in `multifunction_synthesis` the oracle is the
+productized inter-procedural `Session.analyze_across_call`. The generator proposes, the analyzer
+disposes — the same trust model as repair ("clears on the actual code, not because the operator
+claims it will"), now serving codegen. Both flips in the earlier probes (strictness:
+`v or {}` vs. the explicit ifexp; readability: inline vs. named steps) are validated by
+execution, not annotation — `coalesce_or` passing the symbolic check but failing the concrete
+one is a textbook example of why.
 
-**5. Layer discipline.** pystrider genuinely owns no engine code; the CNL/tool/mechanism split
-(the three-tier table in `code_reasoning_design.md`) is principled and consistently applied.
-The seven-item feedback doc to ugm, with minimal repros, most already fixed, shows the two-repo
-loop working.
+**5. Layer discipline held under pressure.** pystrider still owns no engine code; the emit tools
+are the §8 boundary run in reverse, which is the *designed* extension point, not a hack. The
+"rules never mint; tools mint, demand-driven" invariant was maintained across all four synthesis
+probes, and when the constraint behind it dissolved, the invariant was re-justified rather than
+ritually preserved.
+
+**6. The pre-materialized-pool insight generalized.** "The state pool is the fuel budget" now
+has three instances: unroll depth (analysis), skeleton/recipe pool (synthesis), and
+`max_rounds` for rule-grown chains. `minting_comparison` finding 3 — Skolem convergence bounds
+re-asks, not generative depth, so fuel discipline always lives outside the rules — is a real,
+articulable result about where "agent, not theorem prover" must be enforced.
 
 ---
 
 ## Weaknesses
 
-**1. The "dynamic vs. static" distinction has quietly collapsed, and the docs haven't fully
-caught up.** The design's central move was "the DFG dissolves — value flow is computed by
-executing." But the state-threading wall forced intake to pre-materialize the entire
-`(program-point × variable)` cell lattice, after which the rules are pure Datalog binding
-pre-existing structure. At that point the hypothesis is just a seeded entry fact, and what runs
-is flow-sensitive dataflow with magic-sets demand. The DFG did not dissolve; it got renamed to
-"cells." The *driver* is demand-driven and the *UX* is hypothesis-shaped, and those are real
-differences — but the semantics is classic abstract interpretation with bounded unrolling
-instead of widening. The pitch should be reframed around what is actually distinctive
-(provenance + the closed repair loop + demand-boundedness) rather than a static/dynamic
-dichotomy the spike itself refuted.
+**1. The "dynamic vs. static" framing still overreaches, and the README now leads with it
+harder.** Unchanged in substance from the first version: intake pre-materializes the
+`(program-point × variable)` cell lattice and the rules are pure Datalog over pre-existing
+structure — flow-sensitive dataflow with magic-sets demand and bounded unrolling, not a new
+species. The README's first line now says "dynamic, hypothesis-driven code analyzer, bug-fixer,
+and code generator"; the middle term is UX-true, the first is semantics-false. Likewise
+"symbolically *run* the code" invites a symbolic-execution comparison (path conditions,
+constraint solving) the system rightly does not attempt. The distinctive, defensible pitch is
+provenance + closed loop in both directions + honest boundedness.
 
-**2. The hypothesis must be supplied, which means the bug must already be suspected.** Real
-symbolic execution derives path conditions and *discovers* which inputs matter; here the caller
-enumerates `{"raw": "none"}` by hand from a two-value domain. For None-analysis every param can
-be brute-forced cheaply, so this is survivable today — but the system is a *hypothesis
-checker*, not a *bug finder*, and the docs occasionally blur that line.
+**2. The hypothesis must still be supplied — and now the spec must be too.** Analysis needs the
+caller to enumerate `{"raw": "none"}`; synthesis needs a hand-built `Spec` dataclass whose
+intents (`lookup_with_default`, `accrual`, …) name hand-authored recipe pools. Both halves are
+checkers/selectors, not discoverers. This is survivable at the current two-value domain and
+three-candidate pools, but it is the axis on which the whole system is a *verifier of proposals*
+rather than a *generator of them* — which is also why the LLM-in-the-loop direction (Risks,
+below) keeps getting more attractive rather than less.
 
-**3. The flagship effect is the one existing tools already solve.** `pyright --strict` catches
-the README's None-deref instantly, at repo scale, on annotated code. The honest answer is that
-pystrider targets *unannotated* code and adds the trace and the repair — but that positioning
-should be explicit, because "finds None-derefs" invites a comparison it loses on coverage,
-speed, and maturity.
+**3. The flagship effects are the ones existing tools already solve — and "verified" means only
+them.** Still two effects, both None-shaped (`attribute_error`, `returns_none`), both caught by
+`pyright --strict` on annotated code. This now has a sharper second edge: the synthesis probes
+report `verified True`, but the oracle is `analyze`/`analyze_all`, so *"verified" means "no
+None-bug under the seeded hypothesis"* — not "correct". The probes that need more (the accrual
+formula, `preserves_input`) honestly bolt on concrete execution, which is the right instinct,
+but the README's "verified by re-execution" reads stronger than the effect vocabulary backing
+it. Growing the effect table is now load-bearing for *both* axes.
 
-**4. Performance is a wall being walked toward.** 1.3s for a 4-line function with 74 facts;
-75s for 49 toy tests. The costs compound multiplicatively: the cell lattice is
-O(states × vars), loop unrolling multiplies states, sessions multiply functions, and every
-triple in ugm is a node plus two untyped edges matched by a pure-Python fold. Soufflé-class
-engines compile Datalog to specialized C++ joins; this is perhaps four orders of magnitude
-away. For "a few functions reasoned about deeply" this is fine *today*, but the
-inter-procedural Session ambition and this cost curve are on a collision course. Benchmark
-before building the next slice, not after.
+**4. Performance is still a wall being walked toward, and the wall got closer.** The README
+example still costs ~1.4s over 74 facts (per-fact cost unchanged). The suite went from 49 tests
+in ~75s to 102 tests in ~295s — 2.1× the tests at 3.9× the cost, i.e. the *average test nearly
+doubled in price*, because each synthesis verification is a full re-intake + re-analysis —
+`repair_all` multiplies that by candidates × fixpoint steps, and `multifunction_synthesis` by
+compositions × Session builds. The first version's recommendation #3 (benchmark the Session
+path before widening it) was *not* done, while the Session path acquired a new consumer
+(synthesis verification). The collision course with the inter-procedural ambition is unchanged;
+the traffic on it doubled and the toll went up.
 
-**5. "Honest partiality" in intake is quieter than the docs suggest.** `stmt()` returns the
-state unchanged for unsupported statements (`intake.py`). That is not just a missed check — a
-skipped statement that reassigns a variable (via `x.attr = …`, tuple unpacking, `del`, or an
-augmented assign) leaves the *stale* value framed forward, producing confidently wrong
-derivations, not UNKNOWN ones. Same for `unknown_expr`: a deref of it silently derives nothing.
-The design promises "UNKNOWN when fuel runs out" but no UNKNOWN is surfaced anywhere yet —
-outcomes are either derived or absent, and absence conflates "proved safe," "not modelled," and
-"fuel exhausted." This is the single most important semantic gap: the system's whole moral
-claim is auditability, and unmodelled-as-silent undermines it.
+**5. UNKNOWN is still not surfaced — recommendation #1, not done, and now it leaks into
+"clean".** `stmt()` still returns the state unchanged for unsupported statements
+(`intake.py:267`), so a skipped `x.attr = …`, tuple unpack, or augmented assign frames the
+*stale* value forward — confidently wrong, not honestly absent. `unknown_expr` nodes exist
+("honest UNKNOWN" in name) but no verdict ever says UNKNOWN; absence still conflates "proved
+safe", "not modelled", and "fuel exhausted". This now matters more than yesterday:
+`repair_all` returns `clean=True` and `controlflow_synthesis` returns `verified=True` on
+exactly that silence. The system's moral claim is auditability; its most-load-bearing verdicts
+("clean", "verified") are the ones inheriting the un-audited gap. Still the single most
+important semantic fix.
 
-**6. The repair verification contract is narrower than it reads.** Verification only checks
-residual outcomes *under the same hypothesis and the same effect*. A guard insertion that
-clears the AttributeError makes the function silently return None instead — which is literally
-the Slice C effect, unchecked during a Slice A repair. And in the README example the *actual*
-bug is the clobbering `data = raw` line; the winning repair wraps the deref and preserves the
-clobber. No operator can express "delete the stray assignment," and CHOOSE can only pick among
-what the template library can say. Cross-effect verification (a repair must not introduce any
-known effect) would be cheap and would materially strengthen the trust story.
+> **ADDRESSED (2026-07-13).** Intake now emits a visible `not_modelled` marker for every statement
+> kind it cannot thread (`intake.py` — the else branch that used to `return state` silently), so the
+> gap is auditable instead of framed-stale-forward. `analysis.caveats(intake)` surfaces them; a new
+> `Caveat` type and `RepairPlan.caveats` / `.fully_modelled` qualify the verdict — `repair_all`'s
+> summary now reads *"repaired to clean (modulo N unmodelled statement(s))"* and lists each, so
+> "clean" means "checked and clear" only when `fully_modelled` is True. The productized synthesis
+> surface's `emit.verify_clean` returns `(outcomes, caveats)` for the same reason. Pinned in
+> `tests/test_caveats.py` (8) + `tests/test_emit.py`. **Not** fixed: the framing is still *stale*
+> under the marker (we surface the gap, we do not model the statement), and `unknown_expr` values are
+> still only conservatively sound, not reported as UNKNOWN — but the load-bearing "clean = silence"
+> conflation the weakness named is closed.
 
-**7. `link_calls` is context-insensitive in the classic way.** Every call site writes into the
-callee's single entry cell (`session.py`), so two callers' values merge and flow back out to
-both — spurious cross-caller flows the moment a Session has two calls to the same function.
-This is the oldest problem in inter-procedural analysis; it need not be solved now, but the
-docs should register it as a known imprecision rather than presenting call-linking as done.
+**6. Repair verification: largely fixed, with named residuals.** `repair_all` now
+regression-checks across all known effects — the Slice-A-guard-introduces-Slice-C-effect hole
+from the first version is closed. Residuals: (a) the single-site `choose_repair` path still
+verifies one effect only; (b) verification is still under the *one* seeded hypothesis dict, not
+a sweep; (c) the regression check compares outcome *labels*, so an edit that replaces one
+outcome with a different-labeled outcome of the same kind at the same site passes as
+"progress"; (d) the operator library still cannot express "delete the clobbering assignment" —
+in the README example the winning repair still guards the deref and preserves the actual bug.
+(a)–(c) are afternoons; (d) is the library-breadth problem, which is structural.
+
+**7. `link_calls` is still context-insensitive, now with one earned refinement.** Two callers
+of one function still merge into the callee's single entry cell — the classic imprecision, still
+unregistered in the docs as such. What *did* land is path-sensitivity at the call site
+(`refine_nonnull`): a call inside `if arg is not None:` no longer leaks None into the callee.
+Credit where due — and note the refinement credits only a guard that directly tests the passed
+argument, the narrowest possible pattern. The IFDS-style summary-edge answer to
+context-sensitivity remains future work and should be named in the docs.
+
+**8. (New) The synthesis axis is selection, not generation — and the README's "code generator"
+title is ahead of the artifact.** Every probe's candidate pool is 2–4 hand-authored skeletons or
+recipes; the "spec" is a dataclass with boolean flags; the refinement rules choose among
+alternatives a human already wrote. That is honest and correctly scoped *in the probes' own
+docs* — the findings are about the loop's shape, not its breadth — but the README's framing
+("a succinct spec expanded by CNL rules into real Python") will read to an outsider as program
+synthesis in the SyGuS/SKETCH sense, which this is not yet: there is no search over a grammar,
+no hole-filling beyond tool-side string templates, no spec language. Related: five probes and
+zero productized synthesis surface is the start of a probe pile — each experiment re-implements
+its own emit/verify scaffolding, and the divergence tax will grow.
+
+> **PARTLY ADDRESSED (2026-07-13) — the probe-pile half.** The shared selection loop is now
+> productized in `pystrider/emit.py` (+ `emit.cnl`, the realization rule bank as data, the mirror of
+> `operators.cnl`): `emit.select(spec, required_features, candidates)` does realize-iff-provides-all
+> + CHOOSE + provenance, and `emit.verify_clean` re-intakes + analyzes emitted source (returning
+> caveats too). It is authored the ugm-vision-aligned way (`load_fact_triples` interns by name, no
+> hand-rolled `ids` cache). `callgraph_synthesis` was refactored onto it — its re-implemented
+> `_graph`/`retrieve`/`choose`/realization-rules are gone. Pinned in `tests/test_emit.py` (8), with
+> the six probes still green. The *deeper* half of the weakness stands: this is still selection over a
+> hand-authored pool, not grammar search — the "code generator" framing remains ahead of the
+> artifact, and `spec_synthesis`/`codegen_understand` have not yet been migrated onto `emit` (they
+> can be; the surface fits their shape). Productizing an end-to-end synthesis *entry point* (spec →
+> source), not just the selection core, is the remaining step.
 
 ---
 
 ## Risks
 
-- **The heap.** There is no aliasing, no attribute store, no container model — `none`/`object`
-  values with no structure. Every analysis framework in history got hard exactly here, and most
-  "interesting" Python bugs live in mutation-through-alias territory. Decide *deliberately*
-  whether pystrider ever models the heap or permanently scopes to value-flow bugs; drifting
-  into it incrementally is how frameworks die.
-- **Semantics authoring at scale.** Real Python semantics (descriptors, `__getattr__`,
-  exceptions, truthiness, dynamic dispatch) is enormous — the "Python: The Full Monty"
-  formalization effort is a cautionary tale. Seven Horn rules cover the current subset; the
-  curve from here is steep, and ugm's historically silent authoring failures (feedback #1, now
-  fixed, but the class of risk remains) make a 200-rule semantics bank scary without a
-  rule-testing harness.
-- **Niche squeeze.** Above sit LLMs, which do the whole "reason like a human, explain, propose
-  a fix" loop today with vast coverage and zero soundness; below sit pyright/CodeQL/Infer with
-  maturity and scale. The defensible niche is the one neither occupies: **machine-checkable
-  reasoning with provenance**. Concretely, the most promising future is pystrider as the
-  *verification and grounding substrate for an LLM agent* — the LLM proposes hypotheses and
-  repair operators (solving weakness #2 and the library-breadth problem), ugm checks them and
-  returns proofs. That is a genuinely open lane.
+- **The heap.** Unchanged: no aliasing, no attribute store, no container model. The decision
+  (model it deliberately, or permanently scope to value-flow bugs and decision-kernel functions)
+  is still pending and still the framework-killer if drifted into.
+- **Semantics authoring at scale.** Unchanged, slightly better: the rule bank grew (2e) without
+  incident, and ugm's strict-mode fixes reduce the silent-authoring-failure class. Still no
+  rule-testing harness; still the steep curve.
+- **Niche squeeze — now on both axes.** Above the analysis axis sit LLMs and below it sit
+  pyright/CodeQL/Infer, as before. The synthesis axis walks into an even harder squeeze: LLMs
+  write real code from real specs today, with vast breadth and zero proofs. A three-template
+  selector cannot compete on generation — but it does not have to. The defensible composite is
+  the same on both axes: **the verifier with provenance**. The LLM proposes (hypotheses,
+  operators, skeletons, recipe pools — dissolving weakness #2 and #8's breadth problem at a
+  stroke); pystrider checks, grades, and returns proof objects. The synthesis probes have
+  *already built the checking half of that loop* — `controlflow_synthesis`'s
+  generator-proposes/analyzer-disposes is exactly the shape, with the LLM as a richer generator.
+  That experiment is more reachable today than it was yesterday, and it remains the demo that
+  makes the stack legible.
 
 ---
 
-## Literature positioning
+## How this compares to existing systems (updated)
 
-- **Datalog-based program analysis** (Doop, Soufflé, CodeQL, bddbddb): the closest kin,
-  whatever the docs say. Distinguishing features against them: demand-driven with honest
-  fuel/UNKNOWN semantics (they saturate), first-class derivation provenance, and repair in the
-  same substrate. Deficits: performance and language coverage by orders of magnitude.
-- **Demand-driven dataflow** (Reps–Horwitz–Sagiv IFDS; Duesterwald's demand inter-procedural
-  analysis): the `suppose` + `chain_sip` combination is essentially demand-driven dataflow with
-  a query seeded at entry. IFDS's summary edges are the standard answer to the
-  context-sensitivity problem in weakness #7.
-- **Bounded model checking** (CBMC): loop unrolling with the bound as fuel is exactly BMC's
-  move; they too are "honest bound, not fixpoint."
-- **Symbolic execution** (KLEE, angr; Rosette for the solver-aided-DSL angle): shared
-  vocabulary but not mechanism — no path conditions, no constraint solving. The planned
-  SMT-as-CALL tool would move toward Rosette's territory.
-- **Automated program repair**: the retrieve/materialize/verify/CHOOSE loop is template-based
-  generate-and-validate (PAR, TBar lineage; SemFix/Angelix for the semantic branch). The
-  preconditioned, effect-keyed operator retrieval is more principled than most template
-  systems; the verification oracle (one hypothesis, one effect) is weaker than their test
-  suites.
-- **Means-ends analysis**: the operator library with preconditions and effects is
-  straightforwardly STRIPS/GPS (Newell & Simon), which the design acknowledges. Fine lineage;
-  the known risk is that operator libraries are forever incomplete.
-- **Truth maintenance** (de Kleer's ATMS): SUPPOSE's pencil/ink scopes are assumption contexts;
-  RECORD is a justification network. ugm has quietly rebuilt an ATMS with better ergonomics.
+### The analysis axis
+
+- **Datalog-based program analysis** (Doop, Soufflé, CodeQL, bddbddb): still the closest kin.
+  Distinguishing: demand-driven with honest fuel semantics, first-class derivation provenance,
+  repair *and now synthesis* in the same substrate. Deficits: performance and language coverage
+  by orders of magnitude. (Soufflé has a provenance/proof-tree mode; ugm's is more central but
+  not unprecedented.)
+- **Demand-driven dataflow** (Reps–Horwitz–Sagiv IFDS; Duesterwald): `suppose` + `chain_sip` is
+  demand dataflow with a seeded query; IFDS summary edges remain the standard answer to
+  weakness #7.
+- **Bounded model checking** (CBMC): unrolling-as-fuel is BMC's move; same "honest bound, not
+  fixpoint" stance.
+- **Symbolic execution** (KLEE, angr): shared vocabulary only — no path conditions, no solver.
+  The `refine_nonnull` / `assume_*` edge tags are a first, tiny step toward path predicates.
+
+### The repair loop
+
+- **Automated program repair**: `choose_repair` is template-based generate-and-validate (PAR,
+  TBar lineage). `repair_all` moves it closer to the standard APR loop: iterate, validate each
+  patch against the full oracle, refuse regressions — the analogue of anti-patch-overfitting
+  discipline, with `analyze_all` playing the test suite. The oracle is still one hypothesis and
+  two effects where APR systems have whole test suites; the *auditability* of the CHOOSE (losers
+  retained, graded, explained) exceeds anything in that literature.
+- **Means-ends analysis** (Newell & Simon's GPS, STRIPS): the effect-keyed operator library with
+  preconditions, unchanged. `repair_all`'s fixpoint-toward-a-clean-state is means-ends toward a
+  goal state in the classic sense.
+
+### The synthesis axis (new)
+
+- **CEGIS / SKETCH (Solar-Lezama)**: the closest shape. "CHOOSE proposes the compact candidate,
+  the analyzer rejects it, fall back" is counterexample-guided inductive synthesis with the
+  Datalog analyzer standing in for the SMT verifier and a hand-enumerated pool standing in for
+  the sketch's hole space. The differences are honest: no constraint-driven search, no
+  counterexample *generalization* (a rejection eliminates one candidate, not a family).
+- **Syntax-guided synthesis (SyGuS) / FlashFill-PROSE**: the pre-minted skeleton pool is a
+  degenerate grammar (depth 1, hand-written); PROSE's ranking functions are the industrial
+  analogue of CHOOSE's compactness grading. The gap to a real grammar-driven search is the
+  content of weakness #8.
+- **Derivational synthesis (Smith's KIDS / Specware)**: the deepest ancestor in *spirit* —
+  specs refined into code by rules, with the derivation retained as the artifact's
+  justification. KIDS needed a human to pick each refinement; here CHOOSE picks and the analyzer
+  vetoes. Nobody has run that lineage on a shared analysis/synthesis rulebase; that part is new.
+- **HTN planning**: `codegen_understand`'s recipe/plan decomposition (a need is covered iff a
+  recipe in the plan produces it, recursively, leaves at parameters) is hierarchical task-network
+  decomposition expressed as stratified Datalog — a tidy reduction.
+- **LLM codegen with verification** (test-filtered generation à la AlphaCode; self-repair
+  agents): they own breadth; none returns a machine-checkable derivation of *why* the emitted
+  code realizes the spec. The recognition result (`compute_accrual computes accrual`, derived,
+  with an escape hatch for foreign code) is a primitive form of something none of them have:
+  bidirectional spec↔code traceability on one substrate.
+
+### The substrate
+
+- **Truth maintenance (de Kleer's ATMS)**: unchanged — SUPPOSE scopes are assumption contexts,
+  RECORD is a justification network; ugm remains an ATMS with better ergonomics.
+- **OpenCog AtomSpace / SOAR / ACT-R**: unchanged — the nine-mode inventory is the tasteful
+  distillation of that tradition into a small logic fragment.
+
+The one-sentence comparison, updated: *systems exist that analyze better, repair better, and
+generate far better — no system exists in which analysis, repair, and generation are the same
+small rule engine running in different directions, with every step of all three carrying a
+replayable proof.* That composite is still the only defensible pitch, and it got materially
+stronger this week.
 
 ---
 
 ## On ugm itself
 
-ugm is the more interesting of the two artifacts, and also the bigger gamble.
+The first version's assessment stands with two updates, one in each direction.
 
-**What is genuinely good.** The "everything is a node, edges are typeless" commitment is held
-with impressive consistency, and it buys real things — homoiconic rules, RECORD woven through
-every mode for free, SUPPOSE without possible-worlds machinery. The nine-mode inventory is a
-tasteful cognitive-architecture take (it reads like SOAR/ACT-R distilled through Datalog rather
-than production-rule chaos, and it is a cleaner design than OpenCog's AtomSpace, its nearest
-structural relative). Keeping the logic fragment small and formally anchored — definite Horn +
-stratified demand-driven NAF + defeasibility + grades — instead of chasing expressiveness is
-the mark of a designer who has read the failure modes. The fuel/UNKNOWN honesty ("a truncated
-closure means the absence read is not trustworthy," `chain.py`) is exactly right and rarer than
-it should be. And the responsiveness to pystrider's feedback — five of seven items fixed with
-tests — shows the two-repo loop working.
+**The good news is structural.** Feedback #2 (existential minting) was resolved upstream with a
+principled mechanism — a Skolem *function* keyed on the firing's bindings, convergent on the
+demand chain — not a hack. That retires the first version's third worry ("missing existential
+heads are not a small gap; the next consumer may not be lucky"): value invention now exists,
+Datalog± territory is reachable, and the state-threading workaround is a choice rather than a
+scar. The two-repo feedback loop continues to work at unusual speed (issue filed with repro →
+fixed upstream → downstream probe re-examining the consequences, within a day).
 
-**What is worrying.** Three things. First, *the substrate purity has a permanent price*:
-relation-as-node means every fact is 3 nodes / 2 edges and every join is a pure-Python state
-fold. "No seams" is philosophically beautiful, but Soufflé's seams (compiled relations, B-tree
-joins) are why it is fast, and there is no obvious path to competitive performance that does
-not compromise the one-substrate identity. Decide early whether ugm's ambition is *correct and
-explicable at session scale* (defensible) or *a real analysis engine* (probably unreachable in
-pure Python on this representation). Second, the engine's historical failure mode is *silence*
-— misparse silently, drop facts silently, collapse existentials silently. The recent
-strict-mode fixes are the right direction, but the underlying culture ("quietly do less") needs
-to invert to "loudly refuse" everywhere, because consumers author rules programmatically.
-Third, the missing existential heads are not a small gap: value invention is the difference
-between Datalog and Datalog±/the chase, and "pre-materialize the pool in a tool" works only
-when a tool can statically know the pool. pystrider got lucky (CFGs are static); the next
-consumer may not.
+**The tempering news is that the fix exposed the next coupling.** `minting_comparison` shows
+that rule-minted nodes are name-collided (identity is structural; every minted node is named
+`n`), and the goal API is name-addressed — so minting (#2) is only as useful as addressing (#8)
+is answered. This is the correct kind of finding to send upstream, and it sharpens rather than
+contradicts the original worry about silent failure modes: `nodes_named("n")` being k-way
+ambiguous is another quiet trap for the next consumer. The "loudly refuse, don't quietly do
+less" culture shift remains the most important ugm-side ask, together with the unchanged
+performance question: every triple is still 3 nodes / 2 edges folded in pure Python, and the
+synthesis loops just multiplied the number of KB rebuilds per user-visible operation.
 
 ---
 
-## What to do next, in order
+## What to do next, in order (revised)
 
-1. **Surface UNKNOWN.** Make unmodelled statements, unknown expressions, and fuel exhaustion
-   produce a visible verdict, not silence. Cheap, and it protects the system's core claim.
-2. **Cross-effect repair verification.** A repair must clear its outcome without introducing
-   any other known effect. Both analyzers exist; it is a loop.
-3. **Benchmark the Session path** before widening it — cell-lattice size vs. analyze time on a
-   realistic 10-function working set. If the curve is bad, that is an ugm conversation to have
-   now.
-4. **Prototype the LLM-in-the-loop experiment**: an LLM proposes hypotheses and operators,
-   pystrider verifies with provenance. If that works even crudely, it is the demo that makes
-   the whole stack legible to the outside world — and it is the niche neither pyright nor an
-   LLM alone can occupy.
+1. ~~**Surface UNKNOWN.**~~ **Done (2026-07-13).** Unmodelled statements now emit a visible
+   `not_modelled` fact (intake), `caveats()` reports them, and `RepairPlan.caveats` /
+   `.fully_modelled` + `emit.verify_clean` qualify the "clean"/"verified" verdicts. See the ADDRESSED
+   note under weakness #5. Residual: the stale-framing under the marker and explicit UNKNOWN *values*
+   (not just unmodelled *statements*) remain.
+2. ~~Cross-effect repair verification~~ — **done** (`repair_all`). Mop up the residuals:
+   per-site `choose_repair` should verify via `analyze_all` too, and the regression check should
+   compare sites, not just labels.
+3. **Benchmark the Session path.** Carried over undone, and the synthesis axis just made it a
+   hot path (every candidate = a Session rebuild + cross-call analysis). Cell-lattice size vs.
+   analyze time on a realistic 10-function working set, plus candidates × steps for a
+   `repair_all` run. If the curve is bad, that is an ugm conversation to have *before*
+   productizing synthesis.
+4. **Productize one synthesis slice** instead of a sixth probe. The probes have answered the
+   feasibility questions they were built for; the marginal information from another is low, and
+   the shared emit/verify scaffolding they each re-implement should live in the package (an
+   `emit.py` beside `intake.py` — the §8 boundary, both directions, as the design already
+   frames it). — **Partly done (2026-07-13):** `pystrider/emit.py` now holds the selection loop
+   (`select`/`realizing`/`choose_best`/`verify_clean`) + `emit.cnl`, and `callgraph_synthesis` uses
+   it; see the PARTLY-ADDRESSED note under weakness #8. Remaining: an end-to-end spec→source *entry
+   point*, and migrating the other probes onto the surface. (The sixth probe, `callgraph_synthesis`,
+   was built before this note landed — and has now been refactored onto the productized surface,
+   which is the mitigation the critique asks for.)
+5. **Prototype LLM-in-the-loop.** Carried over, upgraded from "promising" to "obvious": the
+   checking half already exists (generator proposes → analyzer disposes, with proofs). Let an
+   LLM be the generator — of hypotheses on the analysis side and of skeleton pools on the
+   synthesis side — and the two hardest scaling problems (weaknesses #2 and #8) become the
+   LLM's job, while the part LLMs cannot do (checkable justification) stays here.
 
-**Is it useful?** As a bug-finder competing with typed tooling: no, and it probably never wins
-that race. As a research vehicle it is already earning its keep (the state-minting finding
-alone is a real result about rule-engine expressiveness). As a substrate for *auditable machine
-reasoning about code* — where every conclusion and every proposed fix carries a checkable proof
-— it is the most promising small system of its kind, and that lane has growing demand.
+**Is it useful?** As a bug-finder against typed tooling: still no. As a code generator against
+LLMs: no, and it should not try. As a research vehicle: earning its keep faster than before —
+the state-minting finding, the minting to addressing coupling, and synthesis-as-analyzer-fuzzer
+are three real results in a week. As a substrate for *auditable machine reasoning about code* —
+where every conclusion, every fix, and now every generated function carries a checkable proof —
+it remains the most promising small system of its kind, and the synthesis axis widened that
+claim from "reads code" to "reads and writes code" without breaking it.
 
 ---
 
 ## A second domain: detecting and fixing bugs in CNL business rules
 
-*(Added in response to: "what about using the tools to detect and fix semantics bugs, where
-semantics is business rules expressed in CNL?")*
+*(Written 2026-07-12 in response to: "what about using the tools to detect and fix semantics
+bugs, where semantics is business rules expressed in CNL?" — retained as written; a status note
+follows at the end.)*
 
 This may be a **better-fitting domain than Python analysis** — arguably the domain the stack
 was accidentally built for. The reasons are structural, not cosmetic.
@@ -316,9 +456,9 @@ edits that are natively droppable. `transform.py`'s equivalent becomes engine-na
 
 Verification is *stronger* here than in pystrider by construction: the oracle is the whole
 scenario suite, so every candidate edit is automatically checked against all effects and all
-passing cases (fixing weakness #6's single-hypothesis/single-effect gap). CHOOSE then picks the
-minimal edit that clears the failures without breaking any passing scenario — with the losers
-retained and the whole selection auditable, which in a compliance setting is itself a feature.
+passing cases. CHOOSE then picks the minimal edit that clears the failures without breaking any
+passing scenario — with the losers retained and the whole selection auditable, which in a
+compliance setting is itself a feature.
 
 ### The product story
 
@@ -340,13 +480,19 @@ add-exception) retrieved by effect key, verified against the full suite, CHOSEN 
 intake tool, no semantics bank — the estimate is *smaller* than the pystrider spike, and it
 exercises the two ugm features pystrider never touched: homoiconicity and defeasibility.
 
+> **Status note (2026-07-13).** Untouched as a spike, but the week's work moved its
+> prerequisites: `repair_all` is the fixpoint-repair shape the rule-repair loop needs, and
+> `codegen_understand` demonstrated business-term ↔ code bridging (a spec named `accrual`
+> expanded to code and recognized back). The estimate stands.
+
 ---
 
 ## The unification play: spec and implementation on one substrate
 
 *(The intended question, clarified: not "analyze rulebases instead of Python" but "put the CNL
 business rules AND the Python code's semantics in the same graph and reason across them." The
-rulebase-debugging section above is a component of this; what follows is the composed system.)*
+rulebase-debugging section above is a component of this; what follows is the composed system.
+Retained as written 2026-07-12; a status note follows at the end.)*
 
 This is, in my assessment, **the strongest version of the whole project** — the first workload
 where ugm's one-substrate identity pays for itself instead of merely costing performance.
@@ -387,13 +533,13 @@ implement the policy.
 - **Repair becomes spec-directed instead of template-guessed.** Because the violated business
   rule is reified structure, a repair operator can *bind its conditions as data* and
   materialize the corresponding code edit — e.g. read the spec's comparison constant (50) and
-  align the code's threshold (100) to it. This answers the critique's weakness #6 at the root:
-  the repair target is no longer "make this one outcome disappear" but "make the code's
-  derived outcomes equal the spec's on every swept scenario" — semantics preservation is the
-  verification condition by construction.
+  align the code's threshold (100) to it. This answers weakness #6 at the root: the repair
+  target is no longer "make this one outcome disappear" but "make the code's derived outcomes
+  equal the spec's on every swept scenario" — semantics preservation is the verification
+  condition by construction.
 - **Scenario generation comes from the spec.** The declared finite vocabulary plus the spec's
-  own constants (boundary values: 49/50/51) enumerate the sweep. This dissolves the critique's
-  weakness #2 (hypothesis-must-be-supplied): the spec is the hypothesis generator.
+  own constants (boundary values: 49/50/51) enumerate the sweep. This dissolves weakness #2:
+  the spec is the hypothesis generator.
 - **Impact analysis falls out.** Edit a policy rule, re-sweep: every code site that now
   diverges is flagged with a trace. "Which code must change when this policy changes" — the
   question every enterprise rules team asks — becomes a derivation.
@@ -461,3 +607,13 @@ One function, one policy, one planted boundary bug:
 That spike would demonstrate the one thing neither pyright, nor CodeQL, nor a DMN validator,
 nor an LLM can produce: *a machine-checkable proof that a piece of code implements a piece of
 policy — and a verified minimal edit when it doesn't.*
+
+> **Status note (2026-07-13).** The synthesis axis quietly built most of one half of this
+> bridge: `codegen_understand` goes business-term → code (generation) and code → business-term
+> (recognition), and `spec_synthesis` already verifies emitted code against spec features with
+> the productized analyzer. What conformance-strider adds over what now exists is the *other
+> direction on foreign code*: checking code the system did **not** generate against a spec,
+> which needs the ground-evaluation intake growth (constants, comparisons) listed above. The
+> synthesis probes make the composed system more credible, not less necessary — and the
+> recognition escape hatch ("supply the fact in CNL when there is no fingerprint") is exactly
+> the binding layer this design describes.

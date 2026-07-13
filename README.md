@@ -17,8 +17,10 @@ downstream reasons through the public UGM firmware (`suppose` / `ask_goal` / `ch
 ## What it does (today)
 
 The vertical loop is proven and productized across four analysis/repair slices; a **third axis —
-spec → code synthesis** — is proven as a probe (now extended to compositional codegen from a business
-rule, and to control-flow synthesis gated by the analyzer). All green (87 tests):
+spec → code synthesis** — is proven across six probes (compositional codegen from a business rule,
+control-flow synthesis gated by the analyzer, multi-function synthesis verified cross-call, and the
+call-graph shape itself), with its shared **selection loop now productized** in `pystrider/emit.py`.
+All green (128 tests):
 
 - **Slice A — correct value flow.** Value lives in a per-`(program-point, variable)` **cell
   lattice**, so reassignment (`y = a; y = b`), **branch-merge** (union of both arms), bounded
@@ -38,10 +40,16 @@ rule, and to control-flow synthesis gated by the analyzer). All green (87 tests)
 - **Whole-function auto-fix.** `repair_all` drives repair to a fixpoint — fix *every* outcome (of any
   effect), each edit verified to make progress **and** introduce no regression, until the function is
   clean — returning the edited source plus an audit log of what it changed and why.
-- **A third axis — spec → code (probe).** The same SUPPOSE / CHAIN / CHOOSE / RECORD firmware runs in
+- **Honest "clean" — no building on silence.** Intake emits a visible `not_modelled` marker for any
+  statement kind it can't thread (aug-assign, attribute store, tuple unpack, bare call, …) instead of
+  silently framing a stale value forward; `caveats()` surfaces them and `repair_all` *qualifies* its
+  verdict — "repaired to clean **(modulo N unmodelled statements)**", `fully_modelled=False` — so
+  "clean" means "checked and clear", never "nothing derived".
+- **A third axis — spec → code.** The same SUPPOSE / CHAIN / CHOOSE / RECORD firmware runs in
   **reverse**: a terse spec is *expanded* by CNL refinement rules into real Python and *verified by
-  re-execution*. Proven end-to-end in [`experiments/spec_synthesis.py`](experiments/spec_synthesis.py)
-  ([_below_](#a-third-axis-spec--code-synthesis)); not yet productized into the package.
+  re-execution*. Proven across six probes ([_below_](#a-third-axis-spec--code-synthesis)); the shared
+  **selection loop is now productized** in [`pystrider/emit.py`](pystrider/emit.py) (`select` /
+  `verify_clean` + `emit.cnl`) — the §8 boundary run in reverse.
 
 ## A small, nontrivial example
 
@@ -242,20 +250,96 @@ falls back to the guarded form that `analyze`/`analyze_return_none` clear. The g
 analyzer disposes — synthesis is verified by re-running the *same* productized analysis loop, both
 directions on one firmware. Run it: `python -m experiments.controlflow_synthesis`.
 
+### Across a call boundary: emit a helper, verify cross-call
+
+The frontier after that is a subgoal satisfied by *emitting a helper and calling it* — correctness
+now spans a **call boundary**. A fourth synthesis probe
+([`experiments/multifunction_synthesis.py`](experiments/multifunction_synthesis.py)) synthesizes a
+total `process(x)` that delegates to a helper `extract(v)`, verified through the **productized
+inter-procedural analyzer** (`Session.analyze_across_call`):
+
+```python
+from experiments.multifunction_synthesis import Spec, synthesize
+
+r = synthesize(Spec(name="process_spec", caller="process", helper="extract", input_var="x"))
+print(r.winner, "| verified", r.verified)          # guard_caller | verified True
+print(r.helper_src)   # def extract(v):  return v.value
+print(r.caller_src)   # def process(x):  if x is not None: return extract(x) \n  return {}
+```
+
+Two emitted functions, loaded into a `Session` (each namespaced, identity by `(function, name)`), the
+call `link_calls`-wired, and `analyze_across_call` seeds `x=None` and reads outcomes *inside the
+callee* — the value crosses the boundary through the exact machinery the analyzer ships. The
+verification is **path-sensitive across the call**: CHOOSE prefers the compact `naive` (delegate +
+deref) and the analyzer rejects it (None genuinely crosses into the deref); but it **certifies**
+`guard_caller` (guard, *then* delegate), because `Session.link_calls` stamps `refine_nonnull` on a
+call inside `if arg is not None:` and a refined cross-call assign carries only the non-None value into
+the callee — so the compact caller-side guard *wins* over the defensive `total_helper`. This was the
+axis's sharpest move: an earlier *path-insensitive* link rejected `guard_caller` too (a false
+positive) — **synthesis surfaced that precision boundary, and the refinement (now productized, pinned
+in `tests/test_session.py`) moved it**, while a real cross-call bug (`naive`) stays caught. Because
+each function is emitted independently and joined only inside the `Session`, no shared *synthesis*
+graph is built, so the ugm addressing footgun is routed around, not blocked on. Run it:
+`python -m experiments.multifunction_synthesis`.
+
+### Should rules mint the pool? An informed choice
+
+All four probes above pre-mint their candidate pool in the emit *tool* and let rules only *select* —
+originally a workaround for "ugm rules cannot mint fresh nodes". That constraint was since **resolved
+upstream** (genuine per-match minting via the skolem `n?`), so a fifth probe
+([`experiments/minting_comparison.py`](experiments/minting_comparison.py)) asks the fair question it
+reopens — *should* the pool now be grown by rules? It generates a depth-`k` value-threading chain
+**both** ways (a tool-minted pool with stable names, and a rule-grown pool where a one-line skolem
+rule mints each successor); both emit **byte-identical, verified** source. The difference is the part
+that matters: rule-minted nodes are name-**collided** (identity is structural, so emit/verify must
+thread by id — `nodes_named("n")` is `k`-way ambiguous), and the fuel bound is still external
+(`max_rounds`). **Conclusion:** rule-minting is right for open-ended structure the rules reason over
+*in place*; **tool-minting stays right for synthesis targets you must emit, name, and verify** — now
+by reason, not by force. It flips only when ugm gains id-addressed goals. Run it:
+`python -m experiments.minting_comparison`.
+
+### Synthesizing the call-graph shape
+
+The deepest frontier is making the program's *shape* — how many functions and the call edges among
+them — the synthesis decision, which answers the question the codegen sketch opened with: *when do we
+put statements in a subfunction vs a sequence?* A sixth probe
+([`experiments/callgraph_synthesis.py`](experiments/callgraph_synthesis.py)) synthesizes `report(x)`,
+a computation with a **shared** sub-part `normalize(x)`, and lets DRY requirements force the factoring:
+
+```python
+from experiments.callgraph_synthesis import Spec, synthesize
+
+for spec in [Spec("r"), Spec("r", dry_source=True), Spec("r", dry_source=True, dry_runtime=True)]:
+    r = synthesize(spec)
+    print(r.winner, "->", r.graph["report"])
+#   inline_dup   -> []                                   (1 function, 0 call edges)
+#   helper_twice -> ['scale', 'shift', 'normalize', 'normalize']   (normalize called at 2 sites)
+#   helper_once  -> ['normalize', 'scale', 'shift']      (normalize bound once, reused)
+```
+
+All three shapes compute the same figure (pinned by re-execution), so the choice is purely
+**structural**. Adding `dry_source` (no duplicated logic) forces a shared `normalize` helper (0 → 3
+helpers); adding `dry_runtime` (compute it once) flips the winner again to the shape that reuses the
+shared *result* (2 call sites → 1). The epistemic move holds: a shape only *claims* its structure, and
+verification **re-parses the emitted program** to derive the real call graph from the AST and checks
+it against the spec's requirements — trust by inspection of the artifact, never the claim. Run it:
+`python -m experiments.callgraph_synthesis`.
+
 ## Layout
 
 | Path | Role |
 |---|---|
 | `pystrider/intake.py` | the §8 code-intake tool — `ast` → graph facts (structure only, *not* CNL); CFG + `(state×var)` cell lattice; per-function `namespace` for shared graphs |
 | `pystrider/semantics.cnl` | the operational semantics — Horn rules, authored CNL data (`semantics.py` loads it) |
-| `pystrider/analysis.py` | the hypothesis loop on the public UGM firmware (`suppose(commit=False)` / `ask_goal`) + `analyze` / `analyze_return_none` / `analyze_all` / `choose_repair` / `repair_all` (whole-function auto-fix) |
+| `pystrider/analysis.py` | the hypothesis loop on the public UGM firmware (`suppose(commit=False)` / `ask_goal`) + `analyze` / `analyze_return_none` / `analyze_all` / `choose_repair` / `repair_all` (whole-function auto-fix) + `caveats` (surface unmodelled statements) |
+| `pystrider/emit.py` + `emit.cnl` | the §8 **emit** boundary (intake in reverse), productized: `select` (realize-iff-provides-all-required + CHOOSE) / `verify_clean`; the realization rule bank as CNL data |
 | `pystrider/session.py` | a **Session** — several functions in one graph, per-function focus, cross-call value-flow linking |
 | `pystrider/operators.py` + `operators.cnl` | effect-keyed transformation-operator library, retrieved by backward-CHAIN |
 | `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
 | `pystrider/demo.py` | end-to-end packaged walkthrough (`python -m pystrider.demo`) |
 | `demos/` | five focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](demos/README.md) |
-| `experiments/` | feasibility probes — `state_threading.py` (state-succession), `spec_synthesis.py` (the spec→code synthesis axis), `codegen_understand.py` (compositional codegen from a business rule + round-trip recognition), and `controlflow_synthesis.py` (control-flow synthesis, demand-driven minting, analyzer-gated) |
-| `tests/` | behaviour pins (87 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_spec_synthesis.py`, `test_codegen_understand.py`, `test_controlflow_synthesis.py` |
+| `experiments/` | feasibility probes — `state_threading.py` (state-succession), `spec_synthesis.py` (the spec→code synthesis axis), `codegen_understand.py` (compositional codegen from a business rule + round-trip recognition), `controlflow_synthesis.py` (control-flow synthesis, demand-driven minting, analyzer-gated), `multifunction_synthesis.py` (emit + call a helper, verified cross-call), `minting_comparison.py` (rule-grown vs tool-minted candidate pools), and `callgraph_synthesis.py` (synthesizing the call-graph shape / factoring) |
+| `tests/` | behaviour pins (128 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_spec_synthesis.py`, `test_codegen_understand.py`, `test_controlflow_synthesis.py`, `test_multifunction_synthesis.py`, `test_minting_comparison.py`, `test_callgraph_synthesis.py`, `test_caveats.py`, `test_emit.py` |
 | `docs/` | the design (`code_reasoning_design.md`), the plan (`implementation_plan.md`), the spike findings |
 
 ## Run
@@ -267,5 +351,8 @@ python demos/run.py                  # the five focused demos
 python -m experiments.spec_synthesis # the spec → code synthesis probe (the third axis)
 python -m experiments.codegen_understand # compositional codegen from a business rule + recognition
 python -m experiments.controlflow_synthesis # control-flow synthesis, demand-driven + analyzer-gated
-pytest -q                            # the behaviour pins (87 green)
+python -m experiments.multifunction_synthesis # emit + call a helper, verified cross-call
+python -m experiments.minting_comparison # rule-grown vs tool-minted candidate pools
+python -m experiments.callgraph_synthesis # synthesizing the call-graph shape / factoring
+pytest -q                            # the behaviour pins (128 green)
 ```

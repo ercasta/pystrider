@@ -86,7 +86,14 @@ class Session:
         cross-`in_function` **pseudo-assign** (`g_param_cell := caller_arg_expr`). The existing ASSIGN
         rule then threads that value into `g`'s body — no new semantics, the payoff of structural
         scope over name-mangling. Returns `(caller, callee, param)` links wired. Call after all
-        functions are added."""
+        functions are added.
+
+        **Path-sensitive across the call:** if the call site sits inside a guard `if a is not None:`
+        that tests the very argument being passed, the link is stamped `refine_nonnull yes` so the
+        refined cross-call assign (semantics 2e) carries only the non-None value into the callee — the
+        callee cannot see None on the path where the guarded call actually happens. Without this the
+        link is path-INSENSITIVE and a caller-side guard is not credited (a conservative false
+        positive)."""
         wired: list[tuple[str, str, str]] = []
         for caller in self.functions.values():
             for call_id, callee_name in caller.call_target.items():
@@ -94,6 +101,7 @@ class Session:
                 if callee is None:                       # calls something outside the session: skip
                     continue
                 args = caller.call_args.get(call_id, [])
+                guard_nonnull = self._call_guard_nonnull_var(caller, call_id)
                 for i, param in enumerate(callee.params):
                     if i >= len(args):
                         break
@@ -105,11 +113,30 @@ class Session:
                         (link, "to_state", callee.entry_state),      # written into callee's entry cell
                         (link, "in_function", callee.namespace + callee.func),
                     ]
+                    # refine the boundary if the passed argument is the guard's not-None-tested var
+                    if guard_nonnull is not None and self._arg_var(caller, args[i]) == guard_nonnull:
+                        facts.append((link, "refine_nonnull", "yes"))   # semantics 2e, not 2
                     for s, p, o in facts:
                         self.graph.add_relation(_node(self.graph, s), p, _node(self.graph, o))
                     self._link_nodes.add(link)
                     wired.append((caller.func, callee.func, param))
         return wired
+
+    @staticmethod
+    def _call_guard_nonnull_var(caller: Intake, call_id: str) -> str | None:
+        """The namespaced variable a call is guarded not-None on (`call within_guard g`, `g tests v`),
+        or None. Intake tags a call created inside an `if VAR is not None:` body with `within_guard`."""
+        for s, p, o in caller.facts:
+            if s == call_id and p == "within_guard":
+                for s2, p2, o2 in caller.facts:
+                    if s2 == o and p2 == "tests":
+                        return o2
+        return None
+
+    @staticmethod
+    def _arg_var(caller: Intake, arg_expr: str) -> str | None:
+        """The namespaced variable a bare-Name argument expression reads (`arg reads v`), or None."""
+        return next((o for s, p, o in caller.facts if s == arg_expr and p == "reads"), None)
 
     def analyze_across_call(self, caller_name: str, hypothesis: dict[str, str],
                             callee_name: str) -> list[Outcome]:

@@ -53,6 +53,7 @@ class Intake:
     states: list[str] = field(default_factory=list)   # every program point, in order
     state_of: dict[str, str] = field(default_factory=dict)   # expr/guard id -> the state it reads in
     namespace: str = ""              # per-function id prefix (Session); "" = single-function (today)
+    not_modelled: list[str] = field(default_factory=list)   # ids of statements intake could NOT model
 
     def __post_init__(self) -> None:
         if self.attr_base_var is None:
@@ -103,6 +104,7 @@ class _Walker:
         self.attributes: list[str] = []
         self.attr_base_var: dict[str, str] = {}
         self.returns: list[str] = []              # every return-statement id (candidate returns-None sites)
+        self.not_modelled: list[str] = []         # ids of statements intake could not model (visible gaps)
         self.return_var: dict[str, str] = {}      # return id -> the source Name it returns (if a bare var)
         self.call_target: dict[str, str] = {}     # call id -> callee SOURCE name (free-function calls)
         self.call_args: dict[str, list[str]] = {}  # call id -> positional argument expr ids
@@ -264,7 +266,17 @@ class _Walker:
             return self._if(node, state)
         if isinstance(node, ast.While):
             return self._while(node, state)
-        return state    # other statement kinds: skipped (honest partiality, not silent misreading)
+        # an unmodelled statement kind (aug-assign, attribute/subscript store, tuple unpack, bare
+        # call, for/with, ...): we cannot thread its effect on state. Emit a VISIBLE `not_modelled`
+        # marker so a downstream `clean`/`verified` verdict can say "clear MODULO this", instead of
+        # silently framing a stale value forward and reporting confidently-clean (critique #5). The
+        # state is returned unchanged (we still don't model the effect) — but the gap is now audited.
+        sid = self._scope(self._fresh("s"))
+        self._emit(sid, "is_a", "not_modelled")
+        self.line_of[sid] = getattr(node, "lineno", 0)
+        self.label_of[sid] = self._snippet(node)
+        self.not_modelled.append(sid)
+        return state
 
     def _if(self, node: ast.If, state: str) -> str:
         """Two intake shapes for a conditional:
@@ -284,11 +296,15 @@ class _Walker:
             self._emit(gid, "tests", self._var(guard_var))
             self.line_of[gid] = node.lineno
             before = set(self.attributes)
+            before_calls = set(self.call_target)
             exit_state = self.block(node.body, state)
             for site in self.attributes:                          # attrs created inside this body ...
                 if site not in before:
                     self._emit(site, "within_guard", gid)         # ... are guarded by it
-            return exit_state
+            for cid in self.call_target:                          # calls created inside this body too:
+                if cid not in before_calls:
+                    self._emit(cid, "within_guard", gid)          # lets a Session refine a guarded call's
+            return exit_state                                     # argument value across the call boundary
 
         then_entry, else_entry = self._fresh_state(), self._fresh_state()
         then_edge = self._edge(state, then_entry)                 # fork: assume-cond / assume-not-cond
@@ -403,4 +419,4 @@ def intake_function(src: str, *, loop_unroll: int = 2, namespace: str = "") -> I
                   returns=w.returns, return_var=w.return_var,
                   call_target=w.call_target, call_args=w.call_args,
                   entry_state=w.entry_state, states=w.states, state_of=w.state_of,
-                  namespace=namespace)
+                  namespace=namespace, not_modelled=w.not_modelled)

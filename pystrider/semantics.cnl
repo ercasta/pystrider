@@ -12,8 +12,16 @@
 # (1) a Name expression evaluates to the value of its variable's cell IN THE EXPRESSION'S STATE
 ?e eval_to ?v when ?e is_a name and ?e reads ?var and ?e in_state ?s and ?c in_state ?s and ?c for_var ?var and ?c has_value ?v
 
-# (2) ASSIGN: the target's cell in the to-state takes the RHS expression's value (read at from-state)
-?c2 has_value ?v when ?stmt is_a assign and ?stmt assigns ?var and ?stmt from_expr ?e and ?e eval_to ?v and ?stmt to_state ?s2 and ?c2 in_state ?s2 and ?c2 for_var ?var
+# (2) ASSIGN: the target's cell in the to-state takes the RHS expression's value (read at from-state).
+# The NAC excludes a REFINED cross-call link (2e handles those) so a guarded call doesn't also carry none.
+?c2 has_value ?v when ?stmt is_a assign and ?stmt assigns ?var and ?stmt from_expr ?e and ?e eval_to ?v and ?stmt to_state ?s2 and ?c2 in_state ?s2 and ?c2 for_var ?var and not ?stmt refine_nonnull yes
+
+# (2e) REFINED cross-call ASSIGN (path-sensitive inter-procedural): a call-link whose call site is
+# guarded by `arg is not None` carries only the NON-none value across the boundary — the callee's
+# parameter cannot see None on the path where the guarded call actually happens (if the arg were None
+# the guard is closed and the call never runs). The assign-shaped mirror of the refined frame (2c);
+# `refine_nonnull yes` is stamped on the link by Session.link_calls when the call is within such a guard.
+?c2 has_value ?v when ?stmt is_a assign and ?stmt assigns ?var and ?stmt from_expr ?e and ?e eval_to ?v and ?stmt to_state ?s2 and ?c2 in_state ?s2 and ?c2 for_var ?var and ?stmt refine_nonnull yes and not ?v is_a none_value
 
 # (2b) FRAME: carry a var's value across ANY CFG edge (assign or plain branch/merge edge) that does
 # NOT assign it AND does NOT refine it (the frame axiom, NACs). A merge point has two incoming edges,

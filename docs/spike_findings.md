@@ -318,9 +318,169 @@ Three findings:
    trust by the checker.
 
 **Still open:** loops in generated code (bounded, mirroring the unroll budget), a sub-goal satisfied
-by *emitting and calling a helper* (multi-function synthesis, reconnecting to the `Session`), and a
-spec language that carries the checkable properties directly (so the analyzer's whole effect
-vocabulary, not just a hardcoded hypothesis, drives verification).
+by *emitting and calling a helper* (multi-function synthesis — now probed, below), and a spec
+language that carries the checkable properties directly (so the analyzer's whole effect vocabulary,
+not just a hardcoded hypothesis, drives verification).
+
+---
+
+## Follow-up: multi-function synthesis (emit + call a helper), verified cross-call — feasible, and the verifier shapes it
+
+Probe: `experiments/multifunction_synthesis.py`, pinned by `tests/test_multifunction_synthesis.py`
+(8 tests). Question (the frontier after control-flow): does the synthesis loop still close when a
+subgoal is satisfied by *emitting a helper and calling it* — so correctness spans a **call
+boundary** — and can the **productized inter-procedural analyzer** be the oracle? **Verdict: yes —
+and the verifier's precision boundary visibly shapes what the synthesizer certifies.**
+
+**Intent:** a *total* `process(x)` that delegates to a helper `extract(v)` (which derefs `v.value`) —
+never raise across the call, even on `x=None`. Three findings:
+
+1. **A subgoal can be a helper.** The `program` goal expands into a composition that emits *two*
+   pre-minted function skeletons — a helper and a caller that calls it — the tool filling holes,
+   rules only selecting. Multi-function synthesis is compositional synthesis one level up (function,
+   not statement), with no new emit-side machinery.
+
+2. **Verification is cross-call, through the productized `Session`.** Each candidate is emitted as two
+   real functions, loaded into a `Session` (each under its own namespace — identity by
+   `(function, name)`), the call `link_calls`-wired, and `analyze_across_call` seeds a hypothesis
+   about the caller's input and reads outcomes *inside the callee*. The value crosses the boundary
+   through the exact inter-procedural machinery the analyzer ships — no bespoke oracle. A composition
+   that lets a None flow across the call into an unguarded deref is rejected.
+
+3. **Verification is path-sensitive across the call — synthesis found the boundary and moved it.**
+   Three compositions are proposed in CHOOSE order: `naive` (delegate + deref — None genuinely
+   crosses → rejected), `guard_caller` (guard *then* delegate), and `total_helper` (helper guards its
+   own input). `guard_caller` is *safe at run time* (the guard really prevents the call on None — the
+   probe pins this by concrete execution), and the cross-call link now **credits** that guard:
+   `Session.link_calls` stamps `refine_nonnull` on a call sitting inside `if arg is not None:`, and
+   the refined cross-call assign (semantics rule 2e) carries only the non-None value into the callee.
+   So `guard_caller` is **certified**, and CHOOSE's compact caller-side guard *wins* over the
+   defensive `total_helper`. This was the axis's most useful move: an *earlier path-insensitive* link
+   wired the argument unconditionally and rejected `guard_caller` (a conservative false positive);
+   **synthesis surfaced that boundary, and the refinement productized it** — while `naive`, where None
+   really crosses, stays rejected (the analyzer distinguishes a real cross-call bug from a
+   safely-guarded call). Pinned productized in `tests/test_session.py`
+   (`test_guarded_call_is_refined_across_the_boundary`).
+
+**#8 is routed around, not blocked on.** Each function is emitted independently and brought together
+only inside the `Session`, which namespaces identity — so no shared *synthesis* graph is built and
+the name-split-join footgun (`../../ugm/docs/feedback_from_pystrider.md` #8a) never bites. It is a
+*productization* prerequisite for a single shared synthesis graph, exactly as the analysis side
+proved for a multi-function analysis graph (banks + namespaces).
+
+> **Update (2026-07-13): the path-sensitive cross-call refinement is now productized.** `intake` tags
+> a call created inside an `if VAR is not None:` body with `within_guard`; `Session.link_calls` stamps
+> `refine_nonnull yes` on a link whose passed argument is that guarded var; and one new semantics rule
+> (2e, the assign-shaped mirror of the refined frame 2c) carries only the non-None value across the
+> boundary while a NAC on the plain ASSIGN rule (2) hands refined links to it. The full analysis suite
+> stays green (no intra-procedural regression — the tag/rule only bind on a guarded cross-call link).
+
+**Still open:** synthesizing the *call graph* shape itself (how many helpers, which delegates to
+which) rather than choosing among fixed compositions — **now probed, below**; a guard that tests
+something *other* than the passed argument (the refinement credits only `if arg is not None:`
+directly); and loops.
+
+---
+
+## Follow-up: synthesizing the call-graph SHAPE (how a computation is factored) — feasible
+
+Probe: `experiments/callgraph_synthesis.py`, pinned by `tests/test_callgraph_synthesis.py` (10 tests).
+Question (the frontier after fixed compositions, and the one `codegen_understand.md` posed at the
+outset — *"where and when do we decide whether to put statements in a subfunction vs a sequence?"*):
+can the program's **shape** — how many functions and the call edges among them — be the synthesis
+decision? **Verdict: yes, driven by checkable requirements and verified by re-execution + structural
+inspection of the emitted graph.**
+
+**Task:** `report(x)` needs two figures that both consume a shared sub-computation `normalize(x)`.
+Three pre-minted SHAPES realize the *same behaviour* but differ in call-graph structure: `inline_dup`
+(one function, `normalize` inlined twice), `helper_twice` (a `normalize` helper called at two sites),
+`helper_once` (extract AND bind the result, one call site). Because all three compute the same figure
+(pinned by execution), the choice is purely about **structure** — the point of the probe. Two spec
+requirements progressively FORCE more structure, the mirror of the earlier strict/readable flips but
+now over the call graph:
+
+- lenient → `inline_dup` (most compact — fewest functions, 0 call edges);
+- `dry_source` (no duplicated logic) → excludes the monolith; `helper_twice` wins (`normalize` node,
+  in-degree 2);
+- `dry_runtime` (compute `normalize` once) → only `helper_once` realizes — the winner flips again to
+  the shape that reuses the shared *result* (in-degree 1 + a binding).
+
+**The epistemic move is intact and is the honest part.** A shape only *claims* `provides factored /
+single_eval`; verification **re-parses the emitted program** and DERIVES those properties from the
+actual AST (is `normalize` a function? how many call sites?), then checks the winner's real structure
+meets the spec's required features — trust by inspection of the artifact, never by the claim (pinned:
+each shape's declared `provides` equals the AST-derived features). And every candidate is **run** and
+must return the same figure, so the shape choice never changes meaning. Invariants hold: the emit tool
+pre-mints the shape templates and the refinement rules only *select* (realizes iff misses nothing, as
+`codegen_understand`). **Still open:** the shapes are pre-minted for one fixed computation —
+synthesizing the shape over an *arbitrary dependency DAG* is the real generalization; and letting
+guard placement (the cross-call refinement) interact with the chosen shape for None-totality.
+
+---
+
+## Productized (2026-07-13): a synthesis selection surface, and honest "clean" — answering the critique
+
+Two of `docs/critique.md`'s load-bearing asks were productized (not probed):
+
+- **Surface UNKNOWN (weakness #5 — "don't build on silence").** Intake now emits a visible
+  `not_modelled` marker for every statement kind it cannot thread; `analysis.caveats(intake)` surfaces
+  them; `RepairPlan.caveats` / `.fully_modelled` and `emit.verify_clean` qualify the verdict, so
+  `repair_all` reports *"repaired to clean (modulo N unmodelled statement(s))"* and "clean" no longer
+  means "nothing derived". Pinned in `tests/test_caveats.py`.
+
+- **Productize the synthesis selection loop (weakness #8 — the probe pile).** `pystrider/emit.py` (+
+  `emit.cnl`, the realization bank as data) lifts the shared realize-iff-provides-all + CHOOSE +
+  provenance loop the probes re-implemented into the package — `emit.select(spec, required, candidates)`
+  / `emit.verify_clean`. Built the ugm-vision-aligned way (`load_fact_triples` interns by name — no
+  hand-rolled `ids` cache). `callgraph_synthesis` was refactored onto it (its `_graph`/`retrieve`/
+  `choose`/realization-rules deleted); pinned in `tests/test_emit.py`. Remaining (per the critique):
+  an end-to-end spec→source *entry point*, and migrating the other probes onto the surface.
+
+> **Note (2026-07-13):** ugm feedback #2 (existential minting) was RESOLVED upstream — genuine
+> per-match minting now works via the bound-literal skolem `<foo>?`. It does not change these probes
+> (they mint in the §8 tool, demand-driven, for stable names + fuel + verify), but it opens a future
+> option: rules could *grow* the candidate pool via skolem successors instead of the tool
+> pre-minting it. Worth a dedicated probe to compare, not a change to the axis as built. **Done
+> below** ("rule-grown vs tool-minted").
+
+---
+
+## Follow-up: rule-grown vs tool-minted candidate pools — an informed choice, now that #2 is resolved
+
+Probe: `experiments/minting_comparison.py`, pinned by `tests/test_minting_comparison.py` (6 tests).
+Question (reopened by ugm #2's resolution): every synthesis probe pre-mints its pool in the §8 tool
+because rules *couldn't* mint — now they can (skolem `n?`). **So should the pool be grown by rules?
+Verdict: for synthesis, keep tool-minting — but now by reason, not by force.**
+
+The task is the canonical case that *drove* #2: generate a chain of `k` successor slots and emit a
+depth-`k` value-threading function (`v0 = x; v1 = v0 + 1; … ; return vk`). Built **both** ways; both
+emit **byte-identical** source and both **verify by execution** (`chain(0) == k`) — interchangeable
+as generators. The difference is in four dimensions that matter for synthesis:
+
+1. **#2's fix is real and retires the state-threading workaround for reasoning.** A one-line skolem
+   rule (`?p has_next n? …`, the successor `is_a slot` so it recurses) grows the chain generatively
+   under `run_bank` — the exact "mint a successor" case that used to force intake to pre-materialize
+   the state lattice.
+
+2. **But minting moves the cost from *enumerating* the pool to *re-addressing* it.** The rule-minted
+   nodes are name-**collided** (all named `n`; identity is the anchoring relation), so every emit /
+   verify / recognize step must thread **by node id**, and the demand-path goal API is name-addressed
+   — you cannot ask for "the successor of THIS slot" by name (ugm #8c). Synthesis, which must
+   name-emit and name-verify, pays exactly that tax. **#2 (minting) is only as useful for synthesis as
+   #8 (addressing) is answered** — the two feedbacks are coupled. (Pinned: `nodes_named("slot_3")` is
+   1 node for the tool pool, but `nodes_named("n")` is `k` for the rule pool.)
+
+3. **Minting is not self-limiting.** The skolem's idempotent convergence bounds *re-asks of the same
+   goal*, not the depth of generative growth; `max_rounds` (forward) or the tool's pool size supplies
+   the real budget. #2's fix does **not** retire the fuel discipline — "agent, not theorem prover"
+   still lives outside the rule, exactly where the tool-minted pool size already put it.
+
+4. **Net — an informed choice.** Rule-minting is right for open-ended structure the rules must reason
+   over *in place* (state threading, graph growth). Tool-minting is right for synthesis *targets* you
+   must emit, name, and verify. The constraint that shaped the whole axis is gone, and the design
+   choice it forced turns out to be the right one for this use anyway. **Still open:** an id-addressed
+   emit/verify path would let synthesis use rule-grown pools without the naming tax — i.e. this
+   probe's conclusion flips only when ugm #8 (id-addressed goals + stable skolem labels) lands.
 
 ## ugm issues found
 

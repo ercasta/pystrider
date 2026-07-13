@@ -8,21 +8,23 @@ verify a guard-insertion modification clears the outcome.
 from .intake import Intake, intake_function
 from .semantics import SEMANTICS, build_rule_graph, rule_list
 from .analysis import (
-    Outcome, Repair, Candidate, Selection, RepairStep, RepairPlan,
+    Outcome, Caveat, caveats, Repair, Candidate, Selection, RepairStep, RepairPlan,
     analyze, analyze_return_none, analyze_all, analyze_source, guarded_variant, repair,
     candidate_edits, choose_repair, repair_all,
 )
 from .transform import insert_none_guard, insert_none_guard_range
 from .operators import Operator, LIBRARY, retrieve
 from .session import Session, relabel_trace
+from .emit import Candidate as EmitCandidate, Selection as EmitSelection, select, realizing, verify_clean
 
 __all__ = [
     "Intake", "intake_function",
     "SEMANTICS", "build_rule_graph", "rule_list",
-    "Outcome", "Repair", "Candidate", "Selection", "RepairStep", "RepairPlan",
+    "Outcome", "Caveat", "caveats", "Repair", "Candidate", "Selection", "RepairStep", "RepairPlan",
     "analyze", "analyze_return_none", "analyze_all", "analyze_source", "guarded_variant", "repair",
     "candidate_edits", "choose_repair", "repair_all",
     "insert_none_guard", "insert_none_guard_range",
     "Operator", "LIBRARY", "retrieve",
     "Session", "relabel_trace",
+    "EmitCandidate", "EmitSelection", "select", "realizing", "verify_clean",
 ]

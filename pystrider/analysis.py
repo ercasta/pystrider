@@ -49,6 +49,29 @@ class Outcome:
         return f"assuming {hyp}: {self.label} (line {self.line}) -> AttributeError"
 
 
+@dataclass
+class Caveat:
+    """A place intake could NOT model (an unmodelled statement kind). Its effect on state is unknown,
+    so any `clean` / `verified` verdict holds only MODULO this. Surfacing these is the difference
+    between "checked and clear" and "nothing derived" (docs/critique.md weakness #5 — don't build on
+    silence). A caveat is not an outcome — the code may be fine — but the analysis did not prove it."""
+    label: str
+    line: int
+    kind: str = "not_modelled"
+
+    def headline(self) -> str:
+        return f"not modelled: {self.label} (line {self.line}) — verdict holds only modulo this"
+
+
+def caveats(intake: Intake) -> list[Caveat]:
+    """The unmodelled statements in `intake` — the gaps a `clean` verdict is otherwise silent about.
+    An empty list next to zero outcomes means the whole function was modelled and is genuinely clear;
+    a non-empty list means "clear on what was modelled". Threaded into `RepairPlan`; a synthesis or
+    analysis caller should report it alongside outcomes so silence is never mistaken for safety."""
+    return [Caveat(label=intake.label_of.get(sid, sid), line=intake.line_of.get(sid, 0))
+            for sid in intake.not_modelled]
+
+
 def _node(g: "h.Graph", name: str) -> str:
     """The id of the node named `name`, reusing an existing one or minting it (intake boundary)."""
     ex = g.nodes_named(name)
@@ -334,15 +357,26 @@ class RepairPlan:
     steps: list[RepairStep]
     clean: bool
     stuck: Outcome | None = None
+    caveats: list[Caveat] = field(default_factory=list)   # unmodelled statements the verdict is modulo
+
+    @property
+    def fully_modelled(self) -> bool:
+        """True iff intake modelled every statement — so `clean` means "checked and clear", not
+        "clear on what was modelled". A `clean` plan with `fully_modelled` False is an honest partial."""
+        return not self.caveats
 
     def summary(self) -> list[str]:
         head = ("repaired to clean" if self.clean
                 else f"stuck on {self.stuck.label!r} ({self.stuck.kind})" if self.stuck
                 else "incomplete (step budget)")
+        if self.clean and self.caveats:                   # qualify a clean verdict with the silence
+            head += f" (modulo {len(self.caveats)} unmodelled statement(s))"
         lines = [f"{len(self.steps)} edit(s) -> {head}"]
         for i, s in enumerate(self.steps, 1):
             lines.append(f"  {i}. fix {s.target_label!r} ({s.target_kind}, line {s.target_line}) "
                          f"via {s.operator} [fit {s.fit:.2f}] -> {s.remaining} left")
+        for c in self.caveats:
+            lines.append(f"  ! {c.headline()}")
         return lines
 
 
@@ -364,7 +398,7 @@ def repair_all(intake: Intake, hypothesis: dict[str, str], *, max_steps: int = 1
         cur = intake_function(source)
         outcomes = analyze_all(cur, hypothesis)
         if not outcomes:
-            return RepairPlan(source=source, steps=steps, clean=True)
+            return RepairPlan(source=source, steps=steps, clean=True, caveats=caveats(cur))
         target = outcomes[0]
         prev_labels = {o.label for o in outcomes}
         provides_fn, analyzer = EFFECTS[target.kind]
@@ -392,9 +426,10 @@ def repair_all(intake: Intake, hypothesis: dict[str, str], *, max_steps: int = 1
             operator=winner.name, description=winner.description, fit=min(winner.locality, winner.compactness),
             remaining=len(residual_of[winner.name]), source_after=source))
 
-    final = analyze_all(intake_function(source), hypothesis)
+    final_intake = intake_function(source)
+    final = analyze_all(final_intake, hypothesis)
     return RepairPlan(source=source, steps=steps, clean=not final,
-                      stuck=final[0] if final else None)
+                      stuck=final[0] if final else None, caveats=caveats(final_intake))
 
 
 def analyze_source(src: str, hypothesis: dict[str, str]) -> tuple[Intake, list[Outcome]]:

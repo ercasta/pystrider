@@ -122,3 +122,33 @@ def test_call_link_is_inert_without_wiring():
     assert s.analyze_across_call("caller", {"m": "none"}, "callee") == []
     # the callee still analyzes correctly under its OWN hypothesis
     assert [o.label for o in s.analyze("callee", {"p": "none"})] == ["p.foo"]
+
+
+# --- path-sensitive cross-call: a guarded call refines the argument across the boundary --------
+
+GUARDED_CALLER = """
+def caller(m):
+    if m is not None:
+        return callee(m)
+    return {}
+"""
+
+
+def test_guarded_call_is_refined_across_the_boundary():
+    # a caller that guards `if m is not None:` before delegating passes only a non-None value across
+    # the call — so NO AttributeError surfaces in the callee even when the caller's input IS None (on
+    # that path the guard is closed and the call never runs). The refined link (semantics 2e) credits
+    # the caller-side guard, where a path-insensitive link would conservatively (falsely) flag it.
+    s = Session()
+    s.add_function(GUARDED_CALLER)
+    s.add_function(CALLEE)
+    assert s.link_calls() == [("caller", "callee", "p")]
+    assert s.analyze_across_call("caller", {"m": "none"}, "callee") == []
+
+    # control: the UNGUARDED delegate still surfaces the outcome — the refinement is specific to the
+    # guarded call, not a blanket suppression of cross-call errors.
+    s2 = Session()
+    s2.add_function(CALLER)
+    s2.add_function(CALLEE)
+    s2.link_calls()
+    assert [o.label for o in s2.analyze_across_call("caller", {"m": "none"}, "callee")] == ["p.foo"]
