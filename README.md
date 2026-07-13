@@ -1,6 +1,6 @@
 # pystrider
 
-A **dynamic, hypothesis-driven code analyzer** built on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine) library.
+A **dynamic, hypothesis-driven code analyzer, bug-fixer, and code generator** built on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine) library.
 Instead of matching static bug patterns, it reasons about a Python function the way a person does:
 *suppose* a value for a parameter, symbolically *run* the code by applying an operational semantics
 expressed as UGM rules, and read what *happens* — with a human-readable trace behind every
