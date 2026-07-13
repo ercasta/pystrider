@@ -17,7 +17,8 @@ downstream reasons through the public UGM firmware (`suppose` / `ask_goal` / `ch
 ## What it does (today)
 
 The vertical loop is proven and productized across four analysis/repair slices; a **third axis —
-spec → code synthesis** — is proven as a probe. All green (65 tests):
+spec → code synthesis** — is proven as a probe (now extended to compositional codegen from a business
+rule, and to control-flow synthesis gated by the analyzer). All green (87 tests):
 
 - **Slice A — correct value flow.** Value lives in a per-`(program-point, variable)` **cell
   lattice**, so reassignment (`y = a; y = b`), **branch-merge** (union of both arms), bounded
@@ -174,6 +175,73 @@ constraint (rules cannot mint fresh nodes, so the emit tool pre-mints a bounded 
 rules only *select*; the pool size is the synthesis fuel budget, the mirror of the unroll budget) and
 is not yet productized into the package. Run it: `python -m experiments.spec_synthesis`.
 
+### Going compositional: a business rule, and understanding the result
+
+`spec_synthesis` chose among whole-function *templates*. A follow-on probe
+([`experiments/codegen_understand.py`](experiments/codegen_understand.py)) pushes the axis two steps
+further — from a **business rule** to code by *recursive subgoal expansion*, and back again by
+*recognition*:
+
+```python
+from experiments.codegen_understand import Spec, synthesize, recognize
+
+base = dict(name="accrual_spec", intent="accrual", fn_name="compute_accrual")
+
+# "compute accrual" (principal * rate * days / 365) decomposes into a subgoal tree of recipes,
+# written BOTTOM-TO-TOP and verified by re-execution. Lenient spec -> the compact inline form:
+print(synthesize(Spec(**base)).winner)          # plan_inline   (accrual = principal*rate*days/365)
+
+# one word (`readable`) requires `named_steps` -> the winner FLIPS to named intermediates:
+r = synthesize(Spec(**base, readable=True))
+print(r.winner)                                 # plan_stepwise (annual_interest, day_fraction, ...)
+
+# UNDERSTANDING is synthesis run backwards: recognize code the system itself generated ->
+print(recognize(Spec(**base, readable=True), "plan_stepwise", "compute_accrual"))
+#   ['compute_accrual computes accrual']        (the business term bridged back to the code)
+```
+
+The **readability flip** is the compositional mirror of the strictness flip above: two decompositions
+compute the *same number*, so CHOOSE prefers the compact one — until an added requirement
+(`named_steps`) excludes it, exactly as `preserves_input` excluded `return v or {}`. The recursive
+subgoal expansion is checked as stratified Datalog (a plan is `complete` iff every sub-need bottoms
+out at a parameter), the winner is emitted leaves-first, and it is trusted only because it
+**re-executes** to the accrual formula. Recognition adds one rule to attribute the generated function
+`computes accrual`; a function the system did *not* generate has no fingerprint, so the fact is
+**supplied directly in CNL** (`mystery is_a sort_function`) — the round-trip escape hatch. Still a
+probe. Run it: `python -m experiments.codegen_understand`.
+
+### Control flow, minted on demand and verified by the analyzer
+
+The next frontier is code that needs a **conditional** — and whether the pre-minted pool then blows
+up. A third synthesis probe ([`experiments/controlflow_synthesis.py`](experiments/controlflow_synthesis.py))
+synthesizes a *total* `fetch(x)` (never raise, never return None) and answers both worries:
+
+```python
+from experiments.controlflow_synthesis import Spec, synthesize
+
+r = synthesize(Spec(name="fetch_spec", fn_name="fetch", input_var="x"))
+print(r.winner, "| minted", r.minted, "of", r.eager_pool, "| verified", r.verified)
+#   s_guarded | minted 5 of 8 | verified True
+print(r.source)
+#   def fetch(x):
+#       if x is not None:
+#           return x.value
+#       return {}
+```
+
+Three results. **(1) Control flow is synthesizable** under the no-rule-mint rule: the guard is one
+more pre-minted *skeleton with holes* the tool fills (exactly as intake pre-mints an unrolled loop's
+state chain) — rules only select it. **(2) The pool is minted demand-driven**, so control flow does
+*not* blow it up: strategies are minted one goal-layer at a time and an out-competed branch's whole
+sub-tree is never minted (here 5 nodes vs. the 8 an eager pre-mint would materialize — the saved 3
+are the un-explored cross-product). This is the concrete answer to "would letting rules mint fresh
+nodes help?" — **no**; lazy minting *in the tool* is the lever, with no ugm change. **(3) Verification
+gates selection using the productized analyzer as the oracle**: CHOOSE prefers the compact
+`return x.value`, but the real `analyze` rejects it (`AttributeError` under `x=None`), so synthesis
+falls back to the guarded form that `analyze`/`analyze_return_none` clear. The generator proposes; the
+analyzer disposes — synthesis is verified by re-running the *same* productized analysis loop, both
+directions on one firmware. Run it: `python -m experiments.controlflow_synthesis`.
+
 ## Layout
 
 | Path | Role |
@@ -186,8 +254,8 @@ is not yet productized into the package. Run it: `python -m experiments.spec_syn
 | `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
 | `pystrider/demo.py` | end-to-end packaged walkthrough (`python -m pystrider.demo`) |
 | `demos/` | five focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](demos/README.md) |
-| `experiments/` | feasibility probes — `state_threading.py` (state-succession) and `spec_synthesis.py` (the spec→code synthesis axis) |
-| `tests/` | behaviour pins (65 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_spec_synthesis.py` |
+| `experiments/` | feasibility probes — `state_threading.py` (state-succession), `spec_synthesis.py` (the spec→code synthesis axis), `codegen_understand.py` (compositional codegen from a business rule + round-trip recognition), and `controlflow_synthesis.py` (control-flow synthesis, demand-driven minting, analyzer-gated) |
+| `tests/` | behaviour pins (87 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_spec_synthesis.py`, `test_codegen_understand.py`, `test_controlflow_synthesis.py` |
 | `docs/` | the design (`code_reasoning_design.md`), the plan (`implementation_plan.md`), the spike findings |
 
 ## Run
@@ -197,5 +265,7 @@ pip install -e ../ugm -e .    # the ugm sibling + this package
 python -m pystrider.demo             # the packaged end-to-end walkthrough
 python demos/run.py                  # the five focused demos
 python -m experiments.spec_synthesis # the spec → code synthesis probe (the third axis)
-pytest -q                            # the behaviour pins (65 green)
+python -m experiments.codegen_understand # compositional codegen from a business rule + recognition
+python -m experiments.controlflow_synthesis # control-flow synthesis, demand-driven + analyzer-gated
+pytest -q                            # the behaviour pins (87 green)
 ```
