@@ -11,10 +11,11 @@ Textual `App`/`Screen` with event handlers — and it fuses THREE vocabularies j
 
 Everything but the verifier REUSES what is already built:
 
-  * SELECTION is a grammapy exclusive-`Choice` (Phase 2): the screen shape is a decision point whose
-    guards PARTITION the domain `{required, absent}` (checked once at import — determinacy, not a graded
-    pick). pystrider's reasoning supplies the decision key's state; grammapy proves exactly one branch
-    fires. This retired the ad-hoc `pystrider.emit.select` the earlier draft used.
+  * SELECTION is a grammapy §12 DECISION POINT resolved by cross-cutting constraint (Phase 3): the screen
+    productions declare the capabilities they provide, pystrider's reasoning emits one `requires
+    confirmation` constraint, and grammapy `resolve` narrows to FORCED / DEFAULTED / SURFACED / REJECTED —
+    never a silent pick. (Phase 2a first wired this as a value-guard `Choice`, still a grammapy combinator
+    for value-keyed decisions; Phase 3 generalized it to the intensional constraint form.)
   * COMPOSITION of a screen's features is a grammapy `Accumulate` (Phase 1): each button is a
     footprint-declared atom, and `Accumulate.check` (the frame rule) admits the set iff their writes are
     disjoint — rejecting interference (two proceed-buttons) at design time, before any source is emitted.
@@ -63,8 +64,8 @@ from dataclasses import dataclass, field
 import ugm as h
 from ugm import load_machine_rules, ask_goal
 
-from grammapy import (Accumulate, Channel, Choice, CompositionError, Fold, FoldItem, Footprint,
-                      Guard, GuardedProduction, Item, Lattice, Scope, ScopeNode, ABSENT)
+from grammapy import (Accumulate, Channel, CompositionError, DecisionPoint, Defaulted, Fold, FoldItem,
+                      Footprint, Forced, Item, Lattice, Production, Scope, ScopeNode, resolve)
 
 
 # --- the succinct business spec (DATA) --------------------------------------------------------
@@ -343,19 +344,23 @@ def _emit_confirm_screen(spec: Spec) -> str:
             + "\n\n" + _APP_BODY + "\n" + _HANDLER_CONFIRM)
 
 
-# --- PHASE 2: the screen shape as a grammapy exclusive-CHOICE (guards partition, one branch fires) ---
-# The winner-flip was an ad-hoc `emit.select` (realize + graded CHOOSE). It is really an EXCLUSIVE
-# CHOICE: the decision key is `confirmation` over enum {required}, and the guards partition the domain
-# {required, absent}. pystrider's deontic reasoning supplies the key's STATE (required iff the obligation
-# fired, else absent — the Reiter default); grammapy proves the guards partition (determinacy, checked
-# ONCE at import) and selects the one firing production. Sound selection, no ad-hoc fit.
-CONFIRMATION_ENUM = ("required",)
-SCREEN_PRODUCTIONS = [
-    GuardedProduction("one_screen", Guard.of(absent=True)),                 # default: spec silent -> compact
-    GuardedProduction("confirm_screen", Guard.of("required")),             # the obligation forced a confirm
-]
+# --- PHASE 3: the screen shape as a grammapy DECISION POINT, resolved by cross-cutting constraint (§12) ---
+# Phase 2a wired this as a value-guard Choice; Phase 3 GENERALIZES it to the intensional form and unifies
+# the reasoning->grammapy interface. The screen is a decision point whose productions declare the
+# capabilities they PROVIDE; pystrider's deontic reasoning emits ONE cross-cutting CONSTRAINT (`requires
+# confirmation` iff the folded verdict is obligatory — a deviation spec, not four hand-wired combinator
+# calls), and grammapy's §12 `resolve` narrows the productions: FORCED where a requirement leaves one,
+# DEFAULTED where the spec is silent, SURFACED where ambiguous, REJECTED where unsatisfiable — never a
+# silent inferred pick. (The value-guard Choice combinator remains in grammapy for value-keyed decisions.)
+SCREEN_POINT = DecisionPoint(
+    "screen",
+    productions=(
+        Production("one_screen", frozenset()),                         # the compact default
+        Production("confirm_screen", frozenset({"confirmation"})),     # provides the confirmation capability
+    ),
+    default="one_screen",
+)
 _SCREEN_EMIT = {"one_screen": _emit_one_screen, "confirm_screen": _emit_confirm_screen}
-Choice.check(CONFIRMATION_ENUM, SCREEN_PRODUCTIONS)   # determinacy proven once: guards partition {required, absent}
 
 
 # --- PHASE 2c: resolve conflicting deontic verdicts with a grammapy FOLD (declared, order-independent) ---
@@ -387,16 +392,27 @@ def resolve_confirm(spec: Spec, policy: Lattice = CONFIRM_SAFETY) -> str:
     return Fold.combine(policy, verdicts)
 
 
-def _confirmation_state(spec: Spec):
-    """The decision key's STATE the grammapy Choice consumes: `required` iff the FOLDED deontic verdict is
-    `obligatory` (under the safety policy), else ABSENT. Reasoning votes, the Fold resolves, Choice branches."""
-    return "required" if resolve_confirm(spec) == "obligatory" else ABSENT
+def required_capabilities(spec: Spec) -> frozenset:
+    """The cross-cutting CONSTRAINT pystrider's reasoning addresses to the app's decision points: the app
+    `requires confirmation` iff the FOLDED deontic verdict is obligatory (under the safety policy). One
+    constraint set — the intensional deviation spec — instead of a per-combinator imperative call."""
+    return frozenset({"confirmation"}) if resolve_confirm(spec) == "obligatory" else frozenset()
+
+
+def resolve_screen(spec: Spec):
+    """Resolve the screen decision point against the reasoning's constraint via grammapy §12 —
+    Forced / Defaulted / Surfaced / Rejected."""
+    return resolve(SCREEN_POINT, required_capabilities(spec))
 
 
 def choose_screen(spec: Spec) -> str:
-    """Select the app's screen shape via the grammapy exclusive-Choice — the sound replacement for the
-    ad-hoc `emit.select`. Exactly one production fires, by construction of the partitioning guards."""
-    return Choice.select(SCREEN_PRODUCTIONS, _confirmation_state(spec)).label
+    """The app's screen shape from the §12 resolution. For the base app the resolution is always Forced
+    (a confirmation requirement narrows to the confirm screen) or Defaulted (silent -> compact); a
+    Surfaced or Rejected resolution is a non-determinate app and raises (shown in the walkthrough)."""
+    r = resolve_screen(spec)
+    if isinstance(r, (Forced, Defaulted)):
+        return r.production
+    raise CompositionError("screen", [r], reason="the screen decision did not resolve to one production")
 
 
 # --- PHASE 2b: the confirmation gate as a grammapy SCOPE (reachability of the withdrawal effect) ------
@@ -518,8 +534,7 @@ def _show(spec: Spec) -> None:
     flag = "IRREVERSIBLE (UX demands a confirm step)" if spec.irreversible else "lenient (compact allowed)"
     print(f"=== spec: {spec.procedure} app - {flag} ===")
     print(f"  refine (business -> deontic -> framework) -> required features: {sorted(r.required) or '[]'}")
-    print(f"  choice (guards partition {{required, absent}}) -> confirmation={_confirmation_state(spec)!r}"
-          f" -> screen: {r.screen}")
+    print(f"  resolve -> requires {set(required_capabilities(spec)) or '{}'} -> {resolve_screen(spec)}")
     vr = r.verify
     print(f"  drive  -> events: {vr.events}")
     print(f"           performed={vr.performed}  gated={vr.gated}  "
@@ -612,8 +627,25 @@ def main() -> None:
     print("\n  The fold is order-independent (the semilattice law), so it does not matter which rule voted")
     print("  first; and WHICH verdict wins is a reviewable DECLARATION (the lattice), never inferred.")
 
+    print("\nPART 7 - grammapy constraint resolution: reasoning emits ONE constraint; the point resolves it\n")
+    print(f"  screen decision point: productions {[p.label for p in SCREEN_POINT.productions]}, "
+          f"default {SCREEN_POINT.default!r}")
+    for label, spec in [("reversible", Spec(name="s")),
+                        ("irreversible", Spec(name="s", irreversible=True))]:
+        req = required_capabilities(spec)
+        print(f"    reasoning `requires {set(req) or '{}'}` ({label}) -> {resolve_screen(spec)}")
+    print(f"  a requirement no production provides (`biometric`) -> {resolve(SCREEN_POINT, ['biometric'])}")
+    ambiguous = DecisionPoint("screen2", (
+        Production("confirm_modal", frozenset({"confirmation"})),
+        Production("confirm_inline", frozenset({"confirmation"}))), default="confirm_modal")
+    print(f"  two productions both providing `confirmation`, no preference ->\n      "
+          f"{resolve(ambiguous, ['confirmation'])}")
+    print("\n  Forced where unique, defaulted where silent, surfaced where ambiguous, rejected where")
+    print("  unsatisfiable - never an inferred pick. The reasoning emits ONE constraint set (a deviation")
+    print("  spec); the four combinators consume it, replacing four hand-wired call sites.")
+
     print("\nCOMPOSITION - every line above came from a SEPARATE knowledge fragment (business, deontic,")
-    print("bridge, preference), and the feature set is admitted by grammapy's proven Accumulate, not")
+    print("bridge, preference), and the feature set is admitted by grammapy's proven combinators, not")
     print("ad-hoc glue. That additivity is the property productization must keep as fragments grow.")
 
 

@@ -57,7 +57,7 @@ not built. The withdrawal app forces all four, so it is the natural forcing func
 | **2a** | Build `Choice` (guard partition: disjoint + exhaustive), driven by the app's screen selection | **`Choice` built** | **done** |
 | **2b** | Build `Scope` (binder-scoped reachability), driven by the confirm gate as a handler over the withdrawal effect | **`Scope` built** | **done** |
 | **2c** | Build `Fold` (declared commutative/associative join), driven by deontic conflict (obligation vs waiver) | **`Fold` built** | **done** |
-| **3** | pystrider's `REFINE` bank emits a grammapy *deviation spec* (cross-cutting constraints → forced/surfaced productions) | Choice + constraint resolution | next |
+| **3** | pystrider's reasoning emits a *cross-cutting constraint*; grammapy §12 resolves the decision point (forced/defaulted/surfaced/rejected) | **§12 resolver built; screen wired** | **core done** |
 | **4** | AST emission (libcst) — combinators emit fragments, grammapy assembles; retire string templates | grammapy roadmap step 5 | |
 | **5** | External generator front-end drafts the deviation spec; grammapy guarantees + emits; pystrider drive-verifies + checks footprint honesty | steps 5–7 | |
 
@@ -104,6 +104,28 @@ not built. The withdrawal app forces all four, so it is the natural forcing func
 **All four combinators now exist in grammapy and are exercised by one app:** Choice (screen), Accumulate
 (buttons), Scope (the confirm gate as a handler over the withdrawal effect), Fold (deontic conflict).
 That is the evidence for grammapy's central bet — that safe composition reduces to these four shapes.
+
+## Phase 3 as landed (core) — cross-cutting constraint resolution (§12)
+
+- New grammapy substrate [`grammapy/resolution.py`](../grammapy/resolution.py): `Production` (label +
+  `provides` capabilities), `DecisionPoint` (productions, default, declared preference), and `resolve`,
+  which narrows a point against a cross-cutting requirement to one of **Forced** (a requirement leaves
+  one), **Defaulted** (spec silent), **Surfaced** (several survive, no preference — a design-time
+  decision), **Rejected** (none provides it). The §12 rule: *forced where unique, declared where
+  preferred, surfaced where ambiguous — never inferred*. Pins: `tests/test_resolution.py` (6).
+- The app's screen decision is now a `DecisionPoint` whose productions declare capabilities; pystrider's
+  reasoning emits **one** `requires confirmation` constraint (`required_capabilities`, from the Fold), and
+  `resolve_screen` narrows it. The Phase 2a value-guard `Choice` was retired from the app's screen path
+  (it remains a grammapy combinator for value-keyed decisions); Phase 3 generalized the screen to the
+  intensional constraint form. This is the reasoning→grammapy seam made single: one constraint set (the
+  start of a deviation spec) instead of the ad-hoc per-combinator computation.
+- **Bridges-vs-channels decision (deferred, deliberately):** the capabilities (`confirmation`) are
+  untyped names for now — grammapy's own channel *types* are still placeholders (their §9). Typing them
+  so `provides`/`requires` are checked channel contracts is the follow-on; it is additive and did not
+  block the resolver.
+- **Remaining in Phase 3:** the other three points (buttons/Accumulate, gate/Scope, policy/Fold) still
+  have their own call sites; folding all four under one `DeviationSpec` object driven by a single
+  `assemble` is the incremental finish.
 
 ## Do humans need the lattice math? (a design note)
 

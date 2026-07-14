@@ -14,6 +14,9 @@ from grammapy.guards import (
 )
 from grammapy.scope import ScopeNode, Unhandled, unhandled_emissions
 from grammapy.lattice import Lattice, FoldItem, UnknownVerdict
+from grammapy.resolution import (
+    Production, DecisionPoint, Forced, Defaulted, Surfaced, Rejected, resolve,
+)
 
 __all__ = [
     "Channel",
@@ -39,4 +42,11 @@ __all__ = [
     "Lattice",
     "FoldItem",
     "UnknownVerdict",
+    "Production",
+    "DecisionPoint",
+    "Forced",
+    "Defaulted",
+    "Surfaced",
+    "Rejected",
+    "resolve",
 ]

@@ -12,34 +12,40 @@ from experiments.app_synthesis import (
     Spec, required_features, requirement_trace, synthesize,
     verify_by_pilot, confirm_buttons, confirm_button_trace,
     compose_confirm_screen, _affirmative_of,
-    choose_screen, _confirmation_state, SCREEN_PRODUCTIONS, CONFIRMATION_ENUM,
+    choose_screen, resolve_screen, required_capabilities, SCREEN_POINT,
     check_reachability, app_scope_tree, CONFIRM_SIGNAL,
     resolve_confirm, _confirm_verdicts, CONFIRM_SAFETY, CONFIRM_LENIENT,
     _emit_one_screen, _emit_confirm_screen,
 )
-from grammapy import ABSENT, Choice, CompositionError, guard_coverage, unhandled_emissions
+from grammapy import CompositionError, Forced, Defaulted, Rejected, resolve, unhandled_emissions
 
 
 def test_lenient_spec_requires_nothing_and_picks_the_compact_app():
     r = synthesize(Spec(name="withdraw_spec"))
     assert r.required == set()
-    assert _confirmation_state(r.spec) is ABSENT          # spec silent on confirmation -> default branch
-    assert r.winner == "one_screen"                       # the grammapy Choice fires the default production
+    assert isinstance(resolve_screen(r.spec), Defaulted)  # spec silent on confirmation -> the default
+    assert r.winner == "one_screen"
 
 
 def test_irreversible_fact_flips_the_winner_to_the_confirm_app():
     r = synthesize(Spec(name="withdraw_spec", irreversible=True))
     assert r.required == {"confirmation_step"}            # DERIVED across business -> deontic -> framework
-    assert _confirmation_state(r.spec) == "required"      # the obligation set the decision key's state
-    assert r.winner == "confirm_screen"                   # so the Choice fires the confirm production
+    res = resolve_screen(r.spec)
+    assert isinstance(res, Forced) and res.production == "confirm_screen"   # the constraint FORCED it
+    assert r.winner == "confirm_screen"
 
 
-def test_screen_choice_guards_partition_the_domain():
-    # the app's screen decision is a SOUND exclusive-Choice: its guards partition {required, absent}.
-    assert guard_coverage(CONFIRMATION_ENUM, SCREEN_PRODUCTIONS) == []
-    Choice.check(CONFIRMATION_ENUM, SCREEN_PRODUCTIONS)   # no raise
+def test_screen_decision_is_resolved_by_cross_cutting_constraint():
+    # Phase 3: the screen is a §12 decision point; the confirmation constraint resolves it.
+    assert isinstance(resolve_screen(Spec(name="s")), Defaulted)           # no constraint -> default
+    assert required_capabilities(Spec(name="s", irreversible=True)) == frozenset({"confirmation"})
     assert choose_screen(Spec(name="s")) == "one_screen"
     assert choose_screen(Spec(name="s", irreversible=True)) == "confirm_screen"
+
+
+def test_an_unsatisfiable_screen_constraint_is_rejected_not_guessed():
+    # a requirement no screen production provides resolves to Rejected (§12), never a silent pick.
+    assert isinstance(resolve(SCREEN_POINT, ["biometric"]), Rejected)
 
 
 def test_required_feature_is_gated_by_framework_support():
@@ -195,7 +201,7 @@ def test_trusted_session_cannot_waive_a_safety_confirmation():
     votes = {it.value for it in _confirm_verdicts(conflict)}
     assert votes == {"optional", "obligatory", "waived"}        # all three voted
     assert resolve_confirm(conflict, CONFIRM_SAFETY) == "obligatory"
-    assert _confirmation_state(conflict) == "required"          # so a confirm screen is STILL forced
+    assert isinstance(resolve_screen(conflict), Forced)         # so a confirm screen is STILL forced
     assert choose_screen(conflict) == "confirm_screen"
 
 
@@ -208,13 +214,13 @@ def test_declared_policy_flips_the_outcome():
 def test_trusted_alone_needs_no_confirmation():
     # a reversible action, trusted or not, has no obligation to override -> no confirmation.
     assert resolve_confirm(Spec(name="s", trusted=True)) == "optional"
-    assert _confirmation_state(Spec(name="s", trusted=True)) is ABSENT
+    assert choose_screen(Spec(name="s", trusted=True)) == "one_screen"
 
 
 def test_fold_leaves_non_trusted_behaviour_unchanged():
-    # the Fold is transparent when there is no waiver vote: prior Choice behaviour is preserved.
-    assert _confirmation_state(Spec(name="s")) is ABSENT
-    assert _confirmation_state(Spec(name="s", irreversible=True)) == "required"
+    # the Fold is transparent when there is no waiver vote: prior screen resolution is preserved.
+    assert choose_screen(Spec(name="s")) == "one_screen"
+    assert choose_screen(Spec(name="s", irreversible=True)) == "confirm_screen"
 
 
 if __name__ == "__main__":
