@@ -11,6 +11,7 @@ dependencies = ["universal-graph-machine"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+experiments = ["textual>=8,<9"]   # drives experiments/app_synthesis.py via textual's Pilot
 
 [tool.setuptools]
 packages = ["pystrider"]
