@@ -1,0 +1,23 @@
+# =============================================================================
+# BRIDGE building block — the ONLY link between the other three vocabularies
+# =============================================================================
+# The business, UX, and library blocks share NO vocabulary on purpose: each is
+# authored in isolation, by whoever owns that knowledge. The bridge is the thin
+# crosswalk that marries them — and because it is the only join, swapping any one
+# block re-targets the whole system without touching the others.
+#
+# Here the bridge does two jobs: it maps each UX FEATURE to a library CAPABILITY,
+# and it carries the rule that ADMITS a feature only if the library actually
+# supports the capability that realizes it (feature reachability across the gap).
+
+#-- UX feature  ->  library capability (the crosswalk, as facts) --------------
+confirmation_step    realized_by modal_confirm
+highlighted_discount realized_by styled_label
+
+#-- A required feature is ADMITTED only if the library supports its realizer ---
+# `?feat admitted_for ?cart` is the composed conclusion the engine queries: a UX
+# rule may REQUIRE a feature, but it enters the app only if some capability
+# realizes it AND the library block supports that capability. Delete
+# `styled_label supported_by textual` from the library block and the highlighted
+# discount is no longer admitted — the honest "the toolkit can't do that" gap.
+?feat admitted_for ?cart when ?cart requires_feature ?feat and ?feat realized_by ?cap and ?cap supported_by textual

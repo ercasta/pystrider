@@ -1,578 +1,226 @@
 # pystrider
 
-A **hypothesis-driven code analyzer, bug-fixer, code generator, and policy-conformance checker** built on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine) library.
-Instead of matching static bug patterns, it reasons about a Python function the way a person does:
-*suppose* a value for a parameter, symbolically *run* the code by applying an operational semantics
-expressed as UGM rules, and read what *happens* — with a human-readable trace behind every
-conclusion. Then it *repairs* the code and *verifies* the fix by re-running the analysis.
+**Bring your own rules — business, UX, your favorite Python library — keep them in separate files,
+bridge them, and brew a _working, verified_ UI.** No wizards, no hardcoded engine, no LLMs: every
+line is derived by reasoning on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine),
+and trusted because pystrider _runs_ what it built and watches it behave.
 
-**The unusual part:** every conclusion — every bug, every fix, every generated line, every
-policy-violation — is a **replayable proof object**, and the *same small rule engine* runs in several
-**directions** on it: reading code (analysis), fixing it (repair), writing it (synthesis), explaining a
-crash (diagnosis), and **checking it against a business policy** (conformance). Nothing is trusted
-because a tool claimed it — everything is checked by re-running the reasoning.
+## What can pystrider do? Well, many things.
 
-The synthesis direction has since grown into a full **generation loop** that composes a knowledge base
-into a *runnable, verified application* — **reason → resolve → compose → emit → drive** — where the
-**soundness of composition is itself CNL**: a second in-repo package (`grammapy`) supplies a
-composition algebra whose every check is a rule-module over the same graph, and the emitted app is
-trusted because pystrider **drives** it (a real Textual app, observed to behave). Change one sentence of
-the spec and the code **re-derives with a proof of what changed and why** — the "policy change →
-verified code change" artifact no LLM regeneration can produce (see
-[_Generation, grown up_](#generation-grown-up-a-succinct-spec-becomes-a-runnable-verified-app)).
+Here's the headline one. You have knowledge scattered across three worlds that normally never talk to
+each other — the business, the interaction design, and the widget toolkit. pystrider lets each stay in
+its own vocabulary, in its own file, and composes them into an app.
 
-Analysis + repair are **productized**; synthesis, generation, diagnosis, and conformance are proven
-**end-to-end as probes** (302 tests green). A library's API surface is now **absorbed as data**
-(`pystrider.absorb`, from live type hints), and the same anomaly-checking loop turns on **rule banks
-themselves** (rulestrider) — the KB-ingestion gate that makes authored knowledge trustworthy.
+**For example — bring your own business rules** (`demos/playground/business.cnl`):
 
-pystrider owns **no** engine code. Intake materializes graph structure from `ast`; everything downstream
-— the analysis semantics, the four composition combinators, and cross-cutting constraint resolution —
-reasons through the public UGM firmware (`suppose` / `ask_goal` / `choose`) as CNL rules. Python is
-confined to its proper role: the tool boundaries (intake, `absorb`), AST emission, and execution.
+```
+# The discount policy, as data (the numbers are KNOBS — edit them).
+discount_policy threshold 100
+discount_policy rate 10
 
-## What it does (today)
+# A loyal (premium-tier) customer whose order QUALIFIES earns a discount.
+?cart grants_discount yes when ?cart customer_tier premium and ?cart order_qualifies yes
 
-The vertical loop is proven and productized across four analysis/repair slices; a **third axis —
-spec → code synthesis** — is proven across six probes (compositional codegen from a business rule,
-control-flow synthesis gated by the analyzer, multi-function synthesis verified cross-call, and the
-call-graph shape itself), with its shared **selection loop now productized** in `pystrider/emit.py`.
-A **fourth axis — crash → root cause (diagnosis)** is proven as a probe: the loop run backwards
-over the *hypothesis* space, abducing the input that reproduces an observed exception, then handing the
-cause to the repair axis. A **fifth axis — code ⟷ policy conformance** is proven as a probe: a business
-policy and the code in one graph, joined by a declarative **bridge** across their vocabularies, with
-spec-vs-code divergence derived as a fact and repaired spec-directed. All green (302 tests):
-
-- **Slice A — correct value flow.** Value lives in a per-`(program-point, variable)` **cell
-  lattice**, so reassignment (`y = a; y = b`), **branch-merge** (union of both arms), bounded
-  **loop unrolling**, and **path-sensitive refinement** (a `if v is not None:` fork narrows `v` per
-  branch, so the deref on the safe branch is not a false positive) are all correct. Every value
-  union at a join is a rule *derivation* (the frame rule firing once per edge), never a Python meet.
-- **Slice B — a Session.** Several functions coexist in **one shared graph** (identity by
-  `(function, source_name)`), each analyzed under its own `focus_scope`, detection read-only so
-  functions/hypotheses never contaminate one another — and a **value flows across a call boundary**
-  into the callee.
-- **Slice C — a second effect.** Beyond None-derefs (`AttributeError`), a `returns_none` outcome
-  ("returns None when a non-None was intended") is authored as one more semantics rule + two library
-  operators — reusing the whole retrieve / verify / CHOOSE loop with **no new machinery**.
-- **Means-ends repair.** For any effect: **retrieve** applicable edit operators from an effect-keyed
-  library by backward-CHAIN, **materialize** each as real Python (AST rewrite), **verify** each by
-  re-intaking + re-analyzing the edited source, and **CHOOSE** the graded-best.
-- **Whole-function auto-fix.** `repair_all` drives repair to a fixpoint — fix *every* outcome (of any
-  effect), each edit verified to make progress **and** introduce no regression, until the function is
-  clean — returning the edited source plus an audit log of what it changed and why.
-- **Honest "clean" — no building on silence.** Intake emits a visible `not_modelled` marker for any
-  statement kind it can't thread (aug-assign, attribute store, tuple unpack, bare call, …) instead of
-  silently framing a stale value forward; `caveats()` surfaces them and `repair_all` *qualifies* its
-  verdict — "repaired to clean **(modulo N unmodelled statements)**", `fully_modelled=False` — so
-  "clean" means "checked and clear", never "nothing derived".
-- **A third axis — spec → code.** The same SUPPOSE / CHAIN / CHOOSE / RECORD firmware runs in
-  **reverse**: a terse spec is *expanded* by CNL refinement rules into real Python and *verified by
-  re-execution*. Proven across six probes ([_below_](#a-third-axis-spec--code-synthesis)); the shared
-  **selection loop is now productized** in [`pystrider/emit.py`](pystrider/emit.py) (`select` /
-  `verify_clean` + `emit.cnl`) — the §8 boundary run in reverse.
-
-## A small, nontrivial example
-
-```python
-from pystrider import intake_function, analyze, choose_repair
-
-src = """
-def pipeline(raw):
-    data = validate(raw)   # data is now the validated (non-None) result
-    data = raw             # ...but a stray second assignment clobbers it with the raw input
-    return data.rows()     # so on a None input this dereferences None
-"""
-
-ik = intake_function(src)
-
-# SUPPOSE the input is None, then symbolically RUN the semantics (no pattern matching):
-[outcome] = analyze(ik, {"raw": "none"})
-print(outcome.headline())
-#   assuming raw=None: data.rows (line 5) -> AttributeError
-
-# every conclusion carries its real UGM provenance trace (abbreviated):
-print("\n".join(outcome.trace))
-#   attr9 raises attribute_error   <- rule.?e.raises.attribute_error
-#     e8 eval_to none              <- rule.?e.eval_to      (data is None at the deref's program point)
-#       c_p2_data has_value none   <- rule.?c2.has_value   (the LAST write — data = raw — wins)
-#   ...
-
-# retrieve + materialize + verify + CHOOSE a repair (smallest / most-local wins):
-sel = choose_repair(ik, {"raw": "none"}, outcome)
-print(sel.winner.v2_source)
-#   def pipeline(raw):
-#       data = validate(raw)
-#       data = raw
-#       if data is not None:
-#           return data.rows()
+# A granted discount is a benefit the checkout must surface.
+?cart has_benefit discount when ?cart grants_discount yes
 ```
 
-This is exactly the case a "one variable, one value" (SSA) model or a pattern matcher gets wrong:
-`data` is assigned twice, and only the **last** write (`data = raw`) reaches the deref. pystrider
-threads value through a per-`(program-point, variable)` cell lattice, so it reads the value that is
-actually live at the return — and if you **swap the two assignments** (`data = raw` first), the
-outcome soundly disappears (no false positive).
+**And some UX rules** (`demos/playground/ux.cnl`) — in the UX vocabulary, knowing nothing of widgets:
 
-For the multi-function / inter-procedural version, see [`demos/03_session_interprocedural.py`](demos/03_session_interprocedural.py).
+```
+# An IRREVERSIBLE action carries an OBLIGATION to confirm (a modality, not a flag).
+?cart obliged confirm when ?cart action_irreversible yes
+?cart requires_feature confirmation_step when ?cart obliged confirm
 
-## Fixing, not just finding
-
-The point of running the semantics is that it also tells you how to *repair* the code — and
-`repair_all` drives that to a fixpoint, fixing **every** outcome (across all effects) one verified
-edit at a time:
-
-```python
-from pystrider import intake_function, repair_all
-
-buggy = """
-def process(cfg, data):
-    conn = cfg
-    a = conn.open()      # AttributeError if cfg is None
-    rows = data
-    return rows          # returns None if data is None   (a different bug, different effect)
-"""
-
-plan = repair_all(intake_function(buggy), {"cfg": "none", "data": "none"})
-
-print("\n".join(plan.summary()))
-#   2 edit(s) -> repaired to clean
-#     1. fix 'conn.open' (attribute_error, line 4) via guard_base [fit 1.00] -> 1 left
-#     2. fix 'return rows' (returns_none, line 6) via coalesce_or [fit 1.00] -> 0 left
-
-print(plan.source)          # the edited, now-clean Python you can apply
-#   def process(cfg, data):
-#       conn = cfg
-#       if conn is not None:
-#           a = conn.open()
-#       rows = data
-#       return rows or {}
+# What it MEANS to "show a discount": display it PROMINENTLY, i.e. HIGHLIGHTED.
+?cart requires_feature highlighted_discount when ?cart has_benefit discount
 ```
 
-Each candidate edit is **materialized as real Python** (an AST rewrite) and accepted only if
-re-analyzing the edited source shows it removed the target **and introduced no new problem**
-(regression-checking) — the graded-best survivor is applied, then the loop re-analyzes and repeats
-until the function is clean (or reports an honest `stuck`). So the fix is trusted because the code
-*re-runs clean*, not because an operator claimed it would. `plan.source` is source you can apply;
-`plan.steps` is the audit log of what changed and why. (For a single site with the full CHOOSE
-trace, use `choose_repair`, above.)
+**And some rules for your favorite Python library** (`demos/playground/textual.cnl`) — here Textual,
+as absorbed facts about what its widgets can do:
 
-## A third axis: spec → code (synthesis)
-
-Analysis reads code; **synthesis writes it** — and it is the *same loop run backwards*, over the
-same firmware:
-
-| analysis (productized) | synthesis (this probe) |
-|---|---|
-| `ast → facts` (intake, a tool) | `spec-facts → ast → source` (an *emit* tool — the boundary in reverse) |
-| operational semantics as rules | **refinement** rules *expand* a succinct spec |
-| operator library, keyed by *effect prevented* | skeleton library, keyed by *intent realized* |
-| SUPPOSE → CHAIN → **CHOOSE** a repair | (spec) → CHAIN refine → **CHOOSE** an expansion |
-| RECORD → execution trace | RECORD → **spec→code rationale** trace |
-| verify a repair by re-execution | verify a spec by re-execution (the *same* analyzer) |
-
-```python
-from experiments.spec_synthesis import Spec, synthesize
-
-base = dict(name="lookup_spec", intent="lookup_with_default", fn_name="lookup", input_var="v")
-
-# a lenient spec — "return the input, or a non-None {} default; never None":
-lenient = synthesize(Spec(**base))
-print(lenient.winner, "→", lenient.source.splitlines()[-1].strip())
-#   coalesce_or → return v or {}                    (the most COMPACT realizer wins)
-
-# one stricter word — ALSO preserve a non-None input unchanged:
-strict = synthesize(Spec(**base, strict=True))
-print(strict.winner, "→", strict.source.splitlines()[-1].strip())
-#   coalesce_ifexp → return v if v is not None else {}     (the winner FLIPS)
+```
+modal_confirm supported_by textual    # push_screen(ModalScreen)  -> a confirmation gate
+styled_label  supported_by textual    # Static + a Rich style     -> HIGHLIGHTED text
+input_value   supported_by textual    # Input.value               -> read the order amount
+button_widget supported_by textual    # Button                    -> the checkout action
 ```
 
-The flip is the interesting part. `return v or {}` and `return v if v is not None else {}` are
-**not** equivalent: on a *falsy but non-None* input (`0`, `""`, `[]`), `v or {}` silently returns
-`{}` — it fails to *preserve* the input. So the moment the spec also requires `preserves_input`, the
-compact form stops being a realizer at all, and CHOOSE must pick the explicit ifexp — the refinement
-rules handle the **conjunction of requirements** (a skeleton must provide *every* one) as stratified
-negation. The generated code is trusted only because it is **checked two ways**: `nonnull_return`
-**symbolically** (re-intake + the existing `analyze_return_none`) and `preserves_input`
-**concretely** (running the emitted function on a falsy sentinel — the design's concrete-exec tool in
-miniature, safe on our own pure skeletons). `coalesce_or` *passes* the symbolic check yet *fails* the
-concrete one, which is exactly why the strict spec excludes it — the rule-level annotation is
-validated by execution, never merely trusted.
+**Bridge them** (`demos/playground/bridge.cnl`) — the _only_ crosswalk between the three vocabularies,
+so swapping any one block re-targets the whole system:
 
-Like `experiments/state_threading.py`, this is a **probe** — it re-confirms the project's core
-constraint (rules cannot mint fresh nodes, so the emit tool pre-mints a bounded skeleton pool and the
-rules only *select*; the pool size is the synthesis fuel budget, the mirror of the unroll budget) and
-is not yet productized into the package. Run it: `python -m experiments.spec_synthesis`.
+```
+confirmation_step    realized_by modal_confirm
+highlighted_discount realized_by styled_label
 
-### Going compositional: a business rule, and understanding the result
-
-`spec_synthesis` chose among whole-function *templates*. A follow-on probe
-([`experiments/codegen_understand.py`](experiments/codegen_understand.py)) pushes the axis two steps
-further — from a **business rule** to code by *recursive subgoal expansion*, and back again by
-*recognition*:
-
-```python
-from experiments.codegen_understand import Spec, synthesize, recognize
-
-base = dict(name="accrual_spec", intent="accrual", fn_name="compute_accrual")
-
-# "compute accrual" (principal * rate * days / 365) decomposes into a subgoal tree of recipes,
-# written BOTTOM-TO-TOP and verified by re-execution. Lenient spec -> the compact inline form:
-print(synthesize(Spec(**base)).winner)          # plan_inline   (accrual = principal*rate*days/365)
-
-# one word (`readable`) requires `named_steps` -> the winner FLIPS to named intermediates:
-r = synthesize(Spec(**base, readable=True))
-print(r.winner)                                 # plan_stepwise (annual_interest, day_fraction, ...)
-
-# UNDERSTANDING is synthesis run backwards: recognize code the system itself generated ->
-print(recognize(Spec(**base, readable=True), "plan_stepwise", "compute_accrual"))
-#   ['compute_accrual computes accrual']        (the business term bridged back to the code)
+# A required UX feature is ADMITTED only if the library supports its realizer.
+?feat admitted_for ?cart when ?cart requires_feature ?feat and ?feat realized_by ?cap and ?cap supported_by textual
 ```
 
-The **readability flip** is the compositional mirror of the strictness flip above: two decompositions
-compute the *same number*, so CHOOSE prefers the compact one — until an added requirement
-(`named_steps`) excludes it, exactly as `preserves_input` excluded `return v or {}`. The recursive
-subgoal expansion is checked as stratified Datalog (a plan is `complete` iff every sub-need bottoms
-out at a parameter), the winner is emitted leaves-first, and it is trusted only because it
-**re-executes** to the accrual formula. Recognition adds one rule to attribute the generated function
-`computes accrual`; a function the system did *not* generate has no fingerprint, so the fact is
-**supplied directly in CNL** (`mystery is_a sort_function`) — the round-trip escape hatch. Still a
-probe. Run it: `python -m experiments.codegen_understand`.
+**Brew them together:**
 
-### Control flow, minted on demand and verified by the analyzer
-
-The next frontier is code that needs a **conditional** — and whether the pre-minted pool then blows
-up. A third synthesis probe ([`experiments/controlflow_synthesis.py`](experiments/controlflow_synthesis.py))
-synthesizes a *total* `fetch(x)` (never raise, never return None) and answers both worries:
-
-```python
-from experiments.controlflow_synthesis import Spec, synthesize
-
-r = synthesize(Spec(name="fetch_spec", fn_name="fetch", input_var="x"))
-print(r.winner, "| minted", r.minted, "of", r.eager_pool, "| verified", r.verified)
-#   s_guarded | minted 5 of 8 | verified True
-print(r.source)
-#   def fetch(x):
-#       if x is not None:
-#           return x.value
-#       return {}
+```bash
+python demos/playground/playground.py          # reason -> compose -> emit -> DRIVE
 ```
 
-Three results. **(1) Control flow is synthesizable** under the no-rule-mint rule: the guard is one
-more pre-minted *skeleton with holes* the tool fills (exactly as intake pre-mints an unrolled loop's
-state chain) — rules only select it. **(2) The pool is minted demand-driven**, so control flow does
-*not* blow it up: strategies are minted one goal-layer at a time and an out-competed branch's whole
-sub-tree is never minted (here 5 nodes vs. the 8 an eager pre-mint would materialize — the saved 3
-are the un-explored cross-product). This is the concrete answer to "would letting rules mint fresh
-nodes help?" — **no**; lazy minting *in the tool* is the lever, with no ugm change. **(3) Verification
-gates selection using the productized analyzer as the oracle**: CHOOSE prefers the compact
-`return x.value`, but the real `analyze` rejects it (`AttributeError` under `x=None`), so synthesis
-falls back to the guarded form that `analyze`/`analyze_return_none` clear. The generator proposes; the
-analyzer disposes — synthesis is verified by re-running the *same* productized analysis loop, both
-directions on one firmware. Run it: `python -m experiments.controlflow_synthesis`.
-
-### Across a call boundary: emit a helper, verify cross-call
-
-The frontier after that is a subgoal satisfied by *emitting a helper and calling it* — correctness
-now spans a **call boundary**. A fourth synthesis probe
-([`experiments/multifunction_synthesis.py`](experiments/multifunction_synthesis.py)) synthesizes a
-total `process(x)` that delegates to a helper `extract(v)`, verified through the **productized
-inter-procedural analyzer** (`Session.analyze_across_call`):
+pystrider loads the four blocks, reasons across them (grounding the spend-vs-threshold comparison,
+then asking `who admitted_for cart`), composes the derived features with [grammapy](docs/grammapy_convergence.md)'s
+proven combinators, and **emits a real Textual app**:
 
 ```python
-from experiments.multifunction_synthesis import Spec, synthesize
+class CheckoutApp(App):
+    def compose(self) -> ComposeResult:
+        yield Input(id="amount")
+        yield Button("Checkout", id="checkout")
+        yield Static(id="result")
 
-r = synthesize(Spec(name="process_spec", caller="process", helper="extract", input_var="x"))
-print(r.winner, "| verified", r.verified)          # guard_caller | verified True
-print(r.helper_src)   # def extract(v):  return v.value
-print(r.caller_src)   # def process(x):  if x is not None: return extract(x) \n  return {}
+    def _show_discount(self, amount, total):            # emitted BECAUSE the discount was granted
+        saved = round(amount - total, 2)
+        label = Text("You saved " + str(saved) + "  ->  pay " + str(total), style=self.HIGHLIGHT_STYLE)
+        self.query_one("#result", Static).update(label)  # ...and highlighted, because UX said so
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        ...
+        total = self._price(amount)
+        if hasattr(self, "_show_discount"):
+            self._show_discount(amount, total)
+        def after(confirmed):                            # emitted BECAUSE the action is irreversible
+            if confirmed:
+                self._complete(total)
+        self.push_screen(ConfirmScreen(), after)         # the confirm gate the UX rule OBLIGED
 ```
 
-Two emitted functions, loaded into a `Session` (each namespaced, identity by `(function, name)`), the
-call `link_calls`-wired, and `analyze_across_call` seeds `x=None` and reads outcomes *inside the
-callee* — the value crosses the boundary through the exact machinery the analyzer ships. The
-verification is **path-sensitive across the call**: CHOOSE prefers the compact `naive` (delegate +
-deref) and the analyzer rejects it (None genuinely crosses into the deref); but it **certifies**
-`guard_caller` (guard, *then* delegate), because `Session.link_calls` stamps `refine_nonnull` on a
-call inside `if arg is not None:` and a refined cross-call assign carries only the non-None value into
-the callee — so the compact caller-side guard *wins* over the defensive `total_helper`. This was the
-axis's sharpest move: an earlier *path-insensitive* link rejected `guard_caller` too (a false
-positive) — **synthesis surfaced that precision boundary, and the refinement (now productized, pinned
-in `tests/test_session.py`) moved it**, while a real cross-call bug (`naive`) stays caught. Because
-each function is emitted independently and joined only inside the `Session`, no shared *synthesis*
-graph is built, so the ugm addressing footgun is routed around, not blocked on. Run it:
-`python -m experiments.multifunction_synthesis`.
+...and it **trusts that app because it drives it** headlessly through Textual's Pilot and reads what
+actually happened:
 
-### Should rules mint the pool? An informed choice
+```
+drive -> events: ['discount_shown 135.0', 'highlighted', 'gate_shown', 'completed 135.0']
+         safety(ok)=True  liveness(live)=True  discount-shown(shown)=True   => WORKS
+```
 
-All four probes above pre-mint their candidate pool in the emit *tool* and let rules only *select* —
-originally a workaround for "ugm rules cannot mint fresh nodes". That constraint was since **resolved
-upstream** (genuine per-match minting via the skolem `n?`), so a fifth probe
-([`experiments/minting_comparison.py`](experiments/minting_comparison.py)) asks the fair question it
-reopens — *should* the pool now be grown by rules? It generates a depth-`k` value-threading chain
-**both** ways (a tool-minted pool with stable names, and a rule-grown pool where a one-line skolem
-rule mints each successor); both emit **byte-identical, verified** source. The difference is the part
-that matters: rule-minted nodes are name-**collided** (identity is structural, so emit/verify must
-thread by id — `nodes_named("n")` is `k`-way ambiguous), and the fuel bound is still external
-(`max_rounds`). **Conclusion:** rule-minting is right for open-ended structure the rules reason over
-*in place*; **tool-minting stays right for synthesis targets you must emit, name, and verify** — now
-by reason, not by force. It flips only when ugm gains id-addressed goals. Run it:
-`python -m experiments.minting_comparison`.
+The discount was shown, and highlighted, and the irreversible checkout was gated _before_ it
+completed — not because a template said so, but because the running app _did_ so.
 
-### Synthesizing the call-graph shape
+![playground screenshot](demos/screenshot.png)
 
-The deepest frontier is making the program's *shape* — how many functions and the call edges among
-them — the synthesis decision, which answers the question the codegen sketch opened with: *when do we
-put statements in a subfunction vs a sequence?* A sixth probe
-([`experiments/callgraph_synthesis.py`](experiments/callgraph_synthesis.py)) synthesizes `report(x)`,
-a computation with a **shared** sub-part `normalize(x)`, and lets DRY requirements force the factoring:
+
+
+**Change one thing and the whole UI re-derives, with the reasoning auditable.** Mark the checkout
+irreversible and the screen shape _flips_ to a confirm gate — forced by the deontic UX rule, not
+chosen — and driving both apps proves it:
+
+```
+irreversible=False -> screen one_screen     events ['discount_shown 135.0', 'highlighted', 'completed 135.0']
+irreversible=True  -> screen confirm_screen events ['discount_shown 135.0', 'highlighted', 'gate_shown', 'completed 135.0']
+```
+
+Make the customer `basic` instead of `premium`, and the discount — and its highlight — simply
+vanish, at full price. Every one of these changes carries a `why`:
 
 ```python
-from experiments.callgraph_synthesis import Spec, synthesize
-
-for spec in [Spec("r"), Spec("r", dry_source=True), Spec("r", dry_source=True, dry_runtime=True)]:
-    r = synthesize(spec)
-    print(r.winner, "->", r.graph["report"])
-#   inline_dup   -> []                                   (1 function, 0 call edges)
-#   helper_twice -> ['scale', 'shift', 'normalize', 'normalize']   (normalize called at 2 sites)
-#   helper_once  -> ['normalize', 'scale', 'shift']      (normalize bound once, reused)
+>>> import brew; from brew import Cart
+>>> brew.why(Cart(), "why cart has_benefit discount")
+['cart has_benefit discount   <- rule.?cart.has_benefit.discount',
+ '  cart grants_discount yes   <- rule.?cart.grants_discount.yes',
+ '    cart customer_tier premium   (given)',
+ '    cart order_qualifies yes     (given)']
 ```
 
-All three shapes compute the same figure (pinned by re-execution), so the choice is purely
-**structural**. Adding `dry_source` (no duplicated logic) forces a shared `normalize` helper (0 → 3
-helpers); adding `dry_runtime` (compute it once) flips the winner again to the shape that reuses the
-shared *result* (2 call sites → 1). The epistemic move holds: a shape only *claims* its structure, and
-verification **re-parses the emitted program** to derive the real call graph from the AST and checks
-it against the spec's requirements — trust by inspection of the artifact, never the claim. Run it:
-`python -m experiments.callgraph_synthesis`.
+### Wanna try?
 
-## Generation, grown up: a succinct spec becomes a runnable, verified app
+Clone the repo and turn the knobs in the **playground** — a card-trader-style sandbox where you edit a
+`CONFIG` block (or any `.cnl` file) and re-run:
 
-The synthesis probes above chose among code *skeletons*. Their culmination is a full **generation loop**
-that composes a knowledge base into a **runnable application** and trusts it because it **drives** it —
-the [grammapy convergence](docs/grammapy_convergence.md), where a second in-repo package (`grammapy`)
-supplies a **sound-composition algebra** and pystrider supplies the reasoning and the execution oracle:
-
-- **pystrider reasons** what *deviates from default* — deontic obligations, defeasible preferences, and
-  cross-vocabulary bridges — as CNL rules;
-- **grammapy composes** those deviations soundly — four combinators (`Choice`, `Accumulate`, `Scope`,
-  `Fold`) plus §12 cross-cutting **constraint resolution** — each combinator's soundness check *itself* a
-  CNL rule-module over the one graph, so "does this compose?" is a derivation, not a Python one-liner;
-- and the emitted app is **verified by DRIVING it** — a real Textual app run headlessly through its
-  Pilot and observed to behave: **safety** (an irreversible action never fires without a gate) *and*
-  **liveness** (the happy path actually completes).
-
-The running example synthesizes a **cash-withdrawal Textual app** fused across three bridged vocabularies
-(business / framework / UX). One business fact flips its shape — and the flip is *execution-verified*:
-
-```python
-from experiments.app_synthesis import Spec, synthesize
-
-lenient = synthesize(Spec(name="w", irreversible=False))
-print(lenient.screen, lenient.verify.events)
-#   one_screen   ['withdrawn 42']                     (compact: input → OK → withdraw)
-
-strict = synthesize(Spec(name="w", irreversible=True))
-print(strict.screen, strict.verify.events)
-#   confirm_screen  ['gate_shown', 'withdrawn 42']    (the derived obligation FORCES a confirm gate)
+```bash
+python demos/playground/playground.py           # the narrated walkthrough
+python demos/playground/playground.py --run      # launch the emitted app to click through it
 ```
 
-Four moves make it a *product* story, not a demo:
+See [`demos/playground/`](demos/playground/) and the big **§ PLAYGROUND** knob menu at the bottom of
+[`playground.py`](demos/playground/playground.py): move the discount threshold, add a loyalty tier,
+change what "show a discount" means, take a capability away from the toolkit and watch the honest "your
+toolkit can't do that yet" gap appear — all without touching engine code, because there is none to
+touch.
 
-- **Policy change → verified code change.** Change one spec sentence and re-derive:
-  `rederive(before, after)` ([`experiments/rederivation.py`](experiments/rederivation.py)) presents the
-  spec delta, the re-resolved **decision** delta, and the emitted-**source** diff *in lockstep* — each
-  changed decision carrying its **why** (the screen flips *because* `withdrawal is_irreversible` fires the
-  deontic obligation, reached through the framework bridge), with both the before and after apps
-  Pilot-verified. This is the audit artifact no LLM re-prompt can produce.
-- **Refusal is a feature.** At the edge of KB coverage the honest behaviour is neither a crash nor a
-  guess but a **named gap**: `synthesize_or_refuse` returns a verified app *or* a `Refusal` naming the
-  uncovered capability and the shape of the KB entry that would fill it
-  ([`experiments/refusal.py`](experiments/refusal.py)).
-- **An untrusted proposer, trusted disposers.** A pluggable generator drafts a design "by pattern, skip
-  the math"; four gates it does not control (the derived obligation, grammapy's Scope + Accumulate, the
-  Pilot) dispose, with a reasoning-repair back-edge
-  ([`experiments/generator_frontend.py`](experiments/generator_frontend.py)) — the seam a real LLM slots
-  into, gated identically, so an *arbitrarily unreliable* proposer still yields trustworthy output.
-- **Honesty by execution, and a stated contract per verdict.** A fragment's declared write-footprint is
-  certified by *running* it ([`experiments/footprint_honesty.py`](experiments/footprint_honesty.py)), and
-  every verdict-producing surface ships its contract — what a passing check proves and what it silently
-  does *not* ([`docs/oracle_contracts.md`](docs/oracle_contracts.md)).
+## What else can it do?
 
-Still probes (`tests/test_app_synthesis.py`, `test_generator_frontend.py`, `test_rederivation.py`,
-`test_refusal.py`, `test_footprint_honesty.py`, `test_resolution.py`, the four combinator suites). Run
-the loop: `python -m experiments.app_synthesis` · `python -m experiments.rederivation` ·
-`python -m experiments.generator_frontend`.
+The playground is one direction of a single small reasoning engine run many ways. The **same loop**
+also:
 
-## A fourth axis: crash → root cause (diagnosis)
+- **Finds bugs by _running_ your code in its head** — suppose an input, apply an operational semantics,
+  read what happens (a None-deref, a stray return), with a replayable proof behind every finding.
+  → [deep dive: analysis](docs/deep_dive.md#a-small-nontrivial-example)
+- **Fixes them, and proves the fix** — retrieves candidate edits, materializes each as real Python, and
+  accepts one only if re-analyzing the edited code shows it clean with no regression.
+  → [deep dive: repair](docs/deep_dive.md#fixing-not-just-finding)
+- **Writes code from a spec** — the analysis loop run backwards: a terse spec expanded into real Python,
+  verified by re-execution; one added requirement flips the winning shape.
+  → [deep dive: synthesis](docs/deep_dive.md#a-third-axis-spec--code-synthesis)
+- **Explains a crash** — given only a traceback and no input, it _abduces_ the input that reproduces the
+  exception (the minimal root cause), then hands it to the repair axis.
+  → [deep dive: diagnosis](docs/deep_dive.md#a-fourth-axis-crash--root-cause-diagnosis)
+- **Checks code against a business policy** — policy and code in one graph, joined by a bridge, with a
+  machine-checkable proof of divergence and a verified spec-directed fix.
+  → [deep dive: conformance](docs/deep_dive.md#a-fifth-axis-does-the-code-implement-the-policy-conformance)
+- **Absorbs a real library as data** — reflects a live module's type surface into facts
+  (`Widget.query_one returns_optional`), never running its code, unlocking library-shaped bug classes.
+  → [deep dive: absorption](docs/deep_dive.md#absorbing-a-real-library-and-a-bug-class-it-unlocks)
+- **QA's a rule bank itself** — because rules are just more graph structure, the same sweep-and-derive
+  loop catches a dropped condition in an authored policy (the KB-ingestion gate).
+  → [deep dive: rulestrider](docs/deep_dive.md#checking-the-knowledge-itself-rulestrider)
 
-Analysis reads code; synthesis writes it; **diagnosis explains a crash**. Analysis runs the loop
-*forward* — you SUPPOSE an input and it derives what happens. But a real debugging session starts at
-the other end: you have a **traceback** — `AttributeError`, one line — and *no* input, and you must
-work out *what must have been true* for that to happen. That is **abduction**, and it is the analysis
-loop run **backwards over the hypothesis space** (as synthesis is it run backwards over the *code*
-space). A probe ([`experiments/diagnosis.py`](experiments/diagnosis.py)) proves it:
+The full technical tour — five reasoning axes, the generation loop, the layout, every probe — lives in
+**[docs/deep_dive.md](docs/deep_dive.md)** (310 tests green).
 
-```python
-from experiments.diagnosis import Observation, diagnose, diagnose_and_fix
+## How does it work?
 
-src = (
-    "def pipeline(raw):\n"
-    "    data = validate(raw)\n"     # data is the validated (non-None) result ...
-    "    data = raw\n"               # ... clobbered by the raw input
-    "    return data.rows()\n"       # line 4: this is where AttributeError was seen
-)
+**No wizards, no hardcoded engine processing, no LLMs.** Everything above is powered by the
+[Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine) — a tiny, general rule
+engine that does one thing: reason over a graph of facts by firing declarative rules, on demand,
+keeping a trace. Your business rules, UX rules, library facts, and bridges are all just facts and rules
+_in that one graph_. "Does this cart get a discount?", "which features must the app have?", "does this
+set of widgets compose without interference?", "did the app behave?" are all the _same_ kind of
+question — a backward query — answered by the _same_ engine.
 
-# given ONLY "AttributeError at line 4" — no input — abduce the cause:
-dx = diagnose(Observation(source=src, line=4, exc="AttributeError"))
-print(dx.explanation()[0])
-#   root cause: AttributeError at line 4 happens when raw is None
+pystrider itself owns **no** engine code. It materializes graph structure from Python's `ast`, emits
+source, and runs things (the honest tool boundaries); everything in between — the analysis semantics,
+the composition algebra ([grammapy](docs/grammapy_convergence.md)), the cross-vocabulary bridges — is
+CNL rules over the public firmware. Nothing is trusted because a tool _claimed_ it; every conclusion is
+checked by re-running the reasoning, and every emitted app by _driving it_.
 
-# ...and hand the abduced cause straight to the productized repair axis:
-_dx, plan = diagnose_and_fix(Observation(source=src, line=4, exc="AttributeError"))
-print(plan.summary()[0])            # 1 edit(s) -> repaired to clean
-```
+## A unique tool
 
-The mirror is exact — same firmware, run the other way:
+What makes it unusual is that **it is all one engine, run in many directions.** Reading code, fixing
+it, writing it, explaining a crash, checking it against a policy, and brewing a UI out of separate
+knowledge blocks are not six features bolted together — they are the same suppose-derive-choose-verify
+loop pointed different ways. That is why:
 
-| analysis (forward, productized) | diagnosis (this probe) |
-|---|---|
-| SUPPOSE input → derive every outcome | OBSERVE one outcome → abduce the inputs that entail it |
-| the value hypothesis is **given** | the value hypothesis is the **unknown**, solved for |
-| RECORD trace = why this input crashes | RECORD trace = why **this** crash happened (the reaching write) |
-| CHOOSE the graded-best **repair** | CHOOSE the graded-best **explanation** (Occam: the most specific cause) |
-| verify a repair by re-execution | verify a cause by re-execution (the *same* forward analyzer) |
-
-Three moves make it real. **(1) The root cause is *abduced*, not supplied** — `analyze` requires you
-to name the None parameter; diagnosis is handed only the crash and searches the hypothesis space
-(subsets of parameters supposed None, minimal-first) for the input that reproduces it, recovering
-`raw` plus the reaching-write chain that carried its None past the *second* assignment to the deref.
-**(2) CHOOSE picks the minimal cause** — many hypotheses reproduce a crash ("everything is None"
-always does); the *root* cause is the smallest set that still does, so an Occam prior is realized as a
-graded selection over the public CHOOSE firmware, a single-variable cause outgrading a
-supposing-everything one. **(3) A suspect is exonerated by re-execution** — in a two-parameter
-`process(cfg, data)` where each None crashes a *different* line, the cause of the line-3 crash is
-`cfg` alone: `data`'s None derives a line-*5* crash, so the forward semantics never derive the
-observed outcome under it and it never enters the candidate set (trust by the checker, as everywhere
-else). And because the abduced cause is a value hypothesis of exactly `repair_all`'s shape,
-**"understand the root cause" flows straight into "and fix it, verified by re-execution"** — the front
-half of a debugger wired to the productized repair axis as its back half, with no new machinery. Still
-a probe (see [`tests/test_diagnosis.py`](tests/test_diagnosis.py)); run it:
-`python -m experiments.diagnosis`.
-
-## A fifth axis: does the code implement the policy? (conformance)
-
-Analysis asks "does this code have a bug?"; **conformance asks "does this code do what the *business
-rule* says?"** — and answers with a machine-checkable proof. A business **policy** (in business
-vocabulary) and the **code** (in its own vocabulary) live in one graph, joined *only* by a small
-declarative **bridge**; scenarios are swept from the policy's own boundary constants; and where the two
-disagree, a **`diverges`** fact is derived — with a two-world proof and a spec-directed fix. This is the
-one thing neither `pyright`, nor CodeQL, nor a DMN validator, nor an LLM produces: *a checkable proof
-that a piece of code implements a piece of policy — and a verified minimal edit when it doesn't* (a
-probe: [`experiments/conformance_strider.py`](experiments/conformance_strider.py)).
-
-```python
-from experiments.conformance_strider import Model, check_and_repair
-
-# a business POLICY and its CODE speak DIFFERENT vocabularies, joined ONLY by a bridge:
-#   policy (business):  a member gets_discount when member_tier is premium and order_spend is over 50
-#   code   (code):      def discount(rank, amount): return rank == 'gold' and amount > 100   # ← bug
-#   bridge:  member_tier→rank, order_spend→amount, premium→gold, discount_true→gets_discount
-
-r = check_and_repair(Model())
-print(r.divergences)
-#   ['s_premium_100', 's_premium_51', 's_premium_99']
-#   (the code DENIES a discount the policy GRANTS, for premium members with spend in (50, 100])
-
-print(r.winner, "→ code_threshold", r.repaired.code_threshold, "| re-sweep:", r.residual_after_repair)
-#   align_threshold → code_threshold 50 | re-sweep: []   (PROVEN: the repaired code implements the policy)
-```
-
-Three moves make it real. **(1) The comparison is a JOIN, not glue** — `diverges` is an ordinary
-derived fact (`?sc diverges yes when ?sc policy_outcome ?x and ?sc code_outcome ?y and not ?x
-same_outcome ?y`), so it is queryable and explainable, unlike the brittle imperative glue any
-two-tool (rules-engine + tests) architecture would need. **(2) The bridge is IN the proof** — the
-policy and code share no vocabulary; the `why {scenario} diverges` trace interleaves the business-rule
-firing (`policy_grants ← member_tier premium`), the code-logic firing (`code_return discount_false`),
-*and* the bridge rule translating between them (`discount_false bridges_outcome no_discount`). Swap the
-bridge and the same policy re-targets a different implementation. **(3) Repair is spec-DIRECTED and
-proven by re-sweep** — `align_threshold` reads the policy's constant and rewrites the code's, then
-re-sweeps to *zero* divergence (chosen over a decoy edit that fails verification); semantics
-preservation ("the code's outcomes equal the policy's on every swept scenario") is the verification
-condition by construction. Run it: `python -m experiments.conformance_strider`.
-
-**The value domain that makes this possible — and where it points.** Conformance needs the code to
-reason about **constants and comparisons** (`amount > 100`), which the None-analysis domain
-(`{none, object}`) cannot express. A companion probe
-([`experiments/intake_growth.py`](experiments/intake_growth.py)) grows exactly that: it intakes a real
-Python decision function, reifies its constants + comparisons as **data**, and derives its return value
-by reasoning — pinned against Python execution itself as the oracle. That is the first step of a larger
-idea ([`docs/api_absorption_design.md`](docs/api_absorption_design.md)): move analysis *knowledge* out
-of the rules and into the graph as facts generic rules consume — so that a library's API surface
-(`dict.get returns_optional`, `DataFrame has_method groupby`) can be **absorbed as data**, and the
-*same* bridge that maps business terms onto code names maps them onto absorbed library names. Run it:
-`python -m experiments.intake_growth`.
-
-**Absorbing a real library, and a bug class it unlocks.** That idea is now built: `pystrider.absorb`
-reflects a live, annotated module's declared surface into matchable facts — `<Type>.<method>
-returns_optional yes|no`, `<Type> has_method <method>` — reading only type hints, never running library
-code, and *conservatively* (an undecidable return is **omitted and surfaced**, never guessed). It runs
-on a real dependency: `absorb(textual.Widget)` yields 73 optional-returning methods, and a **generated**
-`returns_optional` fact drives the *unchanged* None-deref effect. On the same facts a second
-library-shaped effect falls out — **`method_not_found`**: a method call whose receiver type (given, or
-inferred through an absorbed return) does not declare the method
-([`experiments/api_absorption.py`](experiments/api_absorption.py), `pystrider/absorb.py`).
-
-**Checking the knowledge itself: rulestrider.** Because rules are just more graph structure, the same
-sweep-and-derive loop turns on a **rule bank** — the KB-ingestion QA gate that makes LLM-authored policy
-trustworthy. A probe ([`experiments/rulestrider.py`](experiments/rulestrider.py)) plants a **dropped body
-condition** in a CNL discount policy (the loyalty rule ships requiring only `big_spender`, not `premium
-AND big_spender`), sweeps an expected-outcome suite, and catches the resulting **over-firing** on the one
-scenario that isolates it — with the `why`-trace showing the rule firing with the dropped condition
-*absent*: the provenance is the diagnosis. Run it: `python -m experiments.rulestrider`.
-
-## Layout
-
-| Path | Role |
-|---|---|
-| `pystrider/intake.py` | the §8 code-intake tool — `ast` → graph facts (structure only, *not* CNL); CFG + `(state×var)` cell lattice; per-function `namespace` for shared graphs |
-| `pystrider/semantics.cnl` | the operational semantics — Horn rules, authored CNL data (`semantics.py` loads it) |
-| `pystrider/analysis.py` | the hypothesis loop on the public UGM firmware (`suppose(commit=False)` / `ask_goal`) + `analyze` / `analyze_return_none` / `analyze_all` / `choose_repair` / `repair_all` (whole-function auto-fix) + `caveats` (surface unmodelled statements) |
-| `pystrider/emit.py` + `emit.cnl` | the §8 **emit** boundary (intake in reverse), productized: `select` (realize-iff-provides-all-required + CHOOSE) / `verify_clean`; the realization rule bank as CNL data |
-| `pystrider/absorb.py` | the API **absorber** — reflect a live module's declared type surface into `has_method` / `returns_optional` / `returns` facts (reads hints only, never runs library code; conservative) |
-| `pystrider/session.py` | a **Session** — several functions in one graph, per-function focus, cross-call value-flow linking |
-| `pystrider/operators.py` + `operators.cnl` | effect-keyed transformation-operator library, retrieved by backward-CHAIN |
-| `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
-| `grammapy/` | the in-repo **composition algebra** — `Choice` / `Accumulate` / `Scope` / `Fold` + §12 `resolve`, each soundness check a CNL rule-module over the graph (`_cnl.py`); the "compose" half of the generation loop |
-| `pystrider/demo.py` | end-to-end packaged walkthrough (`python -m pystrider.demo`) |
-| `demos/` | five focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](demos/README.md) |
-| `experiments/` | feasibility probes. **Generation:** `app_synthesis.py` (a runnable Textual app composed across three bridged vocabularies, verified by driving), `generator_frontend.py` (an untrusted proposer, trusted disposers), `rederivation.py` (policy change → verified code change, with the why), `refusal.py` (an uncovered spec → a named gap), `footprint_honesty.py` (fragment honesty by execution), `combinators_as_cnl.py` (the combinator checks as CNL). **Synthesis:** `spec_synthesis.py`, `codegen_understand.py`, `controlflow_synthesis.py`, `multifunction_synthesis.py`, `minting_comparison.py`, `callgraph_synthesis.py`, `state_threading.py`. **Other axes:** `diagnosis.py` (crash → root cause), `conformance_strider.py` (code⟷policy across a bridge), `intake_growth.py` (constants + comparisons), `api_absorption.py` (**absorb** a real library + the `method_not_found` effect), `rulestrider.py` (anomaly-check a rule bank) |
-| `tests/` | behaviour pins (302 green) across 33 files — the productized loop (`test_spike.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_repair_verification.py`, `test_caveats.py`, `test_emit.py`, …), the synthesis probes, the generation loop (`test_app_synthesis.py`, `test_generator_frontend.py`, `test_rederivation.py`, `test_refusal.py`, `test_resolution.py`, `test_scope.py`, `test_choice.py`, `test_fold.py`, `test_disjointness.py`, `test_combinators_as_cnl.py`, `test_footprint_honesty.py`), and the KB pipeline (`test_absorb.py`, `test_method_not_found.py`, `test_rulestrider.py`) |
-| `docs/` | the strategic **roadmap** (`roadmap.md`), the design (`code_reasoning_design.md`), the plan (`implementation_plan.md`), the grammapy convergence (`grammapy_convergence.md`), the **oracle contracts** (`oracle_contracts.md` — what each verdict proves), the API-absorption direction (`api_absorption_design.md`), the spike findings (`spike_findings.md`) |
+- **Knowledge composes instead of tangling.** Business, UX, and library rules live in separate files in
+  separate vocabularies, joined _only_ by explicit bridges. Swap the library block for a web toolkit and
+  the same business and UX rules re-target it; nobody rewrites the others.
+- **Every conclusion is a replayable proof.** A discount, a required confirm step, a bug, a fix, a
+  policy violation — each carries its `why`, the actual rule-firing trace. There is no opaque model
+  whose output you must take on faith.
+- **Trust is by execution, never by claim.** A generated UI is trusted because it was _driven_ and
+  observed to be safe (an irreversible action never fires without a gate) _and_ live (the happy path
+  completes). A bug fix is trusted because the code _re-runs clean_.
+- **Change is auditable.** Change one sentence of the knowledge and the artifact re-derives _with a
+  proof of what changed and why_ — the "policy change → verified code change" artifact no LLM
+  regeneration can produce.
 
 ## Run
 
 ```bash
-pip install -e ../ugm -e .    # the ugm sibling + this package (grammapy ships in-repo, no extra install)
-pip install textual                  # only for the generation probes (the driven Textual app)
-python -m pystrider.demo             # the packaged analysis/repair walkthrough
+pip install -e ../ugm -e .    # the ugm sibling + this package (grammapy ships in-repo)
+pip install textual            # for the playground / generation probes (the driven Textual app)
 
-# the generation loop (spec → compose → emit → drive):
-python -m experiments.app_synthesis        # a runnable Textual app, verified by driving; one fact flips it
-python -m experiments.rederivation         # policy change → verified code change, with the why
-python -m experiments.generator_frontend   # an untrusted proposer, gated by trusted disposers + repair
-python -m experiments.refusal              # an uncovered spec → a named gap, not a guess
+python demos/playground/playground.py          # THE PLAYGROUND — bring rules, bridge, brew a UI
+python demos/playground/playground.py --run     # launch the emitted app interactively
 
-# the synthesis probes (the third axis) and the other reasoning directions:
-python -m experiments.spec_synthesis       # the spec → code synthesis probe
-python -m experiments.callgraph_synthesis  # synthesizing the call-graph shape / factoring
-python -m experiments.diagnosis            # crash → root cause (abduction) + fix
-python -m experiments.conformance_strider  # code ⟷ policy conformance across a vocabulary bridge
-
-# the KB pipeline (absorb a library, check a rule bank):
-python -m experiments.api_absorption       # absorb a real library + the method_not_found effect
-python -m experiments.rulestrider          # anomaly-check a CNL rule bank (KB-ingestion QA)
-
-python demos/run.py                  # the five focused analysis/repair demos
-pytest -q                            # the behaviour pins (302 green)
+python -m pystrider.demo                        # the packaged analysis/repair walkthrough
+python demos/run.py                             # five focused analysis/repair demos
+pytest -q                                       # the behaviour pins (310 green)
 ```
+
+For everything else — the five reasoning axes, the generation loop in full, the layout of every module
+and probe — see **[docs/deep_dive.md](docs/deep_dive.md)**.
