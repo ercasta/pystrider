@@ -1,15 +1,22 @@
 # pystrider
 
-A **dynamic, hypothesis-driven code analyzer, bug-fixer, and code generator** built on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine) library.
+A **hypothesis-driven code analyzer, bug-fixer, code generator, and policy-conformance checker** built on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine) library.
 Instead of matching static bug patterns, it reasons about a Python function the way a person does:
 *suppose* a value for a parameter, symbolically *run* the code by applying an operational semantics
 expressed as UGM rules, and read what *happens* — with a human-readable trace behind every
 conclusion. Then it *repairs* the code and *verifies* the fix by re-running the analysis.
 
-The same firmware runs in **both directions**. Reading code (**analysis**) is the productized loop
-above. Writing code (**synthesis**) is its mirror — a succinct spec *expanded* by CNL rules into
-real Python, then *verified by re-execution* exactly as a repair is. That third axis is proven
-end-to-end as a probe (see [_A third axis: spec → code_](#a-third-axis-spec--code-synthesis)).
+**The unusual part:** every conclusion — every bug, every fix, every generated function, every
+policy-violation — is a **replayable proof object**, and the *same small rule engine* runs in **five
+directions** on it: reading code (analysis), fixing it (repair), writing it (synthesis), explaining a
+crash (diagnosis), and **checking it against a business policy** (conformance). Nothing is trusted
+because a tool claimed it — everything is checked by re-running the reasoning.
+
+Analysis + repair are **productized**; synthesis, diagnosis, and conformance are proven **end-to-end as
+probes**. The newest and least precedented is **conformance** (see
+[_A fifth axis: does the code implement the policy?_](#a-fifth-axis-does-the-code-implement-the-policy-conformance)):
+a machine-checkable proof that a piece of Python implements a piece of business policy — *across a
+vocabulary gap*, joined only by a declarative bridge — with a spec-directed repair when it doesn't.
 
 pystrider owns **no** engine code. Intake materializes graph structure from `ast`; everything
 downstream reasons through the public UGM firmware (`suppose` / `ask_goal` / `choose`).
@@ -20,9 +27,11 @@ The vertical loop is proven and productized across four analysis/repair slices; 
 spec → code synthesis** — is proven across six probes (compositional codegen from a business rule,
 control-flow synthesis gated by the analyzer, multi-function synthesis verified cross-call, and the
 call-graph shape itself), with its shared **selection loop now productized** in `pystrider/emit.py`.
-A **fourth axis — crash → root cause (diagnosis)** is proven as a seventh probe: the loop run backwards
+A **fourth axis — crash → root cause (diagnosis)** is proven as a probe: the loop run backwards
 over the *hypothesis* space, abducing the input that reproduces an observed exception, then handing the
-cause to the repair axis. All green (138 tests):
+cause to the repair axis. A **fifth axis — code ⟷ policy conformance** is proven as a probe: a business
+policy and the code in one graph, joined by a declarative **bridge** across their vocabularies, with
+spec-vs-code divergence derived as a fact and repaired spec-directed. All green (155 tests):
 
 - **Slice A — correct value flow.** Value lives in a per-`(program-point, variable)` **cell
   lattice**, so reassignment (`y = a; y = b`), **branch-merge** (union of both arms), bounded
@@ -334,7 +343,7 @@ Analysis reads code; synthesis writes it; **diagnosis explains a crash**. Analys
 the other end: you have a **traceback** — `AttributeError`, one line — and *no* input, and you must
 work out *what must have been true* for that to happen. That is **abduction**, and it is the analysis
 loop run **backwards over the hypothesis space** (as synthesis is it run backwards over the *code*
-space). A seventh probe ([`experiments/diagnosis.py`](experiments/diagnosis.py)) proves it:
+space). A probe ([`experiments/diagnosis.py`](experiments/diagnosis.py)) proves it:
 
 ```python
 from experiments.diagnosis import Observation, diagnose, diagnose_and_fix
@@ -383,6 +392,59 @@ half of a debugger wired to the productized repair axis as its back half, with n
 a probe (see [`tests/test_diagnosis.py`](tests/test_diagnosis.py)); run it:
 `python -m experiments.diagnosis`.
 
+## A fifth axis: does the code implement the policy? (conformance)
+
+Analysis asks "does this code have a bug?"; **conformance asks "does this code do what the *business
+rule* says?"** — and answers with a machine-checkable proof. A business **policy** (in business
+vocabulary) and the **code** (in its own vocabulary) live in one graph, joined *only* by a small
+declarative **bridge**; scenarios are swept from the policy's own boundary constants; and where the two
+disagree, a **`diverges`** fact is derived — with a two-world proof and a spec-directed fix. This is the
+one thing neither `pyright`, nor CodeQL, nor a DMN validator, nor an LLM produces: *a checkable proof
+that a piece of code implements a piece of policy — and a verified minimal edit when it doesn't* (a
+probe: [`experiments/conformance_strider.py`](experiments/conformance_strider.py)).
+
+```python
+from experiments.conformance_strider import Model, check_and_repair
+
+# a business POLICY and its CODE speak DIFFERENT vocabularies, joined ONLY by a bridge:
+#   policy (business):  a member gets_discount when member_tier is premium and order_spend is over 50
+#   code   (code):      def discount(rank, amount): return rank == 'gold' and amount > 100   # ← bug
+#   bridge:  member_tier→rank, order_spend→amount, premium→gold, discount_true→gets_discount
+
+r = check_and_repair(Model())
+print(r.divergences)
+#   ['s_premium_100', 's_premium_51', 's_premium_99']
+#   (the code DENIES a discount the policy GRANTS, for premium members with spend in (50, 100])
+
+print(r.winner, "→ code_threshold", r.repaired.code_threshold, "| re-sweep:", r.residual_after_repair)
+#   align_threshold → code_threshold 50 | re-sweep: []   (PROVEN: the repaired code implements the policy)
+```
+
+Three moves make it real. **(1) The comparison is a JOIN, not glue** — `diverges` is an ordinary
+derived fact (`?sc diverges yes when ?sc policy_outcome ?x and ?sc code_outcome ?y and not ?x
+same_outcome ?y`), so it is queryable and explainable, unlike the brittle imperative glue any
+two-tool (rules-engine + tests) architecture would need. **(2) The bridge is IN the proof** — the
+policy and code share no vocabulary; the `why {scenario} diverges` trace interleaves the business-rule
+firing (`policy_grants ← member_tier premium`), the code-logic firing (`code_return discount_false`),
+*and* the bridge rule translating between them (`discount_false bridges_outcome no_discount`). Swap the
+bridge and the same policy re-targets a different implementation. **(3) Repair is spec-DIRECTED and
+proven by re-sweep** — `align_threshold` reads the policy's constant and rewrites the code's, then
+re-sweeps to *zero* divergence (chosen over a decoy edit that fails verification); semantics
+preservation ("the code's outcomes equal the policy's on every swept scenario") is the verification
+condition by construction. Run it: `python -m experiments.conformance_strider`.
+
+**The value domain that makes this possible — and where it points.** Conformance needs the code to
+reason about **constants and comparisons** (`amount > 100`), which the None-analysis domain
+(`{none, object}`) cannot express. A companion probe
+([`experiments/intake_growth.py`](experiments/intake_growth.py)) grows exactly that: it intakes a real
+Python decision function, reifies its constants + comparisons as **data**, and derives its return value
+by reasoning — pinned against Python execution itself as the oracle. That is the first step of a larger
+idea ([`docs/api_absorption_design.md`](docs/api_absorption_design.md)): move analysis *knowledge* out
+of the rules and into the graph as facts generic rules consume — so that a library's API surface
+(`dict.get returns_optional`, `DataFrame has_method groupby`) can be **absorbed as data**, and the
+*same* bridge that maps business terms onto code names maps them onto absorbed library names. Run it:
+`python -m experiments.intake_growth`.
+
 ## Layout
 
 | Path | Role |
@@ -396,9 +458,9 @@ a probe (see [`tests/test_diagnosis.py`](tests/test_diagnosis.py)); run it:
 | `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
 | `pystrider/demo.py` | end-to-end packaged walkthrough (`python -m pystrider.demo`) |
 | `demos/` | five focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](demos/README.md) |
-| `experiments/` | feasibility probes — `state_threading.py` (state-succession), `spec_synthesis.py` (the spec→code synthesis axis), `codegen_understand.py` (compositional codegen from a business rule + round-trip recognition), `controlflow_synthesis.py` (control-flow synthesis, demand-driven minting, analyzer-gated), `multifunction_synthesis.py` (emit + call a helper, verified cross-call), `minting_comparison.py` (rule-grown vs tool-minted candidate pools), `callgraph_synthesis.py` (synthesizing the call-graph shape / factoring), and `diagnosis.py` (the fourth axis — abduce a crash's root cause from an observed exception, then fix) |
-| `tests/` | behaviour pins (138 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_spec_synthesis.py`, `test_codegen_understand.py`, `test_controlflow_synthesis.py`, `test_multifunction_synthesis.py`, `test_minting_comparison.py`, `test_callgraph_synthesis.py`, `test_diagnosis.py`, `test_caveats.py`, `test_emit.py` |
-| `docs/` | the design (`code_reasoning_design.md`), the plan (`implementation_plan.md`), the spike findings |
+| `experiments/` | feasibility probes — `state_threading.py` (state-succession), `spec_synthesis.py` (the spec→code synthesis axis), `codegen_understand.py` (compositional codegen from a business rule + round-trip recognition), `controlflow_synthesis.py` (control-flow synthesis, demand-driven minting, analyzer-gated), `multifunction_synthesis.py` (emit + call a helper, verified cross-call), `minting_comparison.py` (rule-grown vs tool-minted candidate pools), `callgraph_synthesis.py` (synthesizing the call-graph shape / factoring), `diagnosis.py` (the fourth axis — abduce a crash's root cause, then fix), `conformance_strider.py` (**the fifth axis** — code⟷policy conformance across a vocabulary bridge), and `intake_growth.py` (constants + comparisons + ground evaluation — the value-domain growth) |
+| `tests/` | behaviour pins (155 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_repair_verification.py`, `test_spec_synthesis.py`, `test_codegen_understand.py`, `test_controlflow_synthesis.py`, `test_multifunction_synthesis.py`, `test_minting_comparison.py`, `test_callgraph_synthesis.py`, `test_diagnosis.py`, `test_conformance_strider.py`, `test_intake_growth.py`, `test_caveats.py`, `test_emit.py`, `test_semantics_cache.py` |
+| `docs/` | the design (`code_reasoning_design.md`), the plan (`implementation_plan.md`), the API-absorption / bridge direction (`api_absorption_design.md`), the spike findings (`spike_findings.md`) |
 
 ## Run
 
@@ -413,5 +475,7 @@ python -m experiments.multifunction_synthesis # emit + call a helper, verified c
 python -m experiments.minting_comparison # rule-grown vs tool-minted candidate pools
 python -m experiments.callgraph_synthesis # synthesizing the call-graph shape / factoring
 python -m experiments.diagnosis      # the fourth axis: crash -> root cause (abduction) + fix
-pytest -q                            # the behaviour pins (138 green)
+python -m experiments.conformance_strider # the fifth axis: code <-> policy conformance across a bridge
+python -m experiments.intake_growth  # value-domain growth: constants + comparisons + ground eval
+pytest -q                            # the behaviour pins (155 green)
 ```
