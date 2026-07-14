@@ -16,6 +16,7 @@ from .transform import insert_none_guard, insert_none_guard_range
 from .operators import Operator, LIBRARY, retrieve
 from .session import Session, relabel_trace
 from .emit import Candidate as EmitCandidate, Selection as EmitSelection, select, realizing, verify_clean
+from .absorb import absorb, absorb_class, FactBank
 
 __all__ = [
     "Intake", "intake_function",
@@ -27,4 +28,5 @@ __all__ = [
     "Operator", "LIBRARY", "retrieve",
     "Session", "relabel_trace",
     "EmitCandidate", "EmitSelection", "select", "realizing", "verify_clean",
+    "absorb", "absorb_class", "FactBank",
 ]

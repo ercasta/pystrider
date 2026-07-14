@@ -98,6 +98,31 @@ monotone-still-clean). **PHASE 0 COMPLETE.**
 `repair_all` (the productized driver the roadmap names) only. `sweep_hypotheses` /
 `regressions_over_sweep` are public, so adopting the sweep single-site later is a small follow-on.
 
+### Roadmap Phase 2 Track A — the KB pipeline: extracted KBs (STARTED 2026-07-14)
+
+**PHASE 0 DONE → moved to Phase 2 (the KB pipeline, the gate before both wedges).** Track A =
+extracted KBs: productize `absorb(module)` (`docs/api_absorption_design.md` slices 3–4). **Slice 3
+DONE** — `pystrider/absorb.py` (+ `tests/test_absorb.py`, 10 pins):
+- `absorb(class|module) -> FactBank` reflects a live-annotated surface into `has_method` +
+  `returns_optional yes|no` facts via `typing.get_type_hints` — the §8 boundary at the TYPE level, the
+  reverse-intake tool. **Never runs library code**; reads declared hints only.
+- CONSERVATIVE by construction: `Any` / missing / unresolvable-forward-ref returns are OMITTED and
+  surfaced in `FactBank.omitted` (the caveat discipline, never guessed); a `Union`-vs-generic check
+  stops `Generator[None,…]` being mistaken for Optional. `FactBank.version` keys the bank for
+  cache-invalidation.
+- Proven on a REAL installed library dependency-free (`textual.Widget` — 73 optional-returning public
+  methods), and end-to-end: a GENERATED `returns_optional yes` fact drives the UNCHANGED slice-2
+  None-deref effect (`experiments/api_absorption.py::analyze_with_absorption` now takes an explicit
+  bank; `main()` PART 2 shows it). Suite 263 → 273.
+- Honest edge: LIVE introspection needs resolvable annotations — builtins/stdlib carry Optional-ness
+  only in typeshed `.pyi` stubs (`dict.get` has no live hint), and a string forward-ref to a
+  *locally-scoped* class won't resolve (omitted, correctly). A **stub-parsing source** (`.pyi` via
+  `ast`) is the named follow-on for the builtin surface (design §3.1).
+
+**Track A NEXT:** slice 4 — the `method_not_found` effect (an AttributeError from a method absent on a
+call's returned type), derived from the `has_method` facts `absorb` now emits, reusing retrieval +
+CHOOSE + verify. Then Track B (rulestrider) and Track C (fragment library) per the roadmap.
+
 The pre-convergence pystrider loop (below) is unchanged and green — the substrate this line builds on.
 
 ---

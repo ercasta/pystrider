@@ -159,9 +159,16 @@ written code, or a library surface). This is the critique's "binding layer" made
    any parameter, and conservative (a non-optional method or an unknown receiver type → no false
    positive). The absorbed fact just gives the call result a `none` value the existing assign/deref
    rules thread; no new None machinery.
-3. **The absorber tool (slice 3).** `absorb(module)` from stubs/`typing` for a NARROW surface
-   (Optional-returning methods + `has_method`) of one real library; the fact bank generated, not
-   hand-authored.
+3. **The absorber tool (slice 3).** ✅ BUILT — `pystrider/absorb.py` (+ `tests/test_absorb.py`).
+   `absorb(class|module) -> FactBank` reflects a live-annotated surface into `has_method` +
+   `returns_optional yes|no` facts via `typing.get_type_hints` (never runs library code). CONSERVATIVE
+   by construction: `Any` / missing / unresolvable-forward-ref returns are OMITTED and surfaced in
+   `FactBank.omitted` (not guessed); a `Union`-vs-generic check keeps `Generator[None,…]` from being
+   mistaken for Optional. Bank carries the library `version` (cache-invalidation). Proven end-to-end on
+   a REAL installed library (`textual.Widget` — 73 optional-returning methods, dependency-free) and via
+   a generated `returns_optional yes` fact driving the UNCHANGED slice-2 deref effect. Source = LIVE
+   introspection (works for annotated Python libs); builtins/stdlib carry Optional-ness only in typeshed
+   `.pyi` stubs (`dict.get` has no live hint) → a stub-parsing source is the named follow-on (§3.1).
 4. **A library-shaped effect (slice 4).** `method_not_found` — an AttributeError from a method absent
    on a call's returned type — derived from `has_method` facts, reusing retrieval + CHOOSE + verify.
 
