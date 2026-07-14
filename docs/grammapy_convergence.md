@@ -57,7 +57,7 @@ not built. The withdrawal app forces all four, so it is the natural forcing func
 | **2a** | Build `Choice` (guard partition: disjoint + exhaustive), driven by the app's screen selection | **`Choice` built** | **done** |
 | **2b** | Build `Scope` (binder-scoped reachability), driven by the confirm gate as a handler over the withdrawal effect | **`Scope` built** | **done** |
 | **2c** | Build `Fold` (declared commutative/associative join), driven by deontic conflict (obligation vs waiver) | **`Fold` built** | **done** |
-| **3** | pystrider's reasoning emits a *cross-cutting constraint*; grammapy §12 resolves the decision point (forced/defaulted/surfaced/rejected) | **§12 resolver built; screen wired** | **core done** |
+| **3** | pystrider's reasoning emits a *cross-cutting constraint*; grammapy §12 resolves each decision point; all four points unified under one `DeviationSpec` | **§12 resolver + `assemble`** | **done** |
 | **4** | AST emission (libcst) — combinators emit fragments, grammapy assembles; retire string templates | grammapy roadmap step 5 | |
 | **5** | External generator front-end drafts the deviation spec; grammapy guarantees + emits; pystrider drive-verifies + checks footprint honesty | steps 5–7 | |
 
@@ -123,9 +123,12 @@ That is the evidence for grammapy's central bet — that safe composition reduce
   untyped names for now — grammapy's own channel *types* are still placeholders (their §9). Typing them
   so `provides`/`requires` are checked channel contracts is the follow-on; it is additive and did not
   block the resolver.
-- **Remaining in Phase 3:** the other three points (buttons/Accumulate, gate/Scope, policy/Fold) still
-  have their own call sites; folding all four under one `DeviationSpec` object driven by a single
-  `assemble` is the incremental finish.
+- **Unified (Phase 3 finish):** `assemble(spec)` resolves **all four** decision points in one place —
+  `confirm_policy` (Fold), `screen` (§12 resolve), `confirm_buttons` (Accumulate), `effect_handling`
+  (Scope) — into one `DeviationSpec` (a list of uniform `Decision` records), `admitted` iff every point
+  resolved cleanly. `synthesize` now emits iff `dev.admitted`, so a rejection at *any* point (a colliding
+  button set, an escaping effect, an unresolved screen) surfaces the same way: no source, no drive. The
+  four scattered call sites are gone. Pins: `tests/test_app_synthesis.py` (deviation-spec tests).
 
 ## Do humans need the lattice math? (a design note)
 

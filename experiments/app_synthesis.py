@@ -492,17 +492,87 @@ def verify_by_pilot(source: str, spec: Spec, confirm_choice: str = "ok") -> Veri
     return VerifyResult(events=events, performed=performed, gated=gated, ok=ok)
 
 
+# --- PHASE 3 (finish): ONE deviation spec — the app as its resolved decision points ------------
+# The four decision points no longer have four scattered call sites. `assemble` resolves them all in one
+# place, each by its grammapy combinator, into one uniform record: policy (Fold), screen (§12 resolve),
+# buttons (Accumulate), effect-handling (Scope). This IS the deviation spec — the single reasoning->
+# grammapy artifact — and it is `admitted` iff every point resolved cleanly.
+
+@dataclass
+class Decision:
+    """One decision point's resolved outcome, uniformly: the combinator that resolved it, the chosen
+    value, a human-readable detail, and whether grammapy admitted it (else the rejection message)."""
+    point: str
+    combinator: str
+    value: str
+    detail: str
+    admitted: bool
+    error: str | None = None
+
+
+@dataclass
+class DeviationSpec:
+    """The app as its resolved decision points — the single reasoning->grammapy artifact. `screen` is the
+    emitted shape (None if the screen did not resolve determinately); `admitted` iff every point is clean."""
+    spec: Spec
+    decisions: list[Decision]
+    screen: str | None
+
+    @property
+    def admitted(self) -> bool:
+        return all(d.admitted for d in self.decisions)
+
+    @property
+    def rejection(self) -> str | None:
+        return next((d.error for d in self.decisions if not d.admitted), None)
+
+
+def assemble(spec: Spec) -> DeviationSpec:
+    """Resolve every decision point through its grammapy combinator, into one deviation spec. Short-
+    circuits the downstream points if the screen does not resolve determinately (nothing to build)."""
+    decisions: list[Decision] = []
+
+    verdict = resolve_confirm(spec)                                   # 1. deontic policy — grammapy Fold
+    decisions.append(Decision("confirm_policy", "Fold", verdict,
+                              f"votes {[it.value for it in _confirm_verdicts(spec)]} -> {verdict}", True))
+
+    res = resolve_screen(spec)                                        # 2. screen — grammapy §12 resolve
+    screen = res.production if isinstance(res, (Forced, Defaulted)) else None
+    decisions.append(Decision("screen", "resolve", screen or "unresolved", str(res),
+                              screen is not None, None if screen else str(res)))
+    if screen is None:
+        return DeviationSpec(spec, decisions, None)
+
+    if screen == "confirm_screen":                                   # 3. buttons — grammapy Accumulate
+        try:
+            atoms = compose_confirm_screen(spec)
+            decisions.append(Decision("confirm_buttons", "Accumulate", ",".join(_ordered_buttons(spec)),
+                                      f"{len(atoms)} atoms, writes disjoint", True))
+        except CompositionError as e:
+            decisions.append(Decision("confirm_buttons", "Accumulate", "rejected", str(e), False, str(e)))
+
+    try:                                                             # 4. effect handling — grammapy Scope
+        check_reachability(spec, screen)
+        decisions.append(Decision("effect_handling", "Scope", "reachable",
+                                  f"{CONFIRM_SIGNAL} handled" if spec.irreversible else "no effect", True))
+    except CompositionError as e:
+        decisions.append(Decision("effect_handling", "Scope", "rejected", str(e), False, str(e)))
+
+    return DeviationSpec(spec, decisions, screen)
+
+
 # --- the whole synthesis loop -----------------------------------------------------------------
 
 @dataclass
 class Synthesis:
     spec: Spec
     required: set[str]
-    screen: str                          # the screen shape grammapy's Choice selected (the winner)
+    screen: str                          # the screen shape the §12 resolution selected (the winner)
     source: str
     verify: VerifyResult | None
-    composed: bool                       # grammapy admitted the feature composition (Accumulate check)
-    composition_error: str | None        # the design-time rejection message, if it did not
+    composed: bool                       # grammapy admitted every decision point in the deviation spec
+    composition_error: str | None        # the first design-time rejection message, if any point failed
+    deviation: DeviationSpec
 
     @property
     def winner(self) -> str:
@@ -510,21 +580,19 @@ class Synthesis:
 
 
 def synthesize(spec: Spec) -> Synthesis:
-    """spec -> DERIVE required features -> CHOOSE the screen shape (grammapy exclusive-Choice, guards
-    proven to partition) -> COMPOSE its features through grammapy (Accumulate: reject interfering sets
-    at design time) -> EMIT real Textual source -> VERIFY by DRIVING it. pystrider reasoning is the
-    front-end (what deviates); grammapy's sound-composition algebra selects and gates; one repo."""
+    """spec -> DERIVE required features -> ASSEMBLE the deviation spec (resolve every decision point
+    through its grammapy combinator: Fold / §12-resolve / Accumulate / Scope) -> EMIT real Textual source
+    iff every point was admitted -> VERIFY by DRIVING it. pystrider reasons what deviates; grammapy's
+    sound-composition algebra resolves and gates every point in one place; one repo."""
     required = required_features(spec)
-    screen = choose_screen(spec)
-    try:
-        check_reachability(spec, screen)          # grammapy Scope: the effect must be handled (reachability)
-        source = _SCREEN_EMIT[screen](spec)       # grammapy Accumulate gate lives inside the confirm emit
-        composed, comp_err = True, None
-    except CompositionError as e:                 # grammapy refused the composition -> no source emitted
-        source, composed, comp_err = "", False, str(e)
+    dev = assemble(spec)
+    if dev.admitted and dev.screen:
+        source, composed, comp_err = _SCREEN_EMIT[dev.screen](spec), True, None
+    else:
+        source, composed, comp_err = "", False, dev.rejection
     vr = verify_by_pilot(source, spec) if source else None
-    return Synthesis(spec=spec, required=required, screen=screen, source=source, verify=vr,
-                     composed=composed, composition_error=comp_err)
+    return Synthesis(spec=spec, required=required, screen=dev.screen or "unresolved", source=source,
+                     verify=vr, composed=composed, composition_error=comp_err, deviation=dev)
 
 
 # --- live walkthrough -------------------------------------------------------------------------
@@ -643,6 +711,12 @@ def main() -> None:
     print("\n  Forced where unique, defaulted where silent, surfaced where ambiguous, rejected where")
     print("  unsatisfiable - never an inferred pick. The reasoning emits ONE constraint set (a deviation")
     print("  spec); the four combinators consume it, replacing four hand-wired call sites.")
+
+    print("\n  the whole app as ONE deviation spec (each point resolved by its grammapy combinator):")
+    dev = assemble(Spec(name="withdraw_spec", irreversible=True))
+    for d in dev.decisions:
+        print(f"      {d.point:<16} [{d.combinator:<10}] {d.value:<14} - {d.detail}")
+    print(f"      => admitted: {dev.admitted}")
 
     print("\nCOMPOSITION - every line above came from a SEPARATE knowledge fragment (business, deontic,")
     print("bridge, preference), and the feature set is admitted by grammapy's proven combinators, not")

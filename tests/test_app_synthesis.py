@@ -15,6 +15,7 @@ from experiments.app_synthesis import (
     choose_screen, resolve_screen, required_capabilities, SCREEN_POINT,
     check_reachability, app_scope_tree, CONFIRM_SIGNAL,
     resolve_confirm, _confirm_verdicts, CONFIRM_SAFETY, CONFIRM_LENIENT,
+    assemble, DeviationSpec,
     _emit_one_screen, _emit_confirm_screen,
 )
 from grammapy import CompositionError, Forced, Defaulted, Rejected, resolve, unhandled_emissions
@@ -221,6 +222,37 @@ def test_fold_leaves_non_trusted_behaviour_unchanged():
     # the Fold is transparent when there is no waiver vote: prior screen resolution is preserved.
     assert choose_screen(Spec(name="s")) == "one_screen"
     assert choose_screen(Spec(name="s", irreversible=True)) == "confirm_screen"
+
+
+# --- Phase 3 (finish): the unified deviation spec ---------------------------------------------
+
+def test_deviation_spec_resolves_all_points_through_grammapy_combinators():
+    dev = assemble(Spec(name="withdraw_spec", irreversible=True))
+    by_point = {d.point: d for d in dev.decisions}
+    assert set(by_point) == {"confirm_policy", "screen", "confirm_buttons", "effect_handling"}
+    assert by_point["confirm_policy"].combinator == "Fold" and by_point["confirm_policy"].value == "obligatory"
+    assert by_point["screen"].combinator == "resolve" and by_point["screen"].value == "confirm_screen"
+    assert by_point["confirm_buttons"].combinator == "Accumulate"
+    assert by_point["effect_handling"].combinator == "Scope"
+    assert dev.admitted
+
+
+def test_reversible_deviation_spec_has_no_button_point():
+    dev = assemble(Spec(name="s"))              # one_screen: no confirm buttons; effect is trivially reachable
+    by_point = {d.point: d for d in dev.decisions}
+    assert set(by_point) == {"confirm_policy", "screen", "effect_handling"}   # no confirm_buttons point
+    assert by_point["effect_handling"].value == "reachable" and by_point["effect_handling"].detail == "no effect"
+    assert dev.screen == "one_screen" and dev.admitted
+
+
+def test_a_rejected_point_makes_the_deviation_spec_not_admitted():
+    dev = assemble(Spec(name="s", irreversible=True, buttons=("ok", "yes")))   # two proceed-buttons
+    assert not dev.admitted
+    assert "confirm.submit" in dev.rejection
+    # and synthesize surfaces it via the deviation spec: no source, no drive.
+    r = synthesize(Spec(name="s", irreversible=True, buttons=("ok", "yes")))
+    assert not r.composed and r.source == "" and r.verify is None
+    assert isinstance(r.deviation, DeviationSpec) and not r.deviation.admitted
 
 
 if __name__ == "__main__":
