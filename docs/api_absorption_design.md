@@ -169,8 +169,18 @@ written code, or a library surface). This is the critique's "binding layer" made
    a generated `returns_optional yes` fact driving the UNCHANGED slice-2 deref effect. Source = LIVE
    introspection (works for annotated Python libs); builtins/stdlib carry Optional-ness only in typeshed
    `.pyi` stubs (`dict.get` has no live hint) → a stub-parsing source is the named follow-on (§3.1).
-4. **A library-shaped effect (slice 4).** `method_not_found` — an AttributeError from a method absent
-   on a call's returned type — derived from `has_method` facts, reusing retrieval + CHOOSE + verify.
+4. **A library-shaped effect (slice 4).** ✅ BUILT — `experiments/api_absorption.py`
+   (`find_method_not_found`) + `tests/test_method_not_found.py` (7). A SECOND library-shaped effect (the
+   mirror of slice C's returns_none): a `?attr raises method_not_found` rule flags a method CALL whose
+   receiver type does not declare the method, reasoning over the absorbed `has_method` facts with NO
+   per-library rule. The receiver type comes from a one-hop TYPE FLOW (`infer_types`, a fixpoint): a
+   parameter's given type, or the absorbed RETURN type of a call assigned to a variable (`r = s.repo()`
+   with `Session.repo returns Repo` yields `r: Repo` — the design's headline "returned type" case, via
+   intake's `assign from_expr call` link + slice-3's `returns` facts). Restricted to CALLED attribute
+   nodes so a plain field read (which needs `has_attr`, not `has_method`) never trips it, and
+   conservative — an unknown/undecidable receiver type yields no `on_type`, hence no false positive.
+   *Detection only; a method_not_found REPAIR (unlike returns_none's coalesce, there is no obvious local
+   synthesis for a missing method) is a separate question, noted not built.*
 
 ---
 

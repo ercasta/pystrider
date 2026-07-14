@@ -16,6 +16,10 @@ absorbed fact just gives the call result a `none` value the existing assign/dere
 Finding: it works, and it is conservative. `x = d.get(k); x.attr` raises when `d` is known to be a
 `dict` (so the call resolves to the absorbed-optional `dict.get`); it does NOT raise for a non-optional
 method (`str.upper`), nor when the receiver type is unknown (no resolution → no false positive).
+
+Slice 3 (`pystrider.absorb`) GENERATES the fact bank from a real declared surface; slice 4
+(`find_method_not_found`) adds a SECOND library-shaped effect — a method absent on a call's returned
+type — from the absorbed `has_method` facts, with a one-hop type flow and no per-library rule.
 """
 from __future__ import annotations
 
@@ -47,11 +51,20 @@ BRIDGE_RULES = "\n".join([
     "?call eval_to none when ?call may_be_none yes",
 ])
 
+# slice 4 — the method_not_found effect: a method CALL on a base whose TYPE is known but does not
+# declare the method raises AttributeError, derived from the absorbed `has_method` facts with NO
+# per-library rule. Restricted to CALLED attribute nodes (`?call calls ?attr`), so a plain attribute
+# access — which would need `has_attr`, not `has_method` — never trips it (conservative).
+METHOD_NOT_FOUND_RULE = (
+    "?attr raises method_not_found when ?call calls ?attr and ?attr on_type ?type "
+    "and ?attr attr_name ?method and not ?type has_method ?method"
+)
+
 
 def _rule_graph() -> AttrGraph:
-    """The real semantics + the two absorption-bridge rules, as one rule graph."""
+    """The real semantics + the absorption-bridge rules (None-flow) + the method_not_found rule."""
     rg = AttrGraph()
-    for r in load_machine_rules(SEMANTICS + "\n" + BRIDGE_RULES):
+    for r in load_machine_rules(SEMANTICS + "\n" + BRIDGE_RULES + "\n" + METHOD_NOT_FOUND_RULE):
         write_rule(rg, r)
     return rg
 
@@ -94,6 +107,70 @@ def analyze_with_absorption(src: str, receiver_types: dict[str, str],
     return [ik.label_of.get(s, s) for s in hits]
 
 
+# --- slice 4: the method_not_found effect — a method absent on a call's returned type -----------
+# A NEW library-shaped effect (the mirror of slice C's returns_none): reasoning over the absorbed
+# `has_method` facts, with NO per-library rule, flags a method call whose receiver type does not
+# declare the method. The receiver TYPE is established by a one-hop flow — a parameter's given type,
+# or the absorbed RETURN type of a call assigned to a variable (`r = s.repo()` -> r: _DemoRepo).
+
+def _fact(ik: Intake, subj: str, pred: str) -> str | None:
+    """The single object of `(subj, pred, ?)` in intake's facts, or None (a small structural lookup)."""
+    return next((o for (s, p, o) in ik.facts if s == subj and p == pred), None)
+
+
+def infer_types(ik: Intake, receiver_types: dict[str, str],
+                api_facts: list[tuple[str, str, str]]) -> dict[str, str]:
+    """One-hop TYPE FLOW to a fixpoint: seed each parameter's GIVEN type, then propagate the absorbed
+    RETURN type of every resolved call assigned to a variable — `r = s.repo()` with `_DemoSession.repo
+    returns _DemoRepo` yields `r: _DemoRepo`. Returns a source-name -> type-name map. Conservative: a
+    call on an unknown receiver type, or a method with no absorbed `returns` fact, propagates nothing."""
+    returns = {s: o for (s, p, o) in api_facts if p == "returns"}     # 'Type.method' -> ReturnType
+    var_types = dict(receiver_types)
+    changed = True
+    while changed:                                                   # fixpoint -> order-independent
+        changed = False
+        for (s, p, o) in ik.facts:
+            if p != "from_expr":                                    # an assign's RHS expression
+                continue
+            var, attrnode = _fact(ik, s, "assigns"), _fact(ik, o, "calls")
+            if not (var and attrnode):
+                continue
+            method = _fact(ik, attrnode, "attr_name")
+            recv_type = var_types.get(ik.attr_base_var.get(attrnode))
+            rt = returns.get(f"{recv_type}.{method}") if (recv_type and method) else None
+            if rt and var_types.get(var) != rt:
+                var_types[var] = rt
+                changed = True
+    return var_types
+
+
+def _on_type_facts(ik: Intake, var_types: dict[str, str]) -> list[tuple[str, str, str]]:
+    """Tag each CALLED attribute node with its receiver's inferred type (`?attr on_type ?T`) — the
+    binding the method_not_found rule reasons over. Only called nodes are tagged (a plain attribute
+    access would need `has_attr`, not `has_method`), so the rule never fires on a bare field read."""
+    called = {o for (s, p, o) in ik.facts if p == "calls"}
+    return [(attr, "on_type", var_types[ik.attr_base_var[attr]])
+            for attr in ik.attributes
+            if attr in called and ik.attr_base_var.get(attr) in var_types]
+
+
+def find_method_not_found(src: str, receiver_types: dict[str, str],
+                          api_facts: list[tuple[str, str, str]] | None = None) -> list[str]:
+    """Detect method_not_found: a method call whose receiver TYPE (given, or absorbed-inferred through a
+    return) does not declare the method. Drives the REAL semantics + the method_not_found rule over the
+    absorbed `has_method` facts; returns the offending sites' source labels. Conservative — an unknown
+    receiver type yields no `on_type`, so no false positive."""
+    bank = list(api_facts if api_facts is not None else API_FACTS)
+    ik = intake_function(src)
+    var_types = infer_types(ik, receiver_types, bank)
+    kb = _kb_from(ik, bank + _on_type_facts(ik, var_types))
+    rg = _rule_graph()
+    hits = [attr for attr in ik.attributes
+            if suppose(kb, [], [("raises", attr, "method_not_found")],
+                       rules=rg, commit=False).status == CONFIRMED]
+    return [ik.label_of.get(a, a) for a in hits]
+
+
 # --- live walkthrough -------------------------------------------------------------------------
 
 OPTIONAL_GET = "def f(d, k):\n    x = d.get(k)\n    return x.rows\n"          # dict.get -> Optional
@@ -108,6 +185,11 @@ class _DemoItem: ...
 class _DemoRepo:
     def find(self, k) -> "_DemoItem | None": ...     # Optional -> absorbed `returns_optional yes`
     def load(self, k) -> _DemoItem: ...              # non-optional -> `returns_optional no`
+    # note: NO `delete` method -> a call to it is method_not_found
+
+
+class _DemoSession:
+    def repo(self) -> _DemoRepo: ...                 # concrete return -> absorbed `returns _DemoRepo`
 
 
 def main() -> None:
@@ -146,6 +228,21 @@ def main() -> None:
           f"{analyze_with_absorption(src, {'r': '_DemoRepo'}, rbank.facts)}")
     print("    (a GENERATED `_DemoRepo.find returns_optional yes` flowed through the UNCHANGED deref")
     print("     rule — absorbing a library is now reading its declared surface, not authoring rules.)")
+
+    print("\nPART 3 (slice 4) — a NEW effect from the same facts: method_not_found\n")
+    bank = absorb(_DemoSession).facts + absorb(_DemoRepo).facts
+    print("  absorbed: _DemoSession has_method repo | _DemoSession.repo returns _DemoRepo |")
+    print("            _DemoRepo has_method {find, load}   (NO `delete`)\n")
+    chained = "def f(s, k):\n    r = s.repo()\n    return r.delete(k)\n"
+    print("  def f(s, k): r = s.repo(); return r.delete(k)     # s is a _DemoSession")
+    print(f"    -> method_not_found: {find_method_not_found(chained, {'s': '_DemoSession'}, bank)}")
+    print("       (r's type is INFERRED _DemoRepo from the absorbed return of s.repo(); _DemoRepo has no")
+    print("        `delete` -> the method access raises, from `has_method` facts, no per-library rule.)\n")
+    ok = "def h(t, k):\n    return t.find(k)\n"
+    print(f"  def h(t, k): return t.find(k)  (t: _DemoRepo)      -> "
+          f"{find_method_not_found(ok, {'t': '_DemoRepo'}, bank) or '[]  (find exists -> no false positive)'}")
+    print(f"  same call, receiver type UNKNOWN                   -> "
+          f"{find_method_not_found(chained, {}, bank) or '[]  (unresolved -> conservative)'}")
 
 
 if __name__ == "__main__":

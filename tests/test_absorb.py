@@ -61,11 +61,25 @@ def test_undecidable_returns_are_omitted_not_guessed():
     assert set(bank.omitted) == {"_Repo.raw", "_Repo.dynamic"}
 
 
-def test_has_method_covers_every_public_method_and_excludes_private():
+def test_has_method_is_type_keyed_and_covers_every_public_method():
     bank = absorb(_Repo)
-    methods = {o for (s, p, o) in bank.facts if p == "has_method"}
-    assert methods == {"find", "lookup", "load", "name", "close", "stream", "raw", "dynamic"}
-    assert "_internal" not in methods                 # the private surface is not absorbed
+    # member presence keys on the TYPE (design §2.B), so a method_not_found check asks `_Repo has_method m`.
+    has = {(s, o) for (s, p, o) in bank.facts if p == "has_method"}
+    assert has == {("_Repo", m) for m in
+                   {"find", "lookup", "load", "name", "close", "stream", "raw", "dynamic"}}
+    assert ("_Repo", "_internal") not in has          # the private surface is not absorbed
+
+
+def test_concrete_class_returns_are_absorbed_as_returns_facts():
+    class Holder:
+        def get_repo(self) -> _Repo: ...              # concrete-class return -> a `returns` fact
+        def get_name(self) -> str: ...                # builtin class is still concrete
+        def maybe(self, k) -> "_Item | None": ...     # optional -> NO returns fact (no single concrete type)
+    bank = absorb(Holder)
+    returns = {(s, o) for (s, p, o) in bank.facts if p == "returns"}
+    assert ("Holder.get_repo", "_Repo") in returns
+    assert ("Holder.get_name", "str") in returns
+    assert not any(s == "Holder.maybe" for (s, o) in returns)   # optional carries no definite return type
 
 
 def test_bank_records_a_version_for_cache_invalidation():
@@ -99,9 +113,9 @@ def test_absorbing_a_real_library_yields_real_optional_facts():
     # real Optional-returning methods on a real annotated class (textual ships inline annotations).
     assert "Widget.check_action" in bank.optional_methods    # -> bool | None
     assert "Widget.get_selection" in bank.optional_methods   # -> tuple[str, str] | None
-    # invariants: every optional key is a known method, and omitted keys carry NO returns_optional fact.
-    has_method_keys = {s for (s, p, o) in bank.facts if p == "has_method"}
-    assert bank.optional_methods <= has_method_keys
+    # invariants: every optional key names a known method, and omitted keys carry NO returns_optional fact.
+    method_names = {o for (s, p, o) in bank.facts if p == "has_method"}
+    assert {k.split(".", 1)[1] for k in bank.optional_methods} <= method_names
     assert all(_opt(bank, k) is None for k in bank.omitted)
 
 

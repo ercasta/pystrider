@@ -9,14 +9,16 @@ The absorber is a §8 boundary run at the TYPE level (the mirror of intake, whic
 into facts): it reads only DECLARED type hints via `typing.get_type_hints` and NEVER runs library code
 paths. For each public method it emits:
 
-    <Type>.<method>   has_method        <method>          # member presence (feeds a method_not_found effect)
+    <Type>            has_method        <method>          # member presence (keys on the TYPE, design §2.B)
     <Type>.<method>   returns_optional  yes | no          # decidably Optional[X] / X | None  ->  yes
+    <Type>.<method>   returns           <ReturnType>       # a concrete-class return (feeds method_not_found)
 
 and it is CONSERVATIVE by construction (design §6): a return annotation that is `Any`, absent, or
 unresolvable is OMITTED (surfaced in `FactBank.omitted`, never guessed) — a wrong absorbed fact is worse
-than an absent one. Facts key on the SHORT class name (`Widget.check_action`), matching the resolution
-tool's `<receiver-type>.<method>` output; the bank carries the library `version` so a bump re-absorbs
-(the same cache-invalidation shape as the rule-bank cache).
+than an absent one. `returns_optional` / `returns` key on the SHORT `<Type>.<method>` (matching the
+resolution tool's `<receiver-type>.<method>` output); `has_method` keys on the TYPE, so a
+method_not_found check can ask `not <Type> has_method <m>` directly. The bank carries the library
+`version` so a bump re-absorbs (the cache-invalidation shape of the rule-bank cache).
 
 Source (design §3, richest first): this slice uses **live introspection** (`typing.get_type_hints` on
 an installed, annotated module) — which works for pure-Python annotated libraries (textual, attrs, …).
@@ -54,6 +56,16 @@ def _optionality(annotation: object) -> str | None:
     if _is_union(annotation):
         return "yes" if _NoneType in typing.get_args(annotation) else "no"
     return "no"                                        # a concrete, non-union, non-None type
+
+
+def _return_type_name(annotation: object) -> str | None:
+    """The bare class name of a CONCRETE-class return annotation (`-> Repo` -> 'Repo'), else None. A
+    typing generic (`list[int]`), a union, `Any`, or a bare None has no single concrete class, so no
+    `returns` fact is emitted — the method_not_found effect needs a definite return type, and absence is
+    the conservative answer when there isn't one."""
+    if inspect.isclass(annotation) and annotation is not _NoneType:
+        return annotation.__name__
+    return None
 
 
 def _return_annotation(fn: object) -> object:
@@ -109,9 +121,13 @@ def absorb_class(cls: type, *, version: str | None = None) -> FactBank:
     for name, fn in inspect.getmembers(cls, predicate=inspect.isfunction):
         if name.startswith("_"):
             continue                                   # the PUBLIC declared surface only
-        key = f"{qual}.{name}"
-        bank.facts.append((key, "has_method", name))
+        bank.facts.append((qual, "has_method", name))  # member PRESENCE keys on the TYPE (design §2.B)
+        key = f"{qual}.{name}"                          # the specific method, for its return facts
         ann = _return_annotation(fn)
+        if ann is not _MISSING:
+            rt = _return_type_name(ann)                # a concrete-class return -> `<Type>.<m> returns R`
+            if rt is not None:
+                bank.facts.append((key, "returns", rt))
         opt = None if ann is _MISSING else _optionality(ann)
         if opt is None:
             bank.omitted.append(key)                   # surfaced, not guessed (design §6)

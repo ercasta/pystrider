@@ -119,9 +119,48 @@ DONE** — `pystrider/absorb.py` (+ `tests/test_absorb.py`, 10 pins):
   *locally-scoped* class won't resolve (omitted, correctly). A **stub-parsing source** (`.pyi` via
   `ast`) is the named follow-on for the builtin surface (design §3.1).
 
-**Track A NEXT:** slice 4 — the `method_not_found` effect (an AttributeError from a method absent on a
-call's returned type), derived from the `has_method` facts `absorb` now emits, reusing retrieval +
-CHOOSE + verify. Then Track B (rulestrider) and Track C (fragment library) per the roadmap.
+**Slice 4 DONE** — the `method_not_found` effect (`experiments/api_absorption.py::find_method_not_found`,
+`tests/test_method_not_found.py`, 7 pins). A SECOND library-shaped effect from the absorbed `has_method`
+facts, no per-library rule: a `?attr raises method_not_found` rule flags a method CALL whose receiver
+type lacks the method. Receiver type via a one-hop fixpoint `infer_types` — given param type, or the
+absorbed RETURN type of a call assigned to a var (`r = s.repo()` → `r: _DemoRepo`, the design's headline
+"returned type" case, using intake's `assign from_expr call` link + slice-3 `returns` facts). Also fixed
+slice-3's `has_method` to be TYPE-keyed (`(Type, has_method, m)`, per design §2.B) and added `returns`
+facts to `absorb`. CALLED-node restriction + unknown-type conservatism = no false positives. Detection
+only — a method_not_found *repair* has no obvious local synthesis (unlike coalesce); noted, not built.
+Suite 273 → 281.
+
+**Track A follow-ons (optional, unbuilt):** slice 1 (value-domain growth: constants + comparisons, for
+conformance on real Python text); a `.pyi` stub-parsing source to absorb builtins/stdlib (`dict.get`)
+live introspection can't reach; `has_attr` absorption to extend method_not_found to plain field reads.
+
+### Roadmap Phase 2 Track B — rulestrider (the KB-ingestion QA gate) (STARTED 2026-07-14)
+
+The roadmap elevates rulestrider from side-spike to product-critical: the anomaly checks become the
+**ingestion gate for LLM-authored CNL knowledge** (a KB that survives them + human review is trustworthy
+by the same argument the codegen loop uses). The pystrider spike MIRRORED onto a rule bank — **no
+`intake.py`, no `semantics.cnl`** (the artifact is already CNL; ugm reifies it as ground structure, the
+homoiconic payoff). **Slice 1 DONE** — `experiments/rulestrider.py` (+ `tests/test_rulestrider.py`, 7):
+- The first bug class — **wrong outcome / over-firing** — detected exactly as pystrider detects a deref:
+  `check(suite, policy)` SWEEPS an expected-outcome scenario suite, `derive`s each decision READ-ONLY
+  (`commit=False` — no materialization, the pystrider discipline), compares to the intended outcome, and
+  renders the `why`-trace of each divergence.
+- The planted defect is feedback #1's own class — a **dropped body condition** (loyalty rule ships
+  `big_spender` only, intended `premium AND big_spender`) → over-fires for a non-premium big spender. The
+  sweep isolates exactly that scenario; the `why`-trace shows the rule firing with `premium` ABSENT — the
+  provenance IS the diagnosis. The FIXED policy clears the suite; detection also catches under-firing.
+- Mechanics learned (ugm): `why` must render on a FRESH graph — a prior `commit=True` query materializes
+  the derived fact so a later `why` collapses to `(given)`; and `ask_goal(..., provenance=True)` currently
+  raises `KeyError` on a shared object node (a ugm bug to file). Read-only `commit=False` + fresh-graph
+  `why` is the working pattern. Suite 281 → 288.
+
+**Track B NEXT:** slice 2 — the ORACLE-FREE anomaly meta-rules (contradiction pairs, dead/shadowed rules,
+coverage-gap sweep over `full_sweep`), the homoiconic checks that need NO test cases (what makes this an
+*ingestion* gate, not a regression suite); then slice 3 — rule repair operators (strengthen-body,
+add-exception via ugm defeasibility), retrieved by effect key, verified against the whole suite, CHOSEN
+minimal (reusing the pystrider repair machinery — `choose_repair` already takes a pluggable analyzer).
+The homoiconic meta-rules need ugm's rule-reification vocabulary (`rl_lhs`/`k_pred` per the critique) —
+probe it first.
 
 The pre-convergence pystrider loop (below) is unchanged and green — the substrate this line builds on.
 
