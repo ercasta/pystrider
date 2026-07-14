@@ -13,9 +13,11 @@ from experiments.app_synthesis import (
     verify_by_pilot, confirm_buttons, confirm_button_trace,
     compose_confirm_screen, _affirmative_of,
     choose_screen, _confirmation_state, SCREEN_PRODUCTIONS, CONFIRMATION_ENUM,
+    check_reachability, app_scope_tree, CONFIRM_SIGNAL,
+    resolve_confirm, _confirm_verdicts, CONFIRM_SAFETY, CONFIRM_LENIENT,
     _emit_one_screen, _emit_confirm_screen,
 )
-from grammapy import ABSENT, Choice, CompositionError, guard_coverage
+from grammapy import ABSENT, Choice, CompositionError, guard_coverage, unhandled_emissions
 
 
 def test_lenient_spec_requires_nothing_and_picks_the_compact_app():
@@ -155,6 +157,64 @@ def test_affirmative_button_drives_the_emitted_dismiss():
     spec = Spec(name="s", irreversible=True, buttons=("yes", "cancel"))
     assert _affirmative_of(spec) == "yes"
     assert 'event.button.id == "confirm-yes"' in _emit_confirm_screen(spec)
+
+
+# --- Phase 2b: reachability of the withdrawal effect through grammapy's Scope -----------------
+
+def test_irreversible_withdrawal_emits_the_confirm_signal():
+    tree = app_scope_tree(Spec(name="s", irreversible=True), "confirm_screen")
+    # the perform leaf (under the gate) emits the control signal; a reversible one emits nothing.
+    perform = tree.children[0].children[0]
+    assert perform.emits == frozenset({CONFIRM_SIGNAL})
+    assert app_scope_tree(Spec(name="s"), "one_screen").children[0].emits == frozenset()
+
+
+def test_confirm_structure_handles_the_effect_and_is_admitted():
+    check_reachability(Spec(name="s", irreversible=True), "confirm_screen")   # no raise
+    assert unhandled_emissions(app_scope_tree(Spec(name="s", irreversible=True), "confirm_screen")) == []
+
+
+def test_one_screen_structure_leaks_the_irreversible_effect():
+    # force the compact structure on an irreversible spec: Scope catches the escaping effect.
+    with pytest.raises(CompositionError) as ctx:
+        check_reachability(Spec(name="s", irreversible=True), "one_screen")
+    msg = str(ctx.value)
+    assert "escape their scope" in msg
+    assert CONFIRM_SIGNAL in msg and "perform_withdrawal" in msg
+
+
+def test_reversible_one_screen_has_no_effect_to_handle():
+    check_reachability(Spec(name="s"), "one_screen")             # no emit -> trivially reachable
+
+
+# --- Phase 2c: deontic conflict resolution through grammapy's Fold ----------------------------
+
+def test_trusted_session_cannot_waive_a_safety_confirmation():
+    # irreversible + trusted -> conflicting votes; the safety policy makes the obligation win.
+    conflict = Spec(name="s", irreversible=True, trusted=True)
+    votes = {it.value for it in _confirm_verdicts(conflict)}
+    assert votes == {"optional", "obligatory", "waived"}        # all three voted
+    assert resolve_confirm(conflict, CONFIRM_SAFETY) == "obligatory"
+    assert _confirmation_state(conflict) == "required"          # so a confirm screen is STILL forced
+    assert choose_screen(conflict) == "confirm_screen"
+
+
+def test_declared_policy_flips_the_outcome():
+    conflict = Spec(name="s", irreversible=True, trusted=True)
+    assert resolve_confirm(conflict, CONFIRM_SAFETY) == "obligatory"   # obligation overrides
+    assert resolve_confirm(conflict, CONFIRM_LENIENT) == "waived"      # same votes, waiver overrides
+
+
+def test_trusted_alone_needs_no_confirmation():
+    # a reversible action, trusted or not, has no obligation to override -> no confirmation.
+    assert resolve_confirm(Spec(name="s", trusted=True)) == "optional"
+    assert _confirmation_state(Spec(name="s", trusted=True)) is ABSENT
+
+
+def test_fold_leaves_non_trusted_behaviour_unchanged():
+    # the Fold is transparent when there is no waiver vote: prior Choice behaviour is preserved.
+    assert _confirmation_state(Spec(name="s")) is ABSENT
+    assert _confirmation_state(Spec(name="s", irreversible=True)) == "required"
 
 
 if __name__ == "__main__":

@@ -55,8 +55,9 @@ not built. The withdrawal app forces all four, so it is the natural forcing func
 |---|---|---|---|
 | **1** | Compose the confirm button set through `Accumulate`; reject interference at design time; Pilot stays oracle | `Accumulate` (exists) | **done** |
 | **2a** | Build `Choice` (guard partition: disjoint + exhaustive), driven by the app's screen selection | **`Choice` built** | **done** |
-| **2b** | Build `Scope` (reachability) and `Fold` (declared join), driven by the confirm gate and deontic conflict | new combinators | next |
-| **3** | pystrider's `REFINE` bank emits a grammapy *deviation spec* (cross-cutting constraints → forced/surfaced productions) | Choice + constraint resolution | |
+| **2b** | Build `Scope` (binder-scoped reachability), driven by the confirm gate as a handler over the withdrawal effect | **`Scope` built** | **done** |
+| **2c** | Build `Fold` (declared commutative/associative join), driven by deontic conflict (obligation vs waiver) | **`Fold` built** | **done** |
+| **3** | pystrider's `REFINE` bank emits a grammapy *deviation spec* (cross-cutting constraints → forced/surfaced productions) | Choice + constraint resolution | next |
 | **4** | AST emission (libcst) — combinators emit fragments, grammapy assembles; retire string templates | grammapy roadmap step 5 | |
 | **5** | External generator front-end drafts the deviation spec; grammapy guarantees + emits; pystrider drive-verifies + checks footprint honesty | steps 5–7 | |
 
@@ -72,6 +73,49 @@ not built. The withdrawal app forces all four, so it is the natural forcing func
   once at import; `choose_screen` selects the one firing branch from the state pystrider's reasoning
   supplies. `emit.select` is retired from the probe. Pins: `tests/test_choice.py` (7) +
   `tests/test_app_synthesis.py`.
+
+## Phase 2b as landed (Scope)
+
+- New grammapy substrate [`grammapy/scope.py`](../grammapy/scope.py): `ScopeNode` (a control tree — a
+  node `emits` control signals, a handler node `handles` them over its sub-tree) + `unhandled_emissions`
+  (the reachability walk: every emitted signal needs a covering handler *ancestor*, since a handler
+  scopes its descendants, not itself). `Scope.check` added to `combinators.py`.
+- The app models the withdrawal as a leaf that **emits** `needs_confirmation` when irreversible, and the
+  confirm screen as a **handler** of it. `check_reachability` admits the confirm structure and **rejects**
+  the one-screen structure on an irreversible spec (the effect escapes) — *independently of the Choice*
+  that selected the screen, so it catches a mis-built/hand-written app, not just a mis-selected one. This
+  is the algebraic-effects framing: the confirmation is a handler, "no destructive effect goes
+  unconfirmed" is reachability. Pins: `tests/test_scope.py` (6) + `tests/test_app_synthesis.py`.
+
+## Phase 2c as landed (Fold) — Phase 2 complete
+
+- New grammapy substrate [`grammapy/lattice.py`](../grammapy/lattice.py): `Lattice` (a declared join as a
+  total order — a chain, bottom→top, `join = higher-ranked`, a join-semilattice by construction so the
+  laws hold without a separate proof), `FoldItem`, `UnknownVerdict`. `Fold.check` (domain membership) +
+  `Fold.combine` (order-independent fold) in `combinators.py`.
+- The app's deontic layer now votes: irreversibility → `obligatory`, a `trusted` session → `waived`, plus
+  a `optional` baseline. `resolve_confirm` folds them under a **declared policy** (`CONFIRM_SAFETY` =
+  `waived < optional < obligatory`): a trusted session **cannot** silence a safety confirmation
+  (obligation overrides waiver), the fold is order-independent, and flipping to `CONFIRM_LENIENT` flips the
+  outcome — the winner is a *reviewable declaration*, never inferred. `_confirmation_state` now routes
+  through the fold; non-trusted behaviour is unchanged (the fold is transparent with no waiver vote).
+  Pins: `tests/test_fold.py` (6) + `tests/test_app_synthesis.py`.
+
+**All four combinators now exist in grammapy and are exercised by one app:** Choice (screen), Accumulate
+(buttons), Scope (the confirm gate as a handler over the withdrawal effect), Fold (deontic conflict).
+That is the evidence for grammapy's central bet — that safe composition reduces to these four shapes.
+
+## Do humans need the lattice math? (a design note)
+
+Recurring question: humans write software without knowing lattices — do they use a safer different rule
+set? No. They use **tacit pattern-matching that encodes the same soundness conditions and silently fails
+sometimes** (the feature-interaction bug). The split: (1) the human's *reasoning* rules ("irreversible ⇒
+confirm", "usually OK+Cancel") are real and are exactly pystrider's deontic/defeasible `REFINE` bank — we
+already mimic them. (2) The combinator-soundness layer (frame rule, semilattice, reachability) is the
+*explication of engineering taste* — "order shouldn't matter", "don't clobber shared state", "no effect
+escapes unhandled" — which humans feel but don't check, and pay for in bugs. grammapy mimics the human's
+*specification style* (deviations-from-default) and adds the *check the human omits*. The "compose by
+pattern, skip the math" option is the LLM front-end — kept, but gated by grammapy + the execution oracle.
 
 ## A ugm init-order dependency surfaced — and was fixed same day
 

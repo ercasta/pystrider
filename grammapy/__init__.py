@@ -7,11 +7,13 @@ right now it covers the channel-type substrate and the disjoint-writes check
 """
 
 from grammapy.channels import Channel, Footprint, WriteConflict, disjoint_writes
-from grammapy.combinators import Accumulate, Choice, CompositionError, Item
+from grammapy.combinators import Accumulate, Choice, Scope, Fold, CompositionError, Item
 from grammapy.guards import (
     ABSENT, Guard, GuardedProduction,
     GuardOverlap, GuardGap, GuardUnknownValue, guard_coverage,
 )
+from grammapy.scope import ScopeNode, Unhandled, unhandled_emissions
+from grammapy.lattice import Lattice, FoldItem, UnknownVerdict
 
 __all__ = [
     "Channel",
@@ -20,6 +22,7 @@ __all__ = [
     "disjoint_writes",
     "Accumulate",
     "Choice",
+    "Scope",
     "CompositionError",
     "Item",
     "ABSENT",
@@ -29,4 +32,11 @@ __all__ = [
     "GuardGap",
     "GuardUnknownValue",
     "guard_coverage",
+    "ScopeNode",
+    "Unhandled",
+    "unhandled_emissions",
+    "Fold",
+    "Lattice",
+    "FoldItem",
+    "UnknownVerdict",
 ]

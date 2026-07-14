@@ -16,8 +16,10 @@ from typing import Iterable
 
 from grammapy.channels import Footprint, WriteConflict, disjoint_writes
 from grammapy.guards import GuardedProduction, guard_coverage
+from grammapy.scope import ScopeNode, unhandled_emissions
+from grammapy.lattice import Lattice, FoldItem, UnknownVerdict
 
-__all__ = ["Item", "CompositionError", "Accumulate", "Choice"]
+__all__ = ["Item", "CompositionError", "Accumulate", "Choice", "Scope", "Fold"]
 
 
 @dataclass(frozen=True)
@@ -91,3 +93,48 @@ class Choice:
             if state in p.guard.covers():
                 return p
         raise KeyError(f"no production admits state {state!r}")
+
+
+class Scope:
+    """Binder-scoped reachability (vision.md §3.2, §3.4).
+
+    Control flow is effects: a leaf ``emits`` a control signal, a handler node ``handles`` signals over
+    its sub-tree. The shape is sound iff **every emitted signal has a covering handler ancestor** — no
+    effect escapes its scope. The algebraic-effects/handlers model, checked statically: an unhandled
+    emission is refused at design time, not discovered as an unhandled path at runtime.
+    """
+
+    @staticmethod
+    def check(root: ScopeNode) -> None:
+        """Raise ``CompositionError`` if any control signal is emitted with no covering handler ancestor."""
+        conflicts = unhandled_emissions(root)
+        if conflicts:
+            raise CompositionError("Scope", conflicts,
+                                   reason="control signals escape their scope (no covering handler)")
+
+
+class Fold:
+    """Semilattice fold (vision.md §3.4, §7.3).
+
+    Combine many contributions into one verdict through a declared ``Lattice`` join. The shape is sound
+    iff every contribution's value is in the lattice domain (the join is then defined and, because the
+    lattice is a total order, order-independent by construction). ``combine`` folds the contributions;
+    the result does not depend on their order — the property that lets independent rules vote safely.
+    """
+
+    @staticmethod
+    def check(lattice: Lattice, items: Iterable[FoldItem]) -> None:
+        """Raise ``CompositionError`` if any contribution's verdict is outside the lattice domain."""
+        domain = lattice.domain()
+        bad = [UnknownVerdict(it.value, it.label) for it in items if it.value not in domain]
+        if bad:
+            raise CompositionError("Fold", bad, reason="a contribution's verdict is not in the lattice domain")
+
+    @staticmethod
+    def combine(lattice: Lattice, items: Iterable[FoldItem]) -> str:
+        """Fold the contributions through the declared join (order-independent). Empty ⇒ the lattice
+        bottom (the join identity). Assumes ``check`` passed (all verdicts in domain)."""
+        result = lattice.bottom()
+        for it in items:
+            result = lattice.join(result, it.value)
+        return result

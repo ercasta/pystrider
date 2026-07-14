@@ -18,6 +18,10 @@ Everything but the verifier REUSES what is already built:
   * COMPOSITION of a screen's features is a grammapy `Accumulate` (Phase 1): each button is a
     footprint-declared atom, and `Accumulate.check` (the frame rule) admits the set iff their writes are
     disjoint — rejecting interference (two proceed-buttons) at design time, before any source is emitted.
+  * REACHABILITY of the withdrawal effect is a grammapy `Scope` (Phase 2b): the withdrawal EMITS a
+    `needs_confirmation` control signal when irreversible, and the confirm screen HANDLES it; `Scope.check`
+    (binder-scoped reachability) admits the app iff every emitted signal has a covering handler ancestor —
+    so an irreversible withdrawal with no gate is rejected as an escaping effect, however it was selected.
   * The REQUIRED features are DERIVED across the three domains by a small refinement bank (the mirror
     of `codegen_understand`'s `requires named_steps`): a business fact (`withdrawal is_irreversible`)
     fires a UX rule (`requires confirmation_step`) that is admitted only because the framework SUPPORTS
@@ -59,8 +63,8 @@ from dataclasses import dataclass, field
 import ugm as h
 from ugm import load_machine_rules, ask_goal
 
-from grammapy import (Accumulate, Channel, Choice, CompositionError, Footprint, Guard,
-                      GuardedProduction, Item, ABSENT)
+from grammapy import (Accumulate, Channel, Choice, CompositionError, Fold, FoldItem, Footprint,
+                      Guard, GuardedProduction, Item, Lattice, Scope, ScopeNode, ABSENT)
 
 
 # --- the succinct business spec (DATA) --------------------------------------------------------
@@ -76,6 +80,7 @@ class Spec:
     procedure: str = "withdrawal" # the business procedure this app performs
     irreversible: bool = False    # business fact: the action cannot be undone -> OBLIGES a confirm step
     buttons: tuple[str, ...] | None = None  # override the default confirm buttons (None => default ok+cancel)
+    trusted: bool = False         # a trusted session that VOTES to WAIVE the confirmation (a deontic conflict)
 
 
 # --- the ABSORBED framework surface + the cross-domain BRIDGE (DATA) ---------------------------
@@ -117,8 +122,12 @@ _F_BUSINESS = [
 ]
 # fragment 2 — DEONTIC (firm): an irreversible action carries an OBLIGATION to confirm. Obligations
 # are not defeasible by preference — this is the modality layer, distinct from a mere feature flag.
+# Deontic VERDICTS on the confirm act are voted by independent sources (obligation, waiver); a grammapy
+# Fold resolves the conflict order-independently under a declared policy (see resolve_confirm below).
 _F_DEONTIC = [
     "?spec obliged confirm when ?spec action_irreversible yes",
+    "?spec confirm_verdict obligatory when ?spec obliged confirm",     # the irreversibility vote
+    "?spec confirm_verdict waived when ?spec trusted yes",             # a trusted session's waiver vote
 ]
 # fragment 3 — the DEONTIC->FEATURE BRIDGE, gated by absorbed framework support: an obligation is
 # NEEDED as a feature only if a capability realizes it and the framework supports that capability.
@@ -145,6 +154,8 @@ def _refine_facts(spec: Spec) -> list[tuple[str, str, str]]:
     facts = [(spec.name, "is_a", "spec"), (spec.name, "procedure", spec.procedure)]
     if spec.irreversible:
         facts.append((spec.procedure, "is_irreversible", "yes"))
+    if spec.trusted:
+        facts.append((spec.name, "trusted", "yes"))
     for b in (spec.buttons or ()):                      # explicit override of the default button set
         facts.append((spec.name, "requires_confirm_button", b))
     return (facts + list(FRAMEWORK_FACTS) + list(BRIDGE)
@@ -347,17 +358,73 @@ _SCREEN_EMIT = {"one_screen": _emit_one_screen, "confirm_screen": _emit_confirm_
 Choice.check(CONFIRMATION_ENUM, SCREEN_PRODUCTIONS)   # determinacy proven once: guards partition {required, absent}
 
 
+# --- PHASE 2c: resolve conflicting deontic verdicts with a grammapy FOLD (declared, order-independent) ---
+# The confirm act can draw CONFLICTING deontic votes: irreversibility votes `obligatory`, a trusted
+# session votes `waived`, and there is always a `optional` baseline. A grammapy Fold combines them under a
+# DECLARED policy (a lattice = the reviewable choice). The safety policy `obligation_overrides` makes an
+# obligation beat a waiver — so a trusted session CANNOT silence a safety confirmation — and the fold is
+# order-independent, so it does not matter which rule fired first. Flip the lattice and the policy flips.
+CONFIRM_SAFETY = Lattice("obligation_overrides", ("waived", "optional", "obligatory"))
+CONFIRM_LENIENT = Lattice("waiver_overrides", ("obligatory", "optional", "waived"))
+
+
+def _confirm_verdicts(spec: Spec) -> list[FoldItem]:
+    """The deontic votes on the confirm act, from pystrider's reasoning: a `optional` baseline plus each
+    verdict the REFINE bank derives (`obligatory` from irreversibility, `waived` from a trusted session)."""
+    g, rules = _refine_graph(spec), load_machine_rules(REFINE)
+    items = [FoldItem("baseline", "optional")]
+    for source, verdict in (("irreversibility", "obligatory"), ("trusted_session", "waived")):
+        if ask_goal(g, f"is {spec.name} confirm_verdict {verdict}", rules) == ["yes"]:
+            items.append(FoldItem(source, verdict))
+    return items
+
+
+def resolve_confirm(spec: Spec, policy: Lattice = CONFIRM_SAFETY) -> str:
+    """Resolve the conflicting deontic verdicts into one via the grammapy Fold under `policy` (default:
+    safety — obligation overrides waiver). Order-independent by construction of the lattice."""
+    verdicts = _confirm_verdicts(spec)
+    Fold.check(policy, verdicts)               # every verdict must be in the lattice domain
+    return Fold.combine(policy, verdicts)
+
+
 def _confirmation_state(spec: Spec):
-    """The decision key's STATE from pystrider's reasoning: `required` iff the deontic obligation put
-    `confirmation_step` in the required set, else ABSENT (the silent-spec default). The one value the
-    grammapy Choice consumes — reasoning decides the state, the combinator decides the branch."""
-    return "required" if "confirmation_step" in required_features(spec) else ABSENT
+    """The decision key's STATE the grammapy Choice consumes: `required` iff the FOLDED deontic verdict is
+    `obligatory` (under the safety policy), else ABSENT. Reasoning votes, the Fold resolves, Choice branches."""
+    return "required" if resolve_confirm(spec) == "obligatory" else ABSENT
 
 
 def choose_screen(spec: Spec) -> str:
     """Select the app's screen shape via the grammapy exclusive-Choice — the sound replacement for the
     ad-hoc `emit.select`. Exactly one production fires, by construction of the partitioning guards."""
     return Choice.select(SCREEN_PRODUCTIONS, _confirmation_state(spec)).label
+
+
+# --- PHASE 2b: the confirmation gate as a grammapy SCOPE (reachability of the withdrawal effect) ------
+# The confirmation is not just a selected feature — it is a HANDLER. Model the withdrawal as a leaf that
+# EMITS the control signal `needs_confirmation` when the action is irreversible; the confirm screen is a
+# handler that HANDLES it over its sub-tree. `Scope.check` (binder-scoped reachability) admits the app iff
+# every emitted signal has a covering handler ANCESTOR — so an irreversible withdrawal with no confirm
+# gate is rejected at design time (the effect escapes), independently of how the screen was chosen. This
+# is the tacit human rule "no destructive effect goes unconfirmed", made a structural, checkable property.
+CONFIRM_SIGNAL = "needs_confirmation"
+
+
+def app_scope_tree(spec: Spec, screen: str) -> ScopeNode:
+    """The app's control tree: the withdrawal leaf EMITS `needs_confirmation` iff irreversible; the
+    confirm screen (when present) HANDLES it over its sub-tree. The structure `Scope.check` reasons over."""
+    perform = ScopeNode.of("perform_withdrawal",
+                           emits=[CONFIRM_SIGNAL] if spec.irreversible else [])
+    if screen == "confirm_screen":
+        gate = ScopeNode.of("confirm_screen", handles=[CONFIRM_SIGNAL], children=[perform])
+        return ScopeNode.of("WithdrawApp", children=[gate])
+    return ScopeNode.of("WithdrawApp", children=[perform])
+
+
+def check_reachability(spec: Spec, screen: str) -> None:
+    """grammapy Scope gate: raise `CompositionError` unless every control effect the app emits has a
+    covering handler — the irreversible withdrawal's `needs_confirmation` must be gated by a confirm
+    handler. Certifies the STRUCTURE handles the effect, independently of the Choice that selected it."""
+    Scope.check(app_scope_tree(spec, screen))
 
 
 # --- VERIFY by DRIVING the app (the feasibility crux — concrete-exec scaled to a UI) -----------
@@ -434,7 +501,8 @@ def synthesize(spec: Spec) -> Synthesis:
     required = required_features(spec)
     screen = choose_screen(spec)
     try:
-        source = _SCREEN_EMIT[screen](spec)
+        check_reachability(spec, screen)          # grammapy Scope: the effect must be handled (reachability)
+        source = _SCREEN_EMIT[screen](spec)       # grammapy Accumulate gate lives inside the confirm emit
         composed, comp_err = True, None
     except CompositionError as e:                 # grammapy refused the composition -> no source emitted
         source, composed, comp_err = "", False, str(e)
@@ -516,6 +584,33 @@ def main() -> None:
     print("\n  This is the seam: pystrider's preference decides WHICH buttons; grammapy's frame rule")
     print("  (disjoint_writes) admits the set only if they compose - rejecting a broken screen BEFORE")
     print("  emission, naming the shared channel and both features, instead of a silent runtime bug.")
+
+    print("\nPART 5 - grammapy SCOPE: the withdrawal EFFECT must be handled (reachability)\n")
+    strict = Spec(name="withdraw_spec", irreversible=True)
+    print(f"  irreversible withdrawal EMITS the control signal {CONFIRM_SIGNAL!r}.")
+    print(f"  chosen structure (confirm_screen handles it):")
+    check_reachability(strict, "confirm_screen")
+    print(f"      Scope.check -> admitted (the effect has a covering handler ancestor)\n")
+    print(f"  force the ONE-screen structure on the SAME irreversible spec (a mis-built app):")
+    try:
+        check_reachability(strict, "one_screen")
+    except CompositionError as e:
+        for line in str(e).splitlines():
+            print(f"      {line}")
+    print("\n  Scope catches the escaping effect INDEPENDENTLY of the Choice that selected the screen -")
+    print("  the tacit human rule 'no destructive action goes unconfirmed', made a structural guarantee.")
+
+    print("\nPART 6 - grammapy FOLD: resolve conflicting deontic verdicts by a DECLARED policy\n")
+    conflict = Spec(name="withdraw_spec", irreversible=True, trusted=True)
+    print(f"  irreversible + trusted session -> conflicting votes on `confirm`:")
+    print(f"      {[(it.label, it.value) for it in _confirm_verdicts(conflict)]}")
+    print(f"  fold under SAFETY policy {CONFIRM_SAFETY.order}:")
+    print(f"      -> {resolve_confirm(conflict, CONFIRM_SAFETY)}  (obligation overrides the waiver: a trusted")
+    print(f"         session CANNOT silence a safety confirmation) -> screen: {choose_screen(conflict)}")
+    print(f"  fold under LENIENT policy {CONFIRM_LENIENT.order}:")
+    print(f"      -> {resolve_confirm(conflict, CONFIRM_LENIENT)}  (same votes, a different DECLARED policy -> the waiver wins)")
+    print("\n  The fold is order-independent (the semilattice law), so it does not matter which rule voted")
+    print("  first; and WHICH verdict wins is a reviewable DECLARATION (the lattice), never inferred.")
 
     print("\nCOMPOSITION - every line above came from a SEPARATE knowledge fragment (business, deontic,")
     print("bridge, preference), and the feature set is admitted by grammapy's proven Accumulate, not")
