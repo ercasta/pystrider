@@ -11,8 +11,10 @@ import pytest
 from experiments.app_synthesis import (
     Spec, required_features, requirement_trace, synthesize,
     verify_by_pilot, confirm_buttons, confirm_button_trace,
+    compose_confirm_screen, _affirmative_of,
     _emit_one_screen, _emit_confirm_screen,
 )
+from grammapy import CompositionError
 
 
 def test_lenient_spec_requires_nothing_and_picks_the_compact_app():
@@ -107,6 +109,43 @@ def test_emitted_app_is_syntactically_real_and_self_contained():
     ns: dict = {}
     exec(compile(src, "<test>", "exec"), ns)
     assert "WithdrawApp" in ns and "ConfirmScreen" in ns
+
+
+# --- Phase 1: composition through grammapy's Accumulate (footprint disjointness) ---------------
+
+def test_default_button_set_composes_through_grammapy():
+    items = compose_confirm_screen(Spec(name="s", irreversible=True))   # no raise == admitted
+    writes = {str(c) for it in items for c in it.footprint.writes}
+    assert writes == {"confirm.button.ok", "confirm.button.cancel", "confirm.submit"}
+
+
+def test_two_proceed_buttons_are_rejected_at_design_time():
+    # ok and yes are both affirmative -> both bind `confirm.submit` -> grammapy refuses the composition.
+    with pytest.raises(CompositionError) as ctx:
+        compose_confirm_screen(Spec(name="s", irreversible=True, buttons=("ok", "yes")))
+    msg = str(ctx.value)
+    assert "confirm.submit" in msg                 # the shared channel is named
+    assert "button ok" in msg and "button yes" in msg   # both offending features are named
+
+
+def test_synthesize_records_a_composition_rejection_and_emits_nothing():
+    bad = synthesize(Spec(name="withdraw_spec", irreversible=True, buttons=("ok", "yes")))
+    assert bad.composed is False
+    assert bad.source == "" and bad.verify is None        # no source emitted, no app driven
+    assert "confirm.submit" in bad.composition_error
+
+
+def test_synthesize_marks_a_wellformed_app_as_composed():
+    good = synthesize(Spec(name="withdraw_spec", irreversible=True))
+    assert good.composed is True and good.composition_error is None
+    assert good.verify.performed and good.verify.ok
+
+
+def test_affirmative_button_drives_the_emitted_dismiss():
+    # an overridden affirmative (`yes`) must be the id the emitted screen proceeds on.
+    spec = Spec(name="s", irreversible=True, buttons=("yes", "cancel"))
+    assert _affirmative_of(spec) == "yes"
+    assert 'event.button.id == "confirm-yes"' in _emit_confirm_screen(spec)
 
 
 if __name__ == "__main__":

@@ -56,6 +56,7 @@ import ugm as h
 from ugm import load_machine_rules, ask_goal
 
 from pystrider.emit import Candidate, select, Selection
+from grammapy import Accumulate, Channel, CompositionError, Footprint, Item
 
 
 # --- the succinct business spec (DATA) --------------------------------------------------------
@@ -196,6 +197,44 @@ def confirm_button_trace(spec: Spec, button: str) -> list[str]:
                     load_machine_rules(REFINE))
 
 
+# --- PHASE 1: compose the confirmation screen through grammapy's Accumulate (footprint disjointness) ---
+# The defeasible preference (above) decides WHICH buttons; grammapy decides whether that set COMPOSES
+# without interference — the seam between pystrider's reasoning and grammapy's sound-composition algebra,
+# now that grammapy is in-repo. Each button is a footprint-declared ATOM: it writes its own widget slot
+# `confirm.button.<id>`, and an AFFIRMATIVE button additionally binds the shared PROCEED action
+# `confirm.submit`. The screen is an `Accumulate` of these atoms; `Accumulate.check` (the frame rule,
+# `disjoint_writes`) admits the set iff the writes are pairwise disjoint — so it REJECTS, at design time,
+# a button set with two proceed-buttons (both claiming `confirm.submit`) instead of emitting an
+# ambiguous screen. This is the additive, interaction-safe property the scaling thesis rests on, on a
+# real second domain, using grammapy code that already exists and is tested.
+AFFIRMATIVE = frozenset({"ok", "yes", "proceed", "confirm"})   # buttons that bind the proceed action
+
+
+def _button_atom(b: str) -> Item:
+    """One confirmation button as a grammapy atom: it writes its own widget slot, and — if it is an
+    affirmative (proceed) button — the shared `confirm.submit` action slot, of which exactly one is
+    well-formed. `label` is what a rejection message shows the user."""
+    writes = [Channel(f"confirm.button.{b}")]
+    if b in AFFIRMATIVE:
+        writes.append(Channel("confirm.submit"))
+    return Item(label=f"button {b}", footprint=Footprint.of(writes=writes))
+
+
+def compose_confirm_screen(spec: Spec) -> list[Item]:
+    """Compose the derived button set through grammapy: build one atom per button and run
+    `Accumulate.check`. Raises `CompositionError` (naming the shared channel + both buttons) if two
+    buttons collide on a write slot — the design-time non-interference gate. Returns the checked atoms."""
+    items = [_button_atom(b) for b in _ordered_buttons(spec)]
+    Accumulate.check(items)          # the frame rule: admit iff writes are pairwise disjoint
+    return items
+
+
+def _affirmative_of(spec: Spec) -> str:
+    """The single proceed-button of a COMPOSED (checked) button set — the id the emitted screen
+    dismisses `True` on. Defaults to `ok` when the set names no affirmative (a degenerate confirm)."""
+    return next((b for b in _ordered_buttons(spec) if b in AFFIRMATIVE), "ok")
+
+
 # --- the emit tool: pre-minted app SKELETONS, each carrying its own source template ------------
 # Rules cannot MINT an app (the existential wall). So the tool pre-mints a bounded pool of app
 # skeletons; the CNL rules only SELECT the realizing one. Each skeleton emits real Textual source
@@ -242,10 +281,10 @@ _HANDLER_DIRECT = '''\
             self._perform(amount)
 '''
 
-def _confirm_screen_block(buttons: list[str]) -> str:
+def _confirm_screen_block(buttons: list[str], affirmative: str) -> str:
     """Emit the confirmation ModalScreen with exactly the DERIVED buttons (the defeasible preference,
-    materialized). The affirmative button is `confirm-ok` (proceed); any other dismisses as abort — so
-    the same one-line `dismiss` handles any button subset the preference layer produces."""
+    materialized). The affirmative button — the single proceed atom grammapy admitted — dismisses
+    `True`; any other dismisses as abort, so one `dismiss` line handles any admitted button subset."""
     yields = "\n".join(f'        yield Button("{b.title()}", id="confirm-{b}")' for b in buttons)
     return (
         "from textual.screen import ModalScreen\n\n\n"
@@ -257,7 +296,7 @@ def _confirm_screen_block(buttons: list[str]) -> str:
         '        self.app.events.append("gate_shown")\n\n'
         "    def on_button_pressed(self, event: Button.Pressed) -> None:\n"
         "        event.stop()\n"
-        '        self.dismiss(event.button.id == "confirm-ok")\n'
+        f'        self.dismiss(event.button.id == "confirm-{affirmative}")\n'
     )
 
 
@@ -281,9 +320,11 @@ def _emit_one_screen(spec: Spec) -> str:
 
 
 def _emit_confirm_screen(spec: Spec) -> str:
-    """The gated app: input -> OK -> validate -> push a ModalScreen (with the DERIVED buttons) ->
-    ok/cancel -> withdraw. The button set comes from the defeasible preference, not the template."""
-    return (_APP_HEADER + "\n" + _confirm_screen_block(_ordered_buttons(spec))
+    """The gated app: input -> OK -> validate -> push a ModalScreen (with the grammapy-COMPOSED buttons)
+    -> proceed/abort -> withdraw. `compose_confirm_screen` is the design-time gate: it raises
+    `CompositionError` on a malformed button set, so emission only ever runs on an admitted composition."""
+    compose_confirm_screen(spec)      # grammapy Accumulate gate — raises before any source is produced
+    return (_APP_HEADER + "\n" + _confirm_screen_block(_ordered_buttons(spec), _affirmative_of(spec))
             + "\n\n" + _APP_BODY + "\n" + _HANDLER_CONFIRM)
 
 
@@ -353,6 +394,8 @@ class Synthesis:
     selection: Selection
     source: str
     verify: VerifyResult | None
+    composed: bool                       # grammapy admitted the feature composition (Accumulate check)
+    composition_error: str | None        # the design-time rejection message, if it did not
     candidates: list[Candidate] = field(default_factory=list)
 
     @property
@@ -361,15 +404,20 @@ class Synthesis:
 
 
 def synthesize(spec: Spec) -> Synthesis:
-    """spec -> DERIVE required features across three domains -> SELECT the realizing graded-best app
-    (productized `emit.select`) -> EMIT real Textual source -> VERIFY by DRIVING it. The synthesis
-    loop, one firmware, now with an app as the target and a Pilot as the concrete oracle."""
+    """spec -> DERIVE required features -> SELECT the realizing graded-best app (`emit.select`) ->
+    COMPOSE its features through grammapy (Accumulate: reject interfering sets at design time) ->
+    EMIT real Textual source -> VERIFY by DRIVING it. The synthesis loop with pystrider reasoning as
+    the front-end and grammapy's sound-composition algebra as the emit gate, one repo."""
     required = required_features(spec)
     sel = select(spec.name, required, CANDIDATES)
-    source = sel.winner_candidate.emit(spec) if sel.winner_candidate else ""
+    try:
+        source = sel.winner_candidate.emit(spec) if sel.winner_candidate else ""
+        composed, comp_err = True, None
+    except CompositionError as e:                 # grammapy refused the composition -> no source emitted
+        source, composed, comp_err = "", False, str(e)
     vr = verify_by_pilot(source, spec) if source else None
-    return Synthesis(spec=spec, required=required, selection=sel, source=source,
-                     verify=vr, candidates=CANDIDATES)
+    return Synthesis(spec=spec, required=required, selection=sel, source=source, verify=vr,
+                     composed=composed, composition_error=comp_err, candidates=CANDIDATES)
 
 
 # --- live walkthrough -------------------------------------------------------------------------
@@ -429,9 +477,24 @@ def main() -> None:
     print(f"      drive cancel -> events: {vr_cancel.events}  performed={vr_cancel.performed}  "
           f"ok={vr_cancel.ok}  (gated, aborted safely)")
 
+    print("\nPART 4 - grammapy composes the feature set, and REJECTS interference at design time\n")
+    ok = synthesize(Spec(name="withdraw_spec", irreversible=True))
+    print(f"  default confirm set {_ordered_buttons(ok.spec)} -> grammapy Accumulate: composed={ok.composed}"
+          f"  (writes {sorted(str(c) for it in compose_confirm_screen(ok.spec) for c in it.footprint.writes)})")
+    print(f"      -> emitted + driven: performed={ok.verify.performed}  ok={ok.verify.ok}\n")
+
+    bad = synthesize(Spec(name="withdraw_spec", irreversible=True, buttons=("ok", "yes")))
+    print(f"  malformed set {_ordered_buttons(bad.spec)} -> two proceed-buttons both bind `confirm.submit`:")
+    print(f"      grammapy Accumulate: composed={bad.composed}  (NO source emitted, NO app driven)")
+    for line in (bad.composition_error or "").splitlines():
+        print(f"        {line}")
+    print("\n  This is the seam: pystrider's preference decides WHICH buttons; grammapy's frame rule")
+    print("  (disjoint_writes) admits the set only if they compose - rejecting a broken screen BEFORE")
+    print("  emission, naming the shared channel and both features, instead of a silent runtime bug.")
+
     print("\nCOMPOSITION - every line above came from a SEPARATE knowledge fragment (business, deontic,")
-    print("bridge, preference), concatenated with no cross-edits; the bridges are the only join. That")
-    print("additivity is the property the productized version must keep as the fragment count grows.")
+    print("bridge, preference), and the feature set is admitted by grammapy's proven Accumulate, not")
+    print("ad-hoc glue. That additivity is the property productization must keep as fragments grow.")
 
 
 if __name__ == "__main__":
