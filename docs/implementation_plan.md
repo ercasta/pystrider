@@ -177,11 +177,29 @@ obligation, reached through the framework bridge). Both before+after apps are Pi
 re-derives to an empty delta (determinism). This is the "policy change → verified code change" artifact,
 made runnable. Suite 288 → 295.
 
-**Phase 3 NEXT (roadmap work items):** the REFUSAL UX (an uncovered spec region → a named gap "no
-fragment provides X; a KB entry of shape Y would fill it" — held line #3, and the on-ramp to Track C /
-the hole mode 2 hands an LLM); deepen expansion (more deontic rules / bridges / decision points on the
-Phase 2 harness); a SECOND scaffold family generated from a Track-C fragment KB without touching engine
-code (proof the fragment KB, not the probe, does the work — depends on Track C).
+**§12 `resolve` COLLAPSED TO CNL (2026-07-14)** — prompted by a "are we using CNL, not hardcoding
+Python?" audit. The four grammapy combinators were already CNL (`grammapy/_cnl.py`); §12 constraint
+resolution was the one reasoning-shaped Python holdout (`survivors = [p for p in productions if req <=
+p.provides]`). Now `grammapy/resolution.py` derives survivorship via `_RESOLVE_RULES` (a production is
+`unmet_req` if a required capability is absent from its `provides`, stratified negation over the join;
+`survives` iff not unmet), run read-only through `_cnl.derive`; `resolve` only DISPOSES the CNL-derived
+survivor set into Forced/Defaulted/Surfaced/Rejected (the same Python reconstruction the other
+combinators do). Public API + messages preserved; all resolution/app_synthesis/rederivation tests green.
+The "types are facts, compatibility a rule" half of the bridges-vs-channels collapse, finished. Also
+fixed **rulestrider's oracle** (`experiments/rulestrider.py::_intended`) — was Python boolean policy
+logic, now `derive(attrs, FIXED_POLICY)` (CNL-to-CNL differential, no policy logic in Python).
+
+**REFUSAL UX DONE** — `experiments/refusal.py` (+ `tests/test_refusal.py`, 6). An uncovered spec region
+becomes a NAMED `Gap`, not a crash or a guess (held line #3): grammapy's `Rejected`/`Surfaced` (now
+CNL-derived) become an `unprovided` gap ("decision point P requires X, no production provides it — to
+fill, add `Production(provides={X})`", the authoring on-ramp) or an `ambiguous` gap ("declare a
+preference"). `synthesize_or_refuse(spec, requires)` returns a verified `Synthesis` OR a `Refusal` value
+— refusal as a first-class OUTCOME of generation, the alternative to emission and exactly where mode-2
+hands the named hole to an LLM. Suite 295 → 302.
+
+**Phase 3 NEXT (roadmap work items):** deepen expansion (more deontic rules / bridges / decision points
+on the Phase 2 harness); a SECOND scaffold family generated from a Track-C fragment KB without touching
+engine code (proof the fragment KB, not the probe, does the work — depends on Track C).
 
 The pre-convergence pystrider loop (below) is unchanged and green — the substrate this line builds on.
 

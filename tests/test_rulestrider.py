@@ -60,6 +60,15 @@ def test_detection_also_catches_under_firing():
     assert failures[0].derived is False and failures[0].expected is True
 
 
+def test_the_oracle_is_cnl_derived_not_hardcoded():
+    # the intended outcome is DERIVED from the FIXED (CNL) policy, not a Python restatement — so the
+    # hand-authored suite's expected outcomes are consistent with the intended rule bank, CNL-to-CNL.
+    from experiments.rulestrider import _intended, derive, FIXED_POLICY
+    for sc in SUITE:
+        assert _intended(sc.attrs) == sc.expected              # suite agrees with the intended CNL policy
+        assert _intended(sc.attrs) == derive(sc.attrs, FIXED_POLICY)   # and it IS that derivation
+
+
 def test_full_sweep_enumerates_the_declared_space_with_intended_outcomes():
     sweep = full_sweep()
     assert len(sweep) == 2 ** 4                         # four boolean attributes -> 16 total assignments

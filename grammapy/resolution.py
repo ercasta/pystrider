@@ -22,6 +22,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Union
 
+from ._cnl import derive as _cnl_derive
+
 __all__ = [
     "Production", "DecisionPoint",
     "Forced", "Defaulted", "Surfaced", "Rejected", "Resolution", "resolve",
@@ -90,15 +92,42 @@ class Rejected:
 Resolution = Union[Forced, Defaulted, Surfaced, Rejected]
 
 
+# The narrowing REASONING — "which productions provide all the required capabilities" — is Datalog-shaped
+# (the capability-compatibility the bridges-vs-channels analysis said should be a rule, not Python: "types
+# are facts, compatibility a rule"). So it is authored as a CNL rule-module over a ugm graph and run
+# read-only, exactly like the four combinators' checks (grammapy/_cnl.py), rather than a Python
+# set-containment. A production is UNMET if some required capability is absent from what it `provides`
+# (stratified negation over the join); it SURVIVES iff it is not unmet. `resolve` then disposes the
+# CNL-derived survivor set into the §12 outcome — the same Python reconstruction the other combinators do.
+_RESOLVE_RULES = "\n".join([
+    "?p unmet_req yes when ?p is_a production and requirement requires ?cap and not ?p provides ?cap",
+    "?p survives yes when ?p is_a production and not ?p unmet_req yes",
+])
+
+
+def _survivors(point: DecisionPoint, req: frozenset[str]) -> list[Production]:
+    """The productions that survive `req`, derived by the CNL rule-module (read-only). Returned in
+    declared production order (so a Forced ``survivors[0]`` is deterministic)."""
+    facts: list[tuple[str, str, str]] = []
+    for p in point.productions:
+        facts.append((p.label, "is_a", "production"))
+        facts.extend((p.label, "provides", cap) for cap in p.provides)
+    facts.extend(("requirement", "requires", cap) for cap in req)
+    answers = _cnl_derive(facts, _RESOLVE_RULES, "who survives yes")
+    survived = {a.split(" ", 1)[0] for a in answers}        # subject of each "?p survives yes" answer
+    return [p for p in point.productions if p.label in survived]   # filters the "(no …)" empty message
+
+
 def resolve(point: DecisionPoint, requires: Iterable[str]) -> Resolution:
     """Resolve one decision point against a cross-cutting requirement (a set of required capabilities).
 
     Forced where a requirement leaves exactly one production; Defaulted where nothing bites; a declared
     preference tie-breaks several survivors (still Forced, reason ``"preference"``); Surfaced where
-    several survive with no preference; Rejected where none provides the requirement.
+    several survive with no preference; Rejected where none provides the requirement. The survivor set is
+    derived in CNL (``_RESOLVE_RULES``); this function only disposes it into the §12 outcome.
     """
     req = frozenset(requires)
-    survivors = [p for p in point.productions if req <= p.provides]
+    survivors = _survivors(point, req)
     if not survivors:
         return Rejected(point.name, req)
     if not req:                                         # spec silent on every relevant capability

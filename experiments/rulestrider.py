@@ -63,9 +63,11 @@ class Scenario:
 
 
 def _intended(attrs: dict[str, str]) -> bool:
-    """The INTENDED policy as a reference oracle: (premium AND big_spender) OR has_coupon OR staff."""
-    yes = lambda a: attrs.get(a) == "yes"
-    return (yes("premium") and yes("big_spender")) or yes("has_coupon") or yes("staff")
+    """The INTENDED outcome — DERIVED from the FIXED policy (CNL), not restated as Python boolean logic.
+    So the oracle is itself a rule bank: 'wrong outcome' means the AUTHORED bank diverges from the
+    INTENDED bank on a swept scenario (a CNL-to-CNL differential), and no policy logic lives in Python.
+    (`FIXED_POLICY` = the corrected loyalty rule + the unchanged promo/staff rules — all CNL.)"""
+    return derive(attrs, FIXED_POLICY)
 
 
 SUITE: list[Scenario] = [
