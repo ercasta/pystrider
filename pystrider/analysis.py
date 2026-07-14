@@ -167,9 +167,8 @@ def _detect(intake: Intake, hypothesis: dict[str, str], *,
     if not own:
         _ensure_facts(detect_kb, extra)                    # shared value vocab (e.g. obj), monotone
     confirmed = [t for t in targets
-                 if suppose(detect_kb, rg, assumptions=assumptions,
-                            predictions=[(pred, t, obj)],
-                            commit=False, focus_scope=focus).status == CONFIRMED]
+                 if suppose(detect_kb, assumptions, [(pred, t, obj)],
+                            rules=rg, commit=False, focus_scope=focus).status == CONFIRMED]
     if not confirmed:
         return []
 

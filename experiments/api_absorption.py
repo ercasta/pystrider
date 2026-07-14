@@ -84,9 +84,8 @@ def analyze_with_absorption(src: str, receiver_types: dict[str, str]) -> list[st
     kb = _kb_from(ik, extra)
     rg = _rule_graph()
     hits = [site for site in ik.attributes
-            if suppose(kb, rg, assumptions=[],
-                       predictions=[("raises", site, "attribute_error")],
-                       commit=False).status == CONFIRMED]
+            if suppose(kb, [], [("raises", site, "attribute_error")],
+                       rules=rg, commit=False).status == CONFIRMED]
     return [ik.label_of.get(s, s) for s in hits]
 
 

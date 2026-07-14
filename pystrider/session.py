@@ -151,9 +151,8 @@ class Session:
         focus = self.focus_for(caller) | self.focus_for(callee) | frozenset(self._link_nodes)
 
         confirmed = [site for site in callee.attributes
-                     if suppose(self.graph, rg, assumptions=assumptions,
-                                predictions=[("raises", site, "attribute_error")],
-                                commit=False, focus_scope=focus).status == CONFIRMED]
+                     if suppose(self.graph, assumptions, [("raises", site, "attribute_error")],
+                                rules=rg, commit=False, focus_scope=focus).status == CONFIRMED]
         if not confirmed:
             return []
 

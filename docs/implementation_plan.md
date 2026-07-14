@@ -16,17 +16,19 @@ plus §12 cross-cutting constraint resolution — **RESOLVES and GATES** every d
 emitted app is **verified by DRIVING it** (Textual Pilot). Full design, status, and the phased plan:
 **[`grammapy_convergence.md`](grammapy_convergence.md) — read that first for this line.**
 
-**Status: Phases 1–4 DONE (suite 228 green).** All four combinators are built and exercised by one app
-(`experiments/app_synthesis.py` — synthesize a runnable Textual cash-withdrawal app across bridged
-business/framework/UX vocabularies, verified by driving). §12 resolution unifies the four decision points
-under one `DeviationSpec` (`assemble`), and **emission is now AST-built** — each production is an `ast`
-fragment, `assemble_ast(dev)` composes them into one `ast.Module`, unparsed to source (string templates
-retired; `ast.unparse` round-trips stable). **Next: Phase 5 — external generator front-end** drafts the
-deviation spec, grammapy guarantees + emits, pystrider drive-verifies + checks footprint honesty; this is
-where the deferred **bridges-vs-channels** decision and **libcst** (round-trip of user-owned atom bodies)
-become load-bearing (see the convergence doc).
+**Status: Phases 1–4 + Phase 5 step 7 DONE (suite 236 green).** All four combinators are built and
+exercised by one app (`experiments/app_synthesis.py` — synthesize a runnable Textual cash-withdrawal app
+across bridged business/framework/UX vocabularies, verified by driving). §12 resolution unifies the four
+decision points under one `DeviationSpec` (`assemble`); **emission is AST-built** (`assemble_ast(dev)`
+composes `ast` fragments into an `ast.Module`, unparsed; string templates retired); and **footprint
+honesty is checked by execution** (`experiments/footprint_honesty.py` — grammapy admits by *declared*
+footprints, pystrider's concrete-exec oracle certifies the declarations and rejects a composition grammapy
+admitted from a dishonest atom). **Next: Phase 5 steps 5–6 — external generator front-end** drafts the
+deviation spec; this is where the deferred **bridges-vs-channels** decision and **libcst** (round-trip of
+user-owned atom bodies) become load-bearing (see the convergence doc).
 
-**Run:** `./.venv/Scripts/python.exe -m pytest -q` (228 green) · `python -m experiments.app_synthesis`
+**Run:** `./.venv/Scripts/python.exe -m pytest -q` (236 green) · `python -m experiments.app_synthesis`
+· `python -m experiments.footprint_honesty`
 (the walkthrough) · combinator tests: `tests/test_disjointness.py` (Accumulate), `test_choice.py`,
 `test_scope.py`, `test_fold.py`, `test_resolution.py` (§12).
 
@@ -116,6 +118,13 @@ same firmware; still a probe (like `state_threading.py`), not productized. See `
 
 ## ugm dependencies (verify at session start — they were in flux)
 
+- **`rules` is KEYWORD-ONLY on `suppose`/`chain_sip` (ugm "firmware over ISA", `0709c74`, 2026-07-14).**
+  The signature is now `suppose(fact_g, assumptions, predictions, *, rules=None, …)`; `ask_goal` is
+  unchanged (positional `rules`). pystrider's `suppose(kb, rg, assumptions=…)` call sites were adapted to
+  `suppose(kb, assumptions, predictions, rules=rg, …)` (`analysis.py`, `session.py`,
+  `experiments/api_absorption.py`). If a cold suite shows `TypeError: suppose() got multiple values for
+  argument 'assumptions'`, ugm changed the firmware signature again — re-check against `import ugm;
+  inspect.signature(ugm.suppose)`.
 - **`suppose(commit=False)` — LANDED + ADOPTED (feedback #6).** Read-only suppose: inks nothing,
   returns in-scope `derived` for inspection. `analyze` now builds one KB and reuses it read-only
   across every site (the old rebuild-per-site dance is gone), and a `Session` analyzes against a

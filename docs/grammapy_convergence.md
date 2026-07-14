@@ -3,8 +3,11 @@
 **Status (2026-07-14):** grammapy absorbed as an in-repo top-level peer package (`grammapy/`, source
 commit `3f05ccc`, history still on `ercasta/grammapy`). **Phases 1–4 landed** — all four combinators
 built and exercised by one app, unified under one `DeviationSpec` (§12), and emission is now **AST-built**
-(each production an `ast` fragment, assembled + unparsed; string templates retired). Full suite 228 green.
-**Next: Phase 5** — external generator front-end drafts the deviation spec.
+(each production an `ast` fragment, assembled + unparsed; string templates retired). **Phase 5 step 7
+(footprint honesty checked by execution) landed** — pystrider's concrete-exec oracle certifies grammapy's
+declared footprints, and rejects a composition grammapy admitted from a dishonest declaration. Full suite
+236 green. **Next: Phase 5 steps 5–6** — the external generator front-end (where bridges-vs-channels and
+libcst become load-bearing).
 
 ## Why they converge
 
@@ -61,7 +64,7 @@ not built. The withdrawal app forces all four, so it is the natural forcing func
 | **2c** | Build `Fold` (declared commutative/associative join), driven by deontic conflict (obligation vs waiver) | **`Fold` built** | **done** |
 | **3** | pystrider's reasoning emits a *cross-cutting constraint*; grammapy §12 resolves each decision point; all four points unified under one `DeviationSpec` | **§12 resolver + `assemble`** | **done** |
 | **4** | AST emission (stdlib `ast`) — productions emit fragments, grammapy assembles; retire string templates | grammapy roadmap step 5 | **done** |
-| **5** | External generator front-end drafts the deviation spec; grammapy guarantees + emits; pystrider drive-verifies + checks footprint honesty | steps 5–7 | |
+| **5** | External generator front-end drafts the deviation spec; grammapy guarantees + emits; pystrider drive-verifies + checks footprint honesty | steps 5–7 | **step 7 done** (footprint honesty); steps 5–6 (generator front-end) open |
 
 ## Phase 2a as landed (Choice)
 
@@ -159,7 +162,45 @@ app as an **`ast` fragment tree** assembled into one `ast.Module`, unparsed to s
   round-trippable formatting preservation; libcst becomes load-bearing only at Phase 5, for round-tripping
   *user-owned atom bodies*.
 
-## Phase 4 — AST emission: the concrete plan (as executed)
+## Phase 5 step 7 as landed (footprint honesty checked by execution)
+
+grammapy's non-interference guarantee is decided entirely from **declared** footprints — `Accumulate.check`
+admits a set of atoms iff their declared `writes` are pairwise disjoint. That guarantee is only as true as
+the declarations: an atom that *declares* it writes `confirm.button.cancel` but at runtime *also* writes
+`confirm.submit` is dishonest, and grammapy — reading only the declaration — admits a composition that
+actually collides. Nothing on grammapy's side checks the declaration; that is precisely pystrider's job.
+
+New probe [`experiments/footprint_honesty.py`](../experiments/footprint_honesty.py) + pins
+[`tests/test_footprint_honesty.py`](../tests/test_footprint_honesty.py) (8):
+
+- An executable **`Atom`** is a grammapy `Item` (label + declared `Footprint`) plus a `body` fragment that
+  writes the channels it actually touches into an instrumented `RecordingStore` (keyed by channel name).
+- **`footprint_honest(atom)`** EXECUTES the atom and reports the writes it made *outside* its declared
+  footprint (observed ⊄ declared ⇒ dishonest). Honesty is an execution property — no static reading of a
+  declaration can reveal a write the declaration omits.
+- **`verify_composition(atoms)`** is the two-stage step-7 gate: (1) grammapy `Accumulate.check` over the
+  DECLARED footprints (the guarantee as grammapy issues it), then (2) certify each atom honest and re-run
+  the disjointness rule over the OBSERVED writes. **The finding: execution rejects a composition grammapy
+  admitted** — `{ok, cancel}` with a dishonest `cancel` passes design-time disjointness (declared
+  footprints don't collide) but execution finds the real `confirm.submit` collision and names it. Design-
+  time composition trusts the declarations; pystrider's concrete-exec oracle verifies them.
+- **This is the concrete evidence for the deferred bridges-vs-channels decision**, not a resolution of it:
+  honesty is only checkable because a channel *name* maps to an observable runtime effect (here, a store
+  key). Grounding the real app's atoms the same way — mapping `confirm.submit` to an observable Textual
+  effect — is exactly what typing pystrider's untyped bridges as grammapy channel contracts would buy.
+
+**Still open in Phase 5 (steps 5–6):** the external generator front-end that drafts the deviation spec /
+fills atom-body AST holes (the LLM front-end), and — load-bearing there — the **bridges-vs-channels**
+decision and **libcst** (round-trip of user-owned atom bodies).
+
+## A second ugm firmware change surfaced — `rules` became keyword-only (adapted 2026-07-14)
+
+The user's concurrent ugm work (the "firmware over ISA" commits, `0709c74`) made `rules` a **keyword-only**
+argument on `suppose` and `chain_sip` (signature `suppose(fact_g, assumptions, predictions, *, rules=None,
+…)`); `ask_goal` is unchanged (still positional `rules`). This broke pystrider's three `suppose(kb, rg,
+assumptions=…)` call sites (74 tests, `TypeError: suppose() got multiple values for argument 'assumptions'`).
+Adapted by passing `assumptions`/`predictions` positionally and `rules=rg` as a keyword — a mechanical,
+behaviour-preserving fix at `analysis.py`, `session.py`, and `experiments/api_absorption.py`. Suite 236 green.
 
 **Goal.** Retire the string-template emit (in `experiments/app_synthesis.py`: the `_APP_HEADER` /
 `_APP_BODY` / `_HANDLER_DIRECT` / `_HANDLER_CONFIRM` string constants, `_confirm_screen_block`, and the
