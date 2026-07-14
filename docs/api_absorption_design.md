@@ -114,6 +114,39 @@ today a wall of `unknown_expr`.
 
 ---
 
+## 4b. Bridge rules — the vocabulary crosswalk between business terms and code/API names
+
+Business rules and code never share a vocabulary: the policy says *"premium member"*, the code says
+`rank == "gold"`. conformance-strider's first cut CHEATED — policy and code both used `tier`/`total`/
+`gold`, so the join was by fiat. The fix is a first-class **bridge**: a small set of declarative facts
+that map business terminology onto code (or absorbed-library) names, and nothing else connects the two
+worlds.
+
+```
+member_tier    bridges_attr     rank             # business attribute -> code parameter
+order_spend    bridges_attr     amount
+premium        bridges_value    gold             # business enum value -> code constant
+discount_true  bridges_outcome  gets_discount    # code return -> business predicate
+discount_false bridges_outcome  no_discount
+```
+
+The split that keeps this honest w.r.t. ugm's §8 comparison boundary:
+
+- **The bridge is declarative data** (facts in the graph — so *"premium bridged to gold"* is visible in
+  the proof).
+- **The §8 calculator consults the bridge** to translate a business-term scenario into code inputs
+  before grounding each comparison (arithmetic stays in the tool): `member_tier=premium` →(bridges_attr,
+  bridges_value)→ `rank=gold`; `order_spend=75` → `amount=75`.
+- **A genuine bridge RULE** maps the code's outcome back to the business predicate, so the crosswalk is
+  in the derivation, not just the harness:
+  `?sc code_outcome ?biz when ?sc code_return ?cr and ?cr bridges_outcome ?biz`.
+
+The payoff is composability the hardcoded version can't have: swap the bridge and the same policy
+re-targets a different implementation; the same business rule is checked against many codebases. And it
+connects to §3 — **absorption supplies the code/library vocabulary (`DataFrame.groupby`, `dict.get`),
+and bridge facts map business terms onto those absorbed names** — one crosswalk, two targets (hand-
+written code, or a library surface). This is the critique's "binding layer" made first-class.
+
 ## 5. Phasing (probe-first, per the spike discipline)
 
 1. **Value-domain growth (slice 1).** Reify constants + comparisons; ground-evaluate at the §8

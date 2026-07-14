@@ -527,16 +527,21 @@ business POLICY and the CODE's decision logic co-resident in one graph, joined b
 to *"does this code implement this policy?"* that neither pyright, CodeQL, a DMN validator, nor an LLM
 produces.
 
-1. **The loop closes.** A planted boundary bug (code `total > 100` where the policy says `over 50`) is
-   found as `diverges` on **exactly** the gold scenarios with total in (50, 100] — verified against a
-   plain-Python oracle (`test_...match_the_python_oracle`). `diverges` is an ordinary derived fact
-   (`?sc diverges yes when ?sc policy_outcome ?x and ?sc code_outcome ?y and not ?x same_outcome ?y`),
-   so the spec-vs-code comparison is a JOIN, not imperative glue — queryable and explainable.
+1. **The loop closes across a VOCABULARY GAP.** The policy speaks business terms (`member_tier
+   premium`, `order_spend`, `gets_discount`); the code speaks its own (`rank == gold`, `amount > 100`,
+   a boolean return); the ONLY connection is a declarative **bridge** (`member_tier bridges_attr rank`,
+   `premium bridges_value gold`, `discount_true bridges_outcome gets_discount`). The planted boundary
+   bug (`amount > 100` where the policy says `over 50`) is found as `diverges` on **exactly** the
+   premium scenarios with spend in (50, 100] — verified against a plain-Python oracle *that includes the
+   bridge translation*. `diverges` is an ordinary derived fact, so the spec-vs-code comparison is a
+   JOIN, not glue. (The first cut hardcoded a shared vocabulary — `docs/api_absorption_design.md` §4b;
+   the bridge makes it composable: swap the bridge, re-target a different implementation.)
 
-2. **One trace spans both worlds.** The `why {sid} diverges` proof interleaves the business-rule
-   firing (`policy_hit` ← `over_policy` + `has_tier gold`) and the code-logic firing (`code_outcome
-   deny`) from one provenance journal — the artifact the critique says a developer, auditor, and LLM
-   each need and no tool emits.
+2. **One trace spans both worlds AND the bridge.** The `why {sid} diverges` proof interleaves the
+   business-rule firing (`policy_grants` ← `member_tier premium` + `spend_over`), the code-logic firing
+   (`code_return discount_false`), and the **bridge rule** translating the code's return to the business
+   predicate (`discount_false bridges_outcome no_discount`) — the crosswalk is IN the derivation, the
+   artifact the critique says a developer, auditor, and LLM each need and no tool emits.
 
 3. **Repair is spec-DIRECTED and proven by re-sweep.** `align_threshold` reads the POLICY constant and
    rewrites the CODE constant (a real edit — the threshold is DATA in the model); re-sweeping the same

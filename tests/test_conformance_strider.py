@@ -1,23 +1,27 @@
-"""Behaviour pins for the conformance-strider probe (docs/critique.md §"The unification play").
+"""Behaviour pins for the conformance-strider probe (docs/critique.md §"The unification play";
+docs/api_absorption_design.md §4b for the bridge layer).
 
-The probe puts a CNL policy and reified decision code in ONE graph and derives `diverges` where the
-code doesn't implement the policy, then repairs spec-directed. These pins hold it to a differential
-oracle (the reasoning must agree with a plain Python computation of the same policy-vs-code check) and
-pin the repair loop's proof-by-re-sweep.
+The probe puts a CNL policy (business vocabulary) and reified decision code (code vocabulary) in ONE
+graph, joined ONLY by explicit bridge facts, and derives `diverges` where the code doesn't implement the
+policy, then repairs spec-directed. These pins hold it to a differential oracle (the reasoning must
+agree with a plain-Python computation of the same bridged policy-vs-code check) and pin the bridge, the
+two-world proof, and the repair loop's proof-by-re-sweep.
 """
 from experiments.conformance_strider import (
-    Model, Scenario, sweep_scenarios, find_divergences, outcomes, divergence_trace,
+    Model, sweep_scenarios, find_divergences, outcomes, divergence_trace,
     repair_candidates, check_and_repair,
 )
 
 
 def _python_oracle(m: Model, scenarios) -> set[str]:
-    """Ground truth: a scenario diverges iff the policy and the code disagree on the grant/deny."""
+    """Ground truth WITH the bridge: business scenario -> (value bridge premium->gold) -> code."""
     div = set()
     for sc in scenarios:
-        policy = (sc.tier == "gold") and (sc.total > m.policy_threshold)
-        code = (sc.tier == m.gold_token) and (sc.total > m.code_threshold)
-        if policy != code:
+        tier, spend = sc.attrs["member_tier"], sc.attrs["order_spend"]
+        policy = (tier == "premium") and (spend > m.policy_threshold)
+        rank = "gold" if tier == "premium" else tier          # the value bridge
+        code = (rank == "gold") and (spend > m.code_threshold)
+        if ("gets_discount" if policy else "no_discount") != ("gets_discount" if code else "no_discount"):
             div.add(sc.sid)
     return div
 
@@ -28,42 +32,50 @@ def test_reasoning_divergences_match_the_python_oracle():
     assert set(find_divergences(m, scen)) == _python_oracle(m, scen)
 
 
-def test_the_bug_is_found_on_exactly_the_gold_in_between_band():
+def test_the_bug_is_found_on_exactly_the_premium_in_between_band():
     m = Model()
-    # the code denies a discount the policy grants for gold customers with total in (50, 100].
-    assert set(find_divergences(m)) == {"s_gold_51", "s_gold_99", "s_gold_100"}
+    assert set(find_divergences(m)) == {"s_premium_51", "s_premium_99", "s_premium_100"}
 
 
-def test_silver_never_diverges_and_boundaries_agree():
+def test_bridge_translates_the_business_scenario_into_the_code_world():
     m = Model()
     outs = outcomes(m)
-    # silver is denied by both worlds everywhere (tier gate), and the exact-threshold totals agree.
-    assert all(outs[sid] == ("deny", "deny") for sid in outs if sid.startswith("s_silver"))
-    assert outs["s_gold_50"] == ("deny", "deny")        # "over 50" is strict: 50 grants nothing
-    assert outs["s_gold_101"] == ("grant", "grant")     # above both thresholds: both grant
+    # premium + high spend: the bridge maps premium->gold so `rank == gold` holds AND amount>100 -> the
+    # code grants, in BUSINESS terms (discount_true -> gets_discount). Proof the crosswalk carried it.
+    assert outs["s_premium_101"] == ("gets_discount", "gets_discount")
+    # basic has NO value bridge, so rank stays `basic`, `rank == gold` fails -> code denies everywhere.
+    assert all(outs[sid][1] == "no_discount" for sid in outs if sid.startswith("s_basic"))
 
 
-def test_divergence_trace_spans_both_worlds():
+def test_non_premium_never_diverges_and_boundaries_agree():
     m = Model()
-    tr = divergence_trace(m, "s_gold_100")
+    outs = outcomes(m)
+    assert all(outs[sid] == ("no_discount", "no_discount") for sid in outs if sid.startswith("s_basic"))
+    assert outs["s_premium_50"] == ("no_discount", "no_discount")   # "over 50" is strict
+    assert outs["s_premium_101"] == ("gets_discount", "gets_discount")  # above both thresholds
+
+
+def test_divergence_trace_spans_both_worlds_and_names_the_bridge():
+    m = Model()
+    tr = divergence_trace(m, "s_premium_100")
     policy_txt, code_txt = " ".join(tr["policy"]), " ".join(tr["code"])
-    assert "policy_hit" in policy_txt and "over_policy" in policy_txt   # the business rule fired
-    assert "code_outcome deny" in code_txt                              # the code logic denied
-    assert any("diverges" in line for line in tr["diverges"])           # the join is a derived fact
+    assert "policy_grants" in policy_txt and "member_tier premium" in policy_txt   # business rule fired
+    assert "code_return discount_false" in code_txt                                # code logic denied
+    assert "bridges_outcome no_discount" in code_txt                               # the BRIDGE, in the proof
+    assert any("diverges" in line for line in tr["diverges"])
 
 
 def test_align_threshold_is_verified_by_re_sweep_and_chosen():
     m = Model()
     cands = {c.name: c for c in repair_candidates(m)}
-    assert cands["align_threshold"].cleared                 # aligning to the policy clears the sweep
-    assert not cands["bump_code"].cleared                   # the decoy does not (verification gates it)
+    assert cands["align_threshold"].cleared
+    assert not cands["bump_code"].cleared
 
     r = check_and_repair(m)
     assert r.winner == "align_threshold"
-    assert r.repaired.code_threshold == m.policy_threshold  # the code constant now equals the policy's
-    assert r.residual_after_repair == []                    # re-sweep proves conformance
+    assert r.repaired.code_threshold == m.policy_threshold
+    assert r.residual_after_repair == []
 
 
 def test_an_already_conformant_model_shows_no_divergence():
-    aligned = Model(policy_threshold=50, code_threshold=50)
-    assert find_divergences(aligned) == []
+    assert find_divergences(Model(policy_threshold=50, code_threshold=50)) == []

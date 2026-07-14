@@ -1,41 +1,32 @@
 """Feasibility probe — CONFORMANCE STRIDER: does the code implement the policy? (docs/critique.md
-"The unification play: spec and implementation on one substrate" — the critique's highest-rated
-direction, "the strongest version of the whole project").
+"The unification play"; docs/api_absorption_design.md §4b for the bridge layer).
 
-The sharp question: put a CNL business POLICY and the CODE's decision logic in ONE graph, joined by
-a derivable `diverges` relation, and — by SWEEPING scenarios enumerated from the policy's own
-vocabulary and boundary constants — produce a machine-checkable answer to *"does this code implement
-this policy?"*, with a two-world proof when it doesn't and a spec-directed repair that makes it.
+A CNL business POLICY and the CODE's decision logic in ONE graph, joined by a derived `diverges`
+relation, swept over policy-generated scenarios — a machine-checkable answer to *"does this code
+implement this policy?"*, with a two-world proof when it doesn't and a spec-directed repair that makes
+it.
 
-    policy (CNL business rule)  --\
-                                   >--  one graph  -->  sweep scenarios  -->  `diverges` (a fact)
-    code (reified decision fn)  --/         |                                        |
-                                     a Python CALCULATOR                    two-world why-trace
-                                  (ugm's §8 comparison boundary:            + spec-directed repair
-                                   arithmetic in the tool, logic            (align_threshold),
-                                   in the rules — no path explosion,        verified by RE-SWEEP,
-                                   each swept scenario is fully GROUND)      CHOSEN.
+**The vocabularies are DISTINCT, joined only by explicit BRIDGE facts.** The policy speaks business
+terms (`member_tier premium`, `order_spend`, `gets_discount`); the code speaks its own (`rank == gold`,
+`amount > 100`, a boolean return). Nothing connects them but a small declarative crosswalk:
 
-Why the shared substrate is load-bearing, not packaging (critique §"why load-bearing"): the
-comparison is a JOIN (`diverges` is a derived fact, queryable + explainable), one trace spans BOTH
-worlds, and repair is SPEC-DIRECTED — it reads the policy's constant and aligns the code's, so
-"semantics preservation" is the verification condition by construction (re-sweep to zero divergence),
-not a template guess.
+    member_tier    bridges_attr     rank            # business attribute -> code parameter
+    order_spend    bridges_attr     amount
+    premium        bridges_value    gold            # business enum value -> code constant
+    discount_true  bridges_outcome  gets_discount   # code return   -> business predicate
+    discount_false bridges_outcome  no_discount
 
-Scope, honestly (the spike's deliberate edges, per the critique's "what it costs"):
-  * The code's decision logic is REIFIED directly here (one `if tier == C and total > K` function),
-    not intaken from Python text — this probe answers the CONFORMANCE-loop question, not the
-    grow-the-Python-intake question (constants + comparisons in `intake.py`), which the critique
-    lists as the separate cost. The threshold `K` is DATA in the model, so repair genuinely edits
-    the code, re-sweeps, and re-derives — the loop is real even with a hand-reified body.
-  * Arithmetic lives in the CALCULATOR (Python), exactly ugm's "comparison-as-calculator" §8
-    boundary; the LOGIC (AND, branch outcome, the divergence judge) is all rules. Each swept
-    scenario is fully ground, so this is deterministic interpretation, not symbolic execution.
+The split w.r.t. ugm's §8 comparison boundary (arithmetic in the tool, logic in the rules): the bridge
+is DATA; the §8 CALCULATOR consults it to translate a business scenario into code inputs before
+grounding each comparison; and a genuine bridge RULE (`?sc code_outcome ?biz when ?sc code_return ?cr
+and ?cr bridges_outcome ?biz`) maps the code's outcome back to the business predicate, so the crosswalk
+is IN THE PROOF. Swap the bridge and the same policy re-targets a different implementation — the
+composability the earlier hardcoded-shared-vocabulary version could not have.
 
-Finding: the loop closes. A planted boundary bug (`total > 100` where the policy says `over 50`) is
-found as `diverges` on exactly the gold scenarios in (50, 100], with a proof that names both worlds;
-`align_threshold` reads the policy constant (50), rewrites the code constant, and the re-sweep proves
-zero divergence — a machine-checked proof that the repaired code implements the policy.
+Finding: the loop closes across the vocabulary gap. A planted boundary bug (`amount > 100` where the
+policy says spend `over 50`) is found as `diverges` on exactly the premium scenarios in (50, 100], with
+a proof that names both worlds AND the bridge; `align_threshold` reads the policy constant, rewrites the
+code constant, and the re-sweep proves zero divergence.
 """
 from __future__ import annotations
 
@@ -45,29 +36,36 @@ import ugm as h
 from ugm import load_machine_rules, ask_goal, set_candidate, choose, explain_choice
 
 
-# --- the two co-resident rule systems + the binding judge, as ONE CNL bank (DATA) --------------
-# All clauses are 3-token `S P O` triples; a boolean predicate takes an explicit object (`... yes`);
-# a `not` clause is a NAC (stratified negation). The CODE side and the POLICY side each derive a
-# grant/deny OUTCOME per scenario; the JUDGE derives `diverges` where the two worlds disagree.
+# --- the BRIDGE: the only connection between the business and code vocabularies (DATA) ----------
+BRIDGE: list[tuple[str, str, str]] = [
+    ("member_tier", "bridges_attr", "rank"),        # business attribute -> code parameter
+    ("order_spend", "bridges_attr", "amount"),
+    ("premium", "bridges_value", "gold"),           # business enum value -> code constant
+    ("discount_true", "bridges_outcome", "gets_discount"),   # code return -> business predicate
+    ("discount_false", "bridges_outcome", "no_discount"),
+]
+_ATTR_BRIDGE = {b: c for (b, r, c) in BRIDGE if r == "bridges_attr"}
+_VALUE_BRIDGE = {b: c for (b, r, c) in BRIDGE if r == "bridges_value"}
+
+
+# --- the two rule systems + the bridge rule + the judge, as ONE CNL bank (DATA) ----------------
 RULES = "\n".join([
-    # --- CODE world: outcome derived from the reified decision function -----------------------
-    # an AND-gate is true in a scenario when BOTH its compares are true there (calculator-fed).
+    # --- CODE world (code vocabulary): compares (calculator-fed) -> AND -> a boolean RETURN --------
     "?sc and_true ?cond when ?cond is_a andgate and ?cond left ?l and ?cond right ?r "
     "and ?sc compare_true ?l and ?sc compare_true ?r",
-    # the code grants iff its guard condition holds; else it denies (CWA default via the NAC).
     "?sc code_hit yes when ?sc and_true code_cond",
-    "?sc code_outcome grant when ?sc code_hit yes",
-    "?sc code_outcome deny when ?sc is_a scenario and not ?sc code_hit yes",
+    "?sc code_return discount_true when ?sc code_hit yes",
+    "?sc code_return discount_false when ?sc is_a scenario and not ?sc code_hit yes",
 
-    # --- POLICY world: outcome derived from the business rule --------------------------------
-    # policy grants when the customer is gold AND the total clears the policy threshold (calculator-
-    # fed `over_policy`, the "is over 50" comparison); else it denies.
-    "?sc policy_hit yes when ?sc has_tier gold and ?sc over_policy yes",
-    "?sc policy_outcome grant when ?sc policy_hit yes",
-    "?sc policy_outcome deny when ?sc is_a scenario and not ?sc policy_hit yes",
+    # --- the BRIDGE RULE: translate the code's return into the business predicate (crosswalk in proof)
+    "?sc code_outcome ?biz when ?sc code_return ?cr and ?cr bridges_outcome ?biz",
 
-    # --- the BINDING JUDGE: divergence is a derived fact spanning both worlds -----------------
-    # the code does NOT implement the policy on a scenario iff the two outcomes disagree.
+    # --- POLICY world (pure business vocabulary) ------------------------------------------------
+    "?sc policy_grants yes when ?sc member_tier premium and ?sc spend_over yes",
+    "?sc policy_outcome gets_discount when ?sc policy_grants yes",
+    "?sc policy_outcome no_discount when ?sc is_a scenario and not ?sc policy_grants yes",
+
+    # --- the JUDGE: divergence spans both worlds (now BOTH in business vocab via the bridge) -----
     "?sc diverges yes when ?sc policy_outcome ?x and ?sc code_outcome ?y and not ?x same_outcome ?y",
 ])
 
@@ -76,90 +74,94 @@ RULES = "\n".join([
 
 @dataclass(frozen=True)
 class Model:
-    """The two decision logics as data. `policy_threshold` is the business rule's `over N`; the code
-    grants when `tier == gold and total > code_threshold`. The planted bug is code_threshold != the
-    policy's. Repair produces a new Model with the code aligned — the reified code genuinely edited."""
-    policy_threshold: int = 50       # policy: "... and total is over 50"
-    code_threshold: int = 100        # code:   "... and total > 100"  <- the planted boundary bug
-    gold_token: str = "gold"         # the tier the policy/code both key on (equality = direct match)
+    """The two decision logics as data, in DISTINCT vocabularies. The policy grants when a premium
+    member's order is `over policy_threshold`; the code grants when `rank == gold and amount >
+    code_threshold`. The planted bug is code_threshold != the policy's; repair aligns the code."""
+    policy_threshold: int = 50       # business policy: order_spend "over 50"
+    code_threshold: int = 100        # code:            amount > 100  <- the planted boundary bug
 
 
-# --- the CALCULATOR — ugm's §8 "comparison-as-calculator" boundary (arithmetic in the tool) ----
-# Per fully-ground scenario, evaluate each reified comparison and inject the resulting BOOLEAN facts
-# the rules match on. Reads the thresholds from the MODEL, so a repaired threshold is picked up on
-# the next sweep with no rule change — the whole point of keeping the constant as data.
+def _code_compares(m: Model) -> dict[str, tuple[str, str, object]]:
+    """The code's reified comparisons: id -> (op, code-parameter, constant). Constants are DATA."""
+    return {"c_rank": ("eq", "rank", "gold"), "c_amount": ("gt", "amount", m.code_threshold)}
+
+
+# --- the §8 CALCULATOR — consults the BRIDGE to translate, then grounds each comparison ---------
 
 @dataclass(frozen=True)
 class Scenario:
     sid: str
-    tier: str
-    total: int
+    attrs: dict[str, object]         # BUSINESS attributes, e.g. {"member_tier": "premium", "order_spend": 75}
+
+
+def _apply_op(op: str, a: object, b: object) -> bool:
+    return {"eq": a == b, "ne": a != b, "gt": a > b, "lt": a < b, "ge": a >= b, "le": a <= b}[op]
 
 
 def _calculator_facts(m: Model, sc: Scenario) -> list[tuple[str, str, str]]:
-    """The ground truth of each comparison in this scenario (the arithmetic ugm delegates to a tool)."""
-    facts: list[tuple[str, str, str]] = [(sc.sid, "is_a", "scenario"), (sc.sid, "has_tier", sc.tier)]
-    if sc.tier == m.gold_token:                      # code compare c_tier:  tier == gold
-        facts.append((sc.sid, "compare_true", "c_tier"))
-    if sc.total > m.code_threshold:                  # code compare c_total: total > code_threshold
-        facts.append((sc.sid, "compare_true", "c_total"))
-    if sc.total > m.policy_threshold:                # policy compare:       total is over N
-        facts.append((sc.sid, "over_policy", "yes"))
+    """Ground both worlds for one scenario. Business side: the policy threshold on the native business
+    value. Code side: TRANSLATE the business scenario into code inputs THROUGH the bridge, then ground
+    each code comparison. Arithmetic in the tool; the crosswalk is the bridge DATA it consults."""
+    facts: list[tuple[str, str, str]] = [(sc.sid, "is_a", "scenario")]
+    # business scenario facts (the policy reasons over these directly, in business vocab)
+    for battr, bval in sc.attrs.items():
+        facts.append((sc.sid, battr, str(bval)))
+    # policy threshold ("over 50"), business-native
+    if sc.attrs.get("order_spend", 0) > m.policy_threshold:
+        facts.append((sc.sid, "spend_over", "yes"))
+    # translate business attrs -> code inputs via the bridge (attribute + value crosswalk)
+    code_inputs = {}
+    for battr, bval in sc.attrs.items():
+        if battr in _ATTR_BRIDGE:
+            code_inputs[_ATTR_BRIDGE[battr]] = _VALUE_BRIDGE.get(bval, bval)   # enum bridged, numeric passes through
+    # ground each code comparison on the TRANSLATED inputs
+    for cid, (op, param, const) in _code_compares(m).items():
+        if param in code_inputs and _apply_op(op, code_inputs[param], const):
+            facts.append((sc.sid, "compare_true", cid))
     return facts
 
 
 def _reified_structure(m: Model) -> list[tuple[str, str, str]]:
-    """The static reification of BOTH decision logics — the code's AND-gate + its two compares (with
-    their operators and CONSTANTS, so a trace can name `total > 100`), the policy's threshold compare,
-    and the reflexive `same_outcome` the judge reads through its NAC. Constants are DATA (repair-able)."""
-    return [
-        # code: `if tier == gold and total > code_threshold`
-        ("code_cond", "is_a", "andgate"), ("code_cond", "left", "c_tier"), ("code_cond", "right", "c_total"),
-        ("c_tier", "is_a", "compare"), ("c_tier", "op", "eq"), ("c_tier", "reads", "tier"),
-        ("c_tier", "const", m.gold_token),
-        ("c_total", "is_a", "compare"), ("c_total", "op", "gt"), ("c_total", "reads", "total"),
-        ("c_total", "const", str(m.code_threshold)),
-        # policy: `... and total is over policy_threshold`
-        ("policy_over", "is_a", "compare"), ("policy_over", "op", "gt"), ("policy_over", "reads", "total"),
-        ("policy_over", "const", str(m.policy_threshold)),
-        # the judge's identity table (grant≡grant, deny≡deny) — read through `not ?x same_outcome ?y`
-        ("grant", "same_outcome", "grant"), ("deny", "same_outcome", "deny"),
+    """Static reification: the code's AND-gate + compares (constants as DATA, for the trace), the
+    bridge facts (the only cross-vocabulary link), and the judge's reflexive `same_outcome` table."""
+    facts = [
+        ("code_cond", "is_a", "andgate"), ("code_cond", "left", "c_rank"), ("code_cond", "right", "c_amount"),
+        ("c_rank", "is_a", "compare"), ("c_rank", "op", "eq"), ("c_rank", "reads", "rank"), ("c_rank", "const", "gold"),
+        ("c_amount", "is_a", "compare"), ("c_amount", "op", "gt"), ("c_amount", "reads", "amount"),
+        ("c_amount", "const", str(m.code_threshold)),
+        ("gets_discount", "same_outcome", "gets_discount"), ("no_discount", "same_outcome", "no_discount"),
     ]
+    return facts + list(BRIDGE)
 
 
 def _graph(m: Model, scenarios: list[Scenario]) -> "h.Graph":
-    """One graph holding both rule systems' reified structure + every scenario's ground calculator
-    facts — the shared substrate the whole design rests on. Set-at-a-time: all scenarios reasoned at
-    once, `diverges` derived across the lot."""
+    """One graph: both rule systems' reified structure + the bridge + every scenario's ground facts."""
     g = h.Graph(); ids: dict[str, str] = {}
     def n(x: str) -> str:
         if x not in ids: ids[x] = g.add_node(x)
         return ids[x]
-    def rel(s: str, p: str, o: str) -> None: g.add_relation(n(s), p, n(o))
     facts = list(_reified_structure(m))
     for sc in scenarios:
         facts += _calculator_facts(m, sc)
     for s, p, o in facts:
-        rel(s, p, o)
+        g.add_relation(n(s), p, n(o))
     return g
 
 
 # --- the SWEEP: scenarios from the policy's vocabulary + boundary constants --------------------
 
 def sweep_scenarios(m: Model) -> list[Scenario]:
-    """Enumerate the sweep from the DECLARED vocabulary (tiers) × boundary constants straddling BOTH
-    thresholds (the off-by boundaries where policy-vs-code bugs live). The policy is the hypothesis
-    generator — dissolving pystrider's "hypothesis must be supplied" for this domain. Robust when the
-    thresholds coincide (a repaired model): the boundary set just shrinks, the sweep stays valid."""
-    tiers = ("gold", "silver")
-    totals = sorted({v for k in (m.policy_threshold, m.code_threshold) for v in (k - 1, k, k + 1)})
-    return [Scenario(f"s_{t}_{v}", t, v) for t in tiers for v in totals]
+    """Enumerate the sweep from the DECLARED business vocabulary (member tiers) × boundary constants
+    straddling both thresholds. The policy is the hypothesis generator. Robust to coinciding thresholds
+    (a repaired model)."""
+    tiers = ("premium", "basic")
+    spends = sorted({v for k in (m.policy_threshold, m.code_threshold) for v in (k - 1, k, k + 1)})
+    return [Scenario(f"s_{t}_{v}", {"member_tier": t, "order_spend": v}) for t in tiers for v in spends]
 
 
 def find_divergences(m: Model, scenarios: list[Scenario] | None = None) -> list[str]:
-    """Sweep, reason, and ask the graph WHICH scenarios diverge — `diverges` is an ordinary derived
-    fact, so this is one backward query, not imperative glue comparing two tools' outputs. `scenarios`
-    pins the sweep set (so a repair RE-SWEEP is judged on the very scenarios that exposed the bug)."""
+    """Which scenarios diverge — `diverges` is a derived fact, so this is one backward query, not glue.
+    `scenarios` pins the sweep set (so a repair RE-SWEEP is judged on the scenarios that exposed the bug)."""
     scenarios = scenarios if scenarios is not None else sweep_scenarios(m)
     rules = load_machine_rules(RULES)
     g = _graph(m, scenarios)
@@ -169,16 +171,16 @@ def find_divergences(m: Model, scenarios: list[Scenario] | None = None) -> list[
 
 
 def _value_of(g: "h.Graph", rules, sid: str, pred: str) -> str:
-    """The grant/deny value a scenario derives for `pred` — asked as `is <sid> <pred> grant/deny`
-    (the yes/no query form), since each scenario derives exactly one (grant XOR deny)."""
-    for v in ("grant", "deny"):
+    """The business outcome a scenario derives for `pred` (gets_discount XOR no_discount)."""
+    for v in ("gets_discount", "no_discount"):
         if ask_goal(g, f"is {sid} {pred} {v}", rules) == ["yes"]:
             return v
     return "?"
 
 
 def outcomes(m: Model, scenarios: list[Scenario] | None = None) -> dict[str, tuple[str, str]]:
-    """(policy_outcome, code_outcome) per scenario — the two worlds side by side, both derived."""
+    """(policy_outcome, code_outcome) per scenario — both in BUSINESS vocabulary (the code's via the
+    bridge rule), so they are directly comparable."""
     scenarios = scenarios if scenarios is not None else sweep_scenarios(m)
     rules = load_machine_rules(RULES)
     g, out = _graph(m, scenarios), {}
@@ -189,9 +191,8 @@ def outcomes(m: Model, scenarios: list[Scenario] | None = None) -> dict[str, tup
 
 
 def divergence_trace(m: Model, sid: str) -> dict[str, list[str]]:
-    """The two-world proof for a divergent scenario: WHY the policy grants and WHY the code denies —
-    business-rule firings and code-logic firings from ONE provenance journal (the artifact the
-    critique says no existing tool produces: a machine-checkable spec-vs-code disagreement)."""
+    """The two-world proof: WHY the policy grants (business rule) and WHY the code denies (code logic +
+    the BRIDGE rule translating its return) — one journal spanning both vocabularies and the crosswalk."""
     rules = load_machine_rules(RULES)
     g = _graph(m, sweep_scenarios(m))
     pol, cod = outcomes(m)[sid]
@@ -208,21 +209,19 @@ def divergence_trace(m: Model, sid: str) -> dict[str, list[str]]:
 class RepairCandidate:
     name: str
     description: str
-    model: Model                 # the edited model (a real code change: a new threshold constant)
-    residual: list[str] = field(default_factory=list)   # divergences STILL present after the edit
-    cleared: bool = False        # verified by re-sweep: zero divergence
+    model: Model
+    residual: list[str] = field(default_factory=list)
+    cleared: bool = False
 
     @property
     def fit(self) -> float:
-        return 1.0 if self.cleared else 0.0             # unverified edits are ineligible (like repair)
+        return 1.0 if self.cleared else 0.0
 
 
 def repair_candidates(m: Model, scenarios: list[Scenario] | None = None) -> list[RepairCandidate]:
-    """Propose spec-directed edits and VERIFY each by re-sweeping the SAME scenarios that exposed the
-    bug. `align_threshold` reads the POLICY constant and rewrites the CODE constant — the repair
-    target is "make the code's outcomes equal the policy's on every swept scenario", i.e. semantics
-    preservation as the verification condition. A decoy edit (bump the code threshold the wrong way) is
-    included to show verification GATES CHOOSE."""
+    """Spec-directed edits, VERIFIED by re-sweeping the SAME scenarios. `align_threshold` reads the
+    POLICY constant and rewrites the CODE constant — semantics preservation ("code's outcomes == policy's
+    on every swept scenario") as the verification condition. A decoy shows verification GATES CHOOSE."""
     scenarios = scenarios if scenarios is not None else sweep_scenarios(m)
     proposals = [
         ("align_threshold", f"align the code threshold to the policy constant ({m.policy_threshold})",
@@ -230,17 +229,14 @@ def repair_candidates(m: Model, scenarios: list[Scenario] | None = None) -> list
         ("bump_code", "raise the code threshold further (a plausible-looking but wrong edit)",
          replace(m, code_threshold=m.code_threshold * 2)),
     ]
-    cands = []
-    for name, desc, m2 in proposals:
-        resid = find_divergences(m2, scenarios)         # re-sweep the EDITED model, SAME scenarios
-        cands.append(RepairCandidate(name=name, description=desc, model=m2,
-                                     residual=resid, cleared=not resid))
-    return cands
+    return [RepairCandidate(name=nm, description=desc, model=m2,
+                            residual=find_divergences(m2, scenarios),
+                            cleared=not find_divergences(m2, scenarios))
+            for nm, desc, m2 in proposals]
 
 
 def choose_repair(cands: list[RepairCandidate]) -> tuple[RepairCandidate | None, list[str]]:
-    """CHOOSE the graded-best VERIFIED edit through the public firmware; losers retained + auditable
-    (the compliance-grade audit the critique highlights). Only edits that clear the sweep are eligible."""
+    """CHOOSE the graded-best VERIFIED edit through the public firmware; losers retained + auditable."""
     g = h.Graph(); goal = g.add_node("conformance_goal"); node_of = {}
     for c in cands:
         opt = g.add_node(c.name); node_of[c.name] = c
@@ -261,14 +257,12 @@ class Conformance:
 
 
 def check_and_repair(m: Model) -> Conformance:
-    """The whole loop: sweep -> `diverges` -> spec-directed repair -> CHOOSE the verified edit ->
-    re-sweep to prove the repaired code implements the policy. The analyze/repair loop of pystrider,
-    run against a POLICY instead of a hand-picked hypothesis — the sweep IS the hypothesis generator."""
-    scenarios = sweep_scenarios(m)                       # one fixed sweep, reused for the re-sweep
+    """sweep -> `diverges` -> spec-directed repair -> CHOOSE the verified edit -> re-sweep to prove the
+    repaired code implements the policy. The sweep IS the hypothesis generator; the bridge IS the join."""
+    scenarios = sweep_scenarios(m)
     divs = find_divergences(m, scenarios)
     outs = outcomes(m, scenarios)
-    cands = repair_candidates(m, scenarios)
-    winner, trace = choose_repair(cands)
+    winner, trace = choose_repair(repair_candidates(m, scenarios))
     return Conformance(
         divergences=divs, outcomes=outs,
         winner=winner.name if winner else None,
@@ -280,23 +274,27 @@ def check_and_repair(m: Model) -> Conformance:
 # --- live walkthrough -------------------------------------------------------------------------
 
 def main() -> None:
-    m = Model()      # policy: gold & total over 50 ; code: gold & total > 100 (the planted bug)
-    print("CONFORMANCE STRIDER — does the code implement the policy?\n")
-    print(f"  policy:  a customer gets_discount when tier is gold and total is over {m.policy_threshold}")
-    print(f"  code:    def discount(tier, total): return tier == 'gold' and total > {m.code_threshold}\n")
+    m = Model()
+    print("CONFORMANCE STRIDER — does the code implement the policy? (bridged vocabularies)\n")
+    print(f"  policy (business vocab):  a member gets_discount when member_tier is premium "
+          f"and order_spend is over {m.policy_threshold}")
+    print(f"  code   (code vocab):      def discount(rank, amount): return rank == 'gold' "
+          f"and amount > {m.code_threshold}")
+    print("  bridge:  member_tier->rank, order_spend->amount, premium->gold, "
+          "discount_true->gets_discount\n")
 
     r = check_and_repair(m)
-    print(f"  sweep {len(sweep_scenarios(m))} scenarios (tiers x boundary totals) -> policy vs code:")
+    print(f"  sweep {len(sweep_scenarios(m))} scenarios (business tiers x boundary spends) -> policy vs code:")
     for sid, (pol, cod) in r.outcomes.items():
         flag = "  <-- DIVERGES" if sid in r.divergences else ""
-        print(f"      {sid:<12} policy={pol:<5} code={cod:<5}{flag}")
+        print(f"      {sid:<14} policy={pol:<13} code={cod:<13}{flag}")
     print(f"\n  `who diverges yes` -> {r.divergences}")
-    print("      (a derived FACT, not glue: the code denies a discount the policy grants,")
-    print("       on exactly the gold scenarios with total in (policy 50, code 100].)\n")
+    print("      (the code denies a discount the policy grants, on the premium scenarios with")
+    print("       order_spend in (policy 50, code 100] — found ACROSS the vocabulary gap.)\n")
 
     sid = r.divergences[0]
     tr = divergence_trace(m, sid)
-    print(f"  two-world proof for {sid} (one journal spanning BOTH rule systems):")
+    print(f"  two-world proof for {sid} (business rule + code logic + the BRIDGE, one journal):")
     print(f"    policy grants:  {tr['policy']}")
     print(f"    code denies:    {tr['code']}")
     print(f"    => diverges:    {tr['diverges']}\n")
@@ -307,9 +305,6 @@ def main() -> None:
     verdict = "PROVEN: the repaired code implements the policy" if not r.residual_after_repair \
         else "STILL DIVERGES"
     print(f"      => {verdict}")
-    print("\n  choose trace (losers retained + auditable — the decoy bump_code failed verification):")
-    for line in r.choose_trace:
-        print(f"      {line}")
 
 
 if __name__ == "__main__":
