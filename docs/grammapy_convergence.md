@@ -9,10 +9,11 @@ declared footprints, and rejects a composition grammapy admitted from a dishones
 236 green. **Bridges-vs-channels RESOLVED** (direction: collapse the composition algebra into CNL rules
 over the one ugm graph — spiked in `experiments/combinators_as_cnl.py`, verdict-identical to grammapy's
 Python checks; unblocked by ugm shipping distinctness `?a != ?b` + read-only `ask_goal(commit=False)`).
-Full suite **246 green**. **Collapse ENACTED — all four combinators** now run CNL rule-modules read-only
-(`grammapy/_cnl.py`); grammapy imports ugm; all suites green unchanged. Cost: the checks are ~1150× slower
-per call (suite ~55s→~255s), fed back as ugm #13 (a ~2.8ms `ask_goal` fixed floor). **Next: Phase 5 steps
-5–6** (the external generator front-end), or the `chain_sip` perf mitigation / await ugm #13.
+**Collapse ENACTED — all four combinators** now run CNL rule-modules read-only (`grammapy/_cnl.py`);
+grammapy imports ugm. Cost: the checks are ~1150× slower per call (fed back as ugm #13, a ~2.8ms `ask_goal`
+fixed floor). **Phase 5 COMPLETE** — steps 5–6 (the external generator front-end: an untrusted drafter
+gated by reasoning + grammapy + Pilot, with a reasoning-repair back-edge) landed alongside step 7.
+**Next: the perf mitigation (`chain_sip` / ugm #13), or a real LLM in the generator seam.** Suite green.
 
 ## Why they converge
 
@@ -69,7 +70,7 @@ not built. The withdrawal app forces all four, so it is the natural forcing func
 | **2c** | Build `Fold` (declared commutative/associative join), driven by deontic conflict (obligation vs waiver) | **`Fold` built** | **done** |
 | **3** | pystrider's reasoning emits a *cross-cutting constraint*; grammapy §12 resolves each decision point; all four points unified under one `DeviationSpec` | **§12 resolver + `assemble`** | **done** |
 | **4** | AST emission (stdlib `ast`) — productions emit fragments, grammapy assembles; retire string templates | grammapy roadmap step 5 | **done** |
-| **5** | External generator front-end drafts the deviation spec; grammapy guarantees + emits; pystrider drive-verifies + checks footprint honesty | steps 5–7 | **step 7 done** (footprint honesty); steps 5–6 (generator front-end) open |
+| **5** | External generator front-end drafts the deviation spec; grammapy guarantees + emits; pystrider drive-verifies + checks footprint honesty | steps 5–7 | **done** — step 7 (footprint honesty) + steps 5–6 (generator front-end, gated + repair loop) |
 
 ## Phase 2a as landed (Choice)
 
@@ -166,6 +167,37 @@ app as an **`ast` fragment tree** assembled into one `ast.Module`, unparsed to s
 - **Tool decision as executed:** stdlib `ast` + `ast.unparse` (not libcst). Greenfield emission needs no
   round-trippable formatting preservation; libcst becomes load-bearing only at Phase 5, for round-tripping
   *user-owned atom bodies*.
+
+## Phase 5 steps 5–6 as landed (the external generator front-end) — Phase 5 complete
+
+The north-star loop is closed. The front of the loop is now an **external generator** — an untrusted
+front-end that DRAFTS a candidate app design straight from intent ("compose by pattern, skip the math",
+the role a real LLM plays), gated by the trusted layers it does not control. Probe
+[`experiments/generator_frontend.py`](../experiments/generator_frontend.py) + pins
+[`tests/test_generator_frontend.py`](../tests/test_generator_frontend.py) (8):
+
+- **The gating contract.** `parse_intent(text) -> Spec` extracts the domain facts (a keyword scan stands
+  in for NLP); a `Generator = Callable[[Spec], Draft]` proposes a `Draft(screen, buttons)`; `gate(draft)`
+  runs four gates in order — **(1) pystrider reasoning** (does the draft satisfy the derived *obligation*?
+  `required_capabilities` vs what the draft provides), **(2) grammapy Scope** (no emitted effect escapes),
+  **(3) grammapy Accumulate** (the button set composes), **(4) the Pilot** (it drives green). The first
+  gate to reject stops the pipeline and names itself. The generator is pluggable — a real LLM slots in
+  unchanged; the probe validates the *contract*, which is provider-agnostic.
+- **The finding — an unreliable proposer + trusted disposers = trustworthy output.** Three scripted
+  generators stand in for the LLM: `sound` (applies the obligation → passes every gate, drives green);
+  `lazy` (pattern-matches "it's a form", always compact → caught at gate 1, *and* independently by gate 2
+  — the belt-and-suspenders of two trusted layers); `sloppy` (right gate, broken `{ok, yes}` button set →
+  caught at gate 3, grammapy's frame rule). Each class of mistake maps to a gate the generator does not
+  control.
+- **The self-correcting back-edge.** `repair(draft)` runs pystrider's OWN reasoning (`assemble`) to derive
+  the sound design, which re-gates clean and drives — the north-star's `re-derive / repair` arrow. So a
+  rejected draft is not a dead end: the reasoning re-proposes what the generator skipped. "The generator
+  proposes; the algebra and the Pilot dispose — and when they dispose, the reasoning re-proposes."
+
+This makes the productization thesis *runnable*: the LLM front-end (the "compose by pattern, skip the
+math" option) is kept, but gated by grammapy + the execution oracle, exactly as the design note predicted.
+All the pieces compose — §12 `assemble`, the four CNL combinators, AST emission, the Pilot — behind one
+`run(intent, generator)`.
 
 ## Phase 5 step 7 as landed (footprint honesty checked by execution)
 

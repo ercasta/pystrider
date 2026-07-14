@@ -16,19 +16,23 @@ plus §12 cross-cutting constraint resolution — **RESOLVES and GATES** every d
 emitted app is **verified by DRIVING it** (Textual Pilot). Full design, status, and the phased plan:
 **[`grammapy_convergence.md`](grammapy_convergence.md) — read that first for this line.**
 
-**Status: Phases 1–4 + Phase 5 step 7 DONE; bridges-vs-channels RESOLVED (suite 246 green).** All four
+**Status: Phases 1–5 DONE; bridges-vs-channels RESOLVED + collapse ENACTED (suite 254 green).** All four
 combinators are built and exercised by one app (`experiments/app_synthesis.py` — synthesize a runnable Textual cash-withdrawal app
 across bridged business/framework/UX vocabularies, verified by driving). §12 resolution unifies the four
 decision points under one `DeviationSpec` (`assemble`); **emission is AST-built** (`assemble_ast(dev)`
 composes `ast` fragments into an `ast.Module`, unparsed; string templates retired); and **footprint
 honesty is checked by execution** (`experiments/footprint_honesty.py` — grammapy admits by *declared*
 footprints, pystrider's concrete-exec oracle certifies the declarations and rejects a composition grammapy
-admitted from a dishonest atom). **Next: Phase 5 steps 5–6 — external generator front-end** drafts the
-deviation spec; this is where the deferred **bridges-vs-channels** decision and **libcst** (round-trip of
-user-owned atom bodies) become load-bearing (see the convergence doc).
+admitted from a dishonest atom). **Phase 5 steps 5–6 landed** — an external generator front-end
+(`experiments/generator_frontend.py`) drafts a design from intent and is gated by four trusted layers it
+doesn't control (the derived obligation, grammapy Scope + Accumulate, the Pilot), with a reasoning-repair
+back-edge; an unreliable proposer + trusted disposers = trustworthy output. **Phase 5 complete — the
+north-star loop is closed.** **Next: the perf mitigation (`chain_sip` / await ugm #13), a real LLM in the
+generator seam, or libcst** (round-trip of user-owned atom bodies) — see the convergence doc.
 
-**Run:** `./.venv/Scripts/python.exe -m pytest -q` (246 green) · `python -m experiments.app_synthesis`
+**Run:** `./.venv/Scripts/python.exe -m pytest -q` (254 green) · `python -m experiments.app_synthesis`
 · `python -m experiments.footprint_honesty` · `python -m experiments.combinators_as_cnl`
+· `python -m experiments.generator_frontend` (the closed loop: generator → gates → drive → repair)
 (the walkthrough) · combinator tests: `tests/test_disjointness.py` (Accumulate), `test_choice.py`,
 `test_scope.py`, `test_fold.py`, `test_resolution.py` (§12).
 
