@@ -6,8 +6,13 @@ built and exercised by one app, unified under one `DeviationSpec` (§12), and em
 (each production an `ast` fragment, assembled + unparsed; string templates retired). **Phase 5 step 7
 (footprint honesty checked by execution) landed** — pystrider's concrete-exec oracle certifies grammapy's
 declared footprints, and rejects a composition grammapy admitted from a dishonest declaration. Full suite
-236 green. **Next: Phase 5 steps 5–6** — the external generator front-end (where bridges-vs-channels and
-libcst become load-bearing).
+236 green. **Bridges-vs-channels RESOLVED** (direction: collapse the composition algebra into CNL rules
+over the one ugm graph — spiked in `experiments/combinators_as_cnl.py`, verdict-identical to grammapy's
+Python checks; unblocked by ugm shipping distinctness `?a != ?b` + read-only `ask_goal(commit=False)`).
+Full suite **246 green**. **Collapse ENACTED — all four combinators** now run CNL rule-modules read-only
+(`grammapy/_cnl.py`); grammapy imports ugm; all suites green unchanged. Cost: the checks are ~1150× slower
+per call (suite ~55s→~255s), fed back as ugm #13 (a ~2.8ms `ask_goal` fixed floor). **Next: Phase 5 steps
+5–6** (the external generator front-end), or the `chain_sip` perf mitigation / await ugm #13.
 
 ## Why they converge
 
@@ -276,14 +281,69 @@ prime, the `import pystrider` workaround was removed, suite green. Recorded as `
 - `synthesize` records `composed` / `composition_error`; a rejected composition emits nothing and drives
   nothing. Pins in [`tests/test_app_synthesis.py`](../tests/test_app_synthesis.py).
 
-## The sharp decision the absorption forces: two "bridge" notions
+## The sharp decision the absorption forces: two "bridge" notions — RESOLVED (direction: collapse into CNL)
 
 pystrider has **bridges** (untyped declarative fact crosswalks, e.g. `confirmation_step realized_by
-modal_confirm`); grammapy has **channels** (typed, footprint-checked contracts). Same idea, different
-rigor. The open call — resolve before Phase 3: keep them separate, or **unify** so pystrider's bridges
-*become* grammapy channel contracts (typed, disjointness-checked). Unifying is higher-upside — it gives
-"scaling via composition" teeth beyond O(N) fact-count — but it is grammapy's own least-proven axis
-(hand-written cross-domain adapters).
+modal_confirm`); grammapy has **channels** (footprint-checked contracts). "Same idea, different rigor" was
+the framing; the resolution is sharper than keep-separate-vs-unify.
+
+**The reframing.** The two live in *different engines*: bridges are CNL facts consumed by ugm rules;
+channels are Python dataclasses consumed by Python checks (`disjoint_writes`, `guard_coverage`,
+`unhandled_emissions`, `lattice.join`). "Unify" therefore forces the real question — *unify toward which
+engine?* And all four grammapy combinators are **Datalog-shaped**: joins, negation, transitive closure,
+aggregation. So the collapse target is **CNL rules over the one ugm graph**, and the "type" question
+dissolves (a channel type is just more facts; compatibility is a rule).
+
+**Spiked and confirmed — [`experiments/combinators_as_cnl.py`](../experiments/combinators_as_cnl.py) +
+[`tests/test_combinators_as_cnl.py`](../tests/test_combinators_as_cnl.py) (10):** the two representative
+combinator checks are authored as CNL rule-modules whose verdict is **identical** to grammapy's Python
+check, run **read-only** (`ask_goal(commit=False)`, so a check never inks the graph it checks):
+
+- **Scope** (reachability, the *closure*-shaped check): a recursive `ancestor_of` closure + stratified
+  `not handled` reproduces `unhandled_emissions` exactly. Recursion + stratified negation were always in ugm.
+- **Accumulate** (disjoint writes, the *distinctness*-shaped check that was **blocked**): "no two DISTINCT
+  items write the same channel" needs `?a ≠ ?b`. **ugm shipped it** (feedback #11: `?a != ?b` is a
+  distinctness condition honoured by the join), so `disjoint_writes` is a one-line rule matching grammapy's
+  conflict set with **zero** hand-authored distinctness facts.
+
+Fold (max over a declared chain) is closure-shaped (authored order + closure); Choice is distinctness-shaped
+(its disjointness half is `?a != ?b`, its exhaustiveness half is stratified negation). **So the whole
+four-combinator algebra ports to CNL on exactly two primitives — recursion and distinctness — both now
+present** (ugm feedback #11 distinctness, #12 read-only `ask_goal`, both FIXED 2026-07-14).
+
+**The seam this relocates.** The real boundary is not pystrider-vs-grammapy but **reason-about-it (CNL) vs
+run-it (Python)**: the composition *checks* collapse into CNL; what stays Python is what *executes* — AST
+emission and the Pilot drive. That is a cleaner architecture (one reasoning engine + one execution oracle)
+and the direct answer to the deferred bridges-vs-channels call: **unify downward into CNL.**
+
+**ENACTED in grammapy (2026-07-14) — all four combinators.** grammapy now **depends on ugm** (as intended
+since day one): a new [`grammapy/_cnl.py`](../grammapy/_cnl.py) runs a CNL rule-module read-only
+(`ask_goal(commit=False)`) over a graph built from triples. Each combinator's **soundness verdict** is now
+a CNL rule bank; only the human-facing violation objects are reconstructed in Python from the same data,
+preserving every public return type and message. grammapy's own suites and the full suite (**246**) pass
+unchanged — behaviour-identical, verdict now CNL-derived.
+
+- **`Accumulate`** — `channels.disjoint_writes` → `_DISJOINT_WRITES_RULE` (the `?a != ?b` distinctness).
+- **`Scope`** — `scope.unhandled_emissions` → `_UNHANDLED_RULES` (recursive `ancestor_of` closure +
+  stratified `not handled`).
+- **`Choice`** — `guards.guard_coverage` → `_GUARD_RULES`: `guard_unknown` (negation over the domain),
+  `state_overlap` (`?p != ?q` — not disjoint), `state_gap` (stratified negation — not exhaustive). States
+  and productions are namespaced (`s:`/`p:`) so a `sql`-branch-for-`sql` never fuses with the `sql` state.
+- **`Fold`** — `lattice.fold_winner` / `fold_unknowns`: the chain as adjacency (`?hi above ?lo`), a
+  transitive closure `outranks`, and the winner = the present verdict `not beaten` — a **set query, so
+  order-independence is structural, not a proof obligation**. (`Lattice.join`, a pairwise primitive that is
+  unit-tested directly, stays Python.)
+
+- **Cost — a real regression, quantified + fed back (ugm feedback #13).** Routing a check through ugm
+  (`Graph` build + `ask_goal`) is far heavier than the former Python one-liners: the full suite went
+  **~55s → ~255s** as all four ported (the app-synthesis tests call the checks many times). Profiling: a
+  single 5-fact `Accumulate.check` is **~3.2ms** (vs **2.8µs** Python — ~1150×), and it is **entirely
+  `ask_goal`** (graph build 56µs, rule-load memoized 2µs). There is a **~2.8ms fixed per-call floor**
+  (size-independent), about half of it the CNL question-string layer — `chain_sip` with a *tuple* goal does
+  the same derivation in ~1.2ms. Filed as ugm #13 (a low-fixed-overhead query path / compile-once program).
+  **Our-side mitigation available:** switch `_cnl.derive` from `ask_goal` to the `chain_sip` tuple path for
+  ~2.7×; the firmware floor remains. Acceptable off the hot path; revisit before checks land in a
+  per-candidate drive loop.
 
 ## Open risks
 

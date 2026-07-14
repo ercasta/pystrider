@@ -6,6 +6,11 @@ slices; README says 101). Empirical checks re-run for this revision: a single `a
 4-line README example takes ~1.4s over 74 facts (unchanged per-fact cost since yesterday); the
 full suite now runs in ~295s (vs. ~75s for 49 tests yesterday — 2.1× the tests, 3.9× the time).*
 
+*Revised again 2026-07-14 against the working tree at that date: 246 tests collected and green
+(2.4× yesterday's count), suite ~140s — the rule-bank memoization (weakness #4, now addressed)
+cut a ~376s peak to ~24s at the then-110 tests; the growth back to ~140s is new work (Pilot-driven
+app tests, CNL-collapse checks), not the old constant returning.*
+
 ---
 
 ## What changed since the first version (one day, a lot)
@@ -32,6 +37,43 @@ moved, and what is new.
 
 ---
 
+## What changed since the 2026-07-13 revision (another day, another two axes)
+
+- **A fourth axis — diagnosis (abduction) — appeared** (`experiments/diagnosis.py` +
+  `tests/test_diagnosis.py`): observe a symptom ("an `AttributeError` happened at line 5", no input
+  given), abduce the value hypothesis that entails it, CHOOSE the most specific explanation (Occam),
+  and verify the cause by re-running the *forward* analyzer. The loop now runs backwards over the
+  **hypothesis** space as well as the code space — same firmware, exact mirror. Notably, it exists
+  only as a probe docstring: nothing in `docs/` names it.
+- **The conformance spike was built the same day it was designed** (see the BUILT note at the
+  bottom), and its deliberately-left edge shrank within hours: `intake_growth` intakes real Python
+  text with **constants and comparisons as data** and ground-evaluates by reasoning, pinned against
+  Python execution itself as a differential oracle; `api_absorption` shows library knowledge
+  (`dict.get returns_optional yes`) absorbing as **facts** that fire the unchanged deref rule with
+  no seeded hypothesis at all.
+- **The synthesis target graduated from functions to an app** (`app_synthesis`): a runnable Textual
+  cash-withdrawal app synthesized across three bridged vocabularies (business, framework, UX), with
+  deontic obligations firm and preferences defeasible — and, the verification crux, verified by
+  **driving it** (Textual's Pilot) and reading the event trace. The winner-flip under one business
+  fact (`irreversible` forces the confirm screen) is enforced by execution: the compact app really
+  withdraws with no gate, and is really rejected for it.
+- **A composition half was absorbed: grammapy**, now an in-repo peer package. Deviations-from-default
+  compose through four combinators (Choice / Accumulate / Scope / Fold) with design-time soundness
+  checks (guard coverage, footprint disjointness, effect reachability, declared lattice joins), a §12
+  resolution discipline ("forced where unique, declared where preferred, surfaced where ambiguous,
+  never inferred"), and AST-built emission (the string templates are gone). Step 7 closed the loop the
+  right way around: **footprint honesty is checked by execution** — pystrider runs the atoms in an
+  instrumented store and rejects a composition grammapy had admitted from dishonest declarations.
+- **The two engines began collapsing into one.** All four combinators are Datalog-shaped; Scope and
+  Accumulate now compute their verdicts as CNL rules over ugm (`grammapy/_cnl.py`), verdict-identical
+  to the Python checks they replaced — unblocked by two same-day upstream fixes (distinctness
+  `?a != ?b`, read-only `ask_goal(commit=False)`). Choice and Fold still await the same two
+  primitives' application.
+- **The performance wall was measured and turned out mostly self-inflicted** — recommendation #3
+  done; details under weakness #4.
+
+---
+
 ## Verdict up front
 
 The engineering discipline is still unusually good and now demonstrably *repeatable*: the
@@ -48,6 +90,17 @@ auditable substrate where every conclusion is a proof object, and the analyzer a
 synthesizer are literally the same rules. No system I know of closes that particular loop in
 both directions on one engine. Whether it is useful still depends on building toward the place
 where that property is the product.
+
+> **Update (2026-07-14).** The verdict's shape holds and the direction count grew: the same
+> substrate now also runs *diagnosis* (abduce the hypothesis from an observed symptom) and
+> *conformance* (derive spec↔code divergence), and acquired a composition half (grammapy) whose
+> design-time admissions are certified by execution. Two tempering notes. First, the docs are
+> falling behind the artifact — the diagnosis axis exists only in a probe docstring, and the
+> README's "five directions" claim has no `docs/` page behind two of them. Second, the strongest
+> new verification oracle (drive the app, read the event trace) is also the least characterized:
+> nothing states *which* trace properties a passing drive proves and which it silently doesn't
+> check. Both are documentation debts, but they are debts against the project's own moral claim,
+> which is auditability.
 
 ---
 
@@ -110,6 +163,15 @@ and code generator"; the middle term is UX-true, the first is semantics-false. L
 constraint solving) the system rightly does not attempt. The distinctive, defensible pitch is
 provenance + closed loop in both directions + honest boundedness.
 
+> **ADDRESSED (2026-07-14) — the word is gone.** The README now leads with "**hypothesis-driven**
+> code analyzer, bug-fixer, code generator, and policy-conformance checker" — the semantics-false
+> "dynamic" was dropped, and the UX-true term promoted, which is exactly what this weakness asked
+> for. "Symbolically *run* the code" survives, but it is *closer to true* than when the complaint
+> was written: `intake_growth` now ground-evaluates real constants and comparisons (concrete
+> interpretation of a fully ground scenario, one path taken, arithmetic in the §8 calculator),
+> which is a defensible sense of "run". Residual: the README's five-direction breadth claim now
+> runs ahead of the docs rather than of the semantics — a lesser sin, noted in the verdict update.
+
 **2. The hypothesis must still be supplied — and now the spec must be too.** Analysis needs the
 caller to enumerate `{"raw": "none"}`; synthesis needs a hand-built `Spec` dataclass whose
 intents (`lookup_with_default`, `accrual`, …) name hand-authored recipe pools. Both halves are
@@ -117,6 +179,15 @@ checkers/selectors, not discoverers. This is survivable at the current two-value
 three-candidate pools, but it is the axis on which the whole system is a *verifier of proposals*
 rather than a *generator of them* — which is also why the LLM-in-the-loop direction (Risks,
 below) keeps getting more attractive rather than less.
+
+> **ERODED FROM THREE SIDES (2026-07-14), not yet dissolved.** (i) The diagnosis probe *inverts*
+> the axis: the hypothesis is the output — an observed symptom in, an abduced input out, verified
+> by the forward analyzer. (ii) The conformance sweep enumerates hypotheses from the spec's
+> declared vocabulary and boundary constants, exactly as the unification design predicted.
+> (iii) `api_absorption` derives a deref bug with *no seeded hypothesis at all* — the None source
+> is an absorbed library fact, not a supplied dict. Each is a probe, not the productized `analyze`
+> surface, and the general answer is still the LLM generator — but "the hypothesis must be
+> supplied" is no longer structurally true of the architecture, only of the current entry point.
 
 **3. The flagship effects are the ones existing tools already solve — and "verified" means only
 them.** Still two effects, both None-shaped (`attribute_error`, `returns_none`), both caught by
@@ -127,6 +198,17 @@ formula, `preserves_input`) honestly bolt on concrete execution, which is the ri
 but the README's "verified by re-execution" reads stronger than the effect vocabulary backing
 it. Growing the effect table is now load-bearing for *both* axes.
 
+> **PARTLY ADDRESSED (2026-07-14) — the "verified" half moved; the effect table did not.** The
+> oracle family grew well past `analyze_all`: `app_synthesis` verifies by *driving* the emitted app
+> (Pilot) and asserting the observed event trace (`gate_shown` before `withdrawn`);
+> `footprint_honesty` certifies declared write-footprints by instrumented execution — and rejects a
+> composition the design-time check had admitted; `intake_growth` pins reasoning against Python
+> execution itself as a differential oracle. "Verified" increasingly means "observed under
+> execution", which is what the README claimed all along. The effect table itself is still two
+> None-shaped effects; `api_absorption` slice 4 (`method_not_found` from absorbed `has_method`
+> facts) is the named next entry, still unbuilt — and absorption is now the cheapest way to grow
+> the table, since a new effect can ride on absorbed facts rather than new semantics rules.
+
 **4. Performance is still a wall being walked toward, and the wall got closer.** The README
 example still costs ~1.4s over 74 facts (per-fact cost unchanged). The suite went from 49 tests
 in ~75s to 102 tests in ~295s — 2.1× the tests at 3.9× the cost, i.e. the *average test nearly
@@ -136,6 +218,17 @@ compositions × Session builds. The first version's recommendation #3 (benchmark
 path before widening it) was *not* done, while the Session path acquired a new consumer
 (synthesis verification). The collision course with the inter-procedural ambition is unchanged;
 the traffic on it doubled and the toll went up.
+
+> **ADDRESSED (2026-07-14) — and the wall was mostly self-inflicted.** Recommendation #3 was done
+> (`experiments/session_benchmark.py`): `seed_from_focus` keeps analyze ~flat (×1.67 over a ×7.95
+> graph growth) while global focus goes super-linear (×13.22) — the Session scoping is load-bearing,
+> not decorative. The benchmark also exposed the real hot-path cost, which was not ugm's per-triple
+> constant but `load_machine_rules` *re-validating the static bank on every detect* (~65% of every
+> analyze) — now memoized: `repair_all` 8.2s → 0.21s, the suite 376s → ~24s at the then-110 tests.
+> Today's 246 tests run in ~140s; the regrowth is new work (Pilot app-driving; the CNL-collapse
+> checks, each heavier than the Python one-liner it replaced — fine off the hot path, watched if
+> checks move onto a per-candidate drive loop), not the old constant returning. The remaining lever
+> — ugm's per-triple pure-Python fold — is upstream, and has been fed back there.
 
 **5. UNKNOWN is still not surfaced — recommendation #1, not done, and now it leaks into
 "clean".** `stmt()` still returns the state unchanged for unsupported statements
@@ -215,6 +308,19 @@ its own emit/verify scaffolding, and the divergence tax will grow.
 > artifact, and `spec_synthesis`/`codegen_understand` have not yet been migrated onto `emit` (they
 > can be; the surface fits their shape). Productizing an end-to-end synthesis *entry point* (spec →
 > source), not just the selection core, is the remaining step.
+
+> **FURTHER ADDRESSED (2026-07-14) — composition arrived; grammar search still absent.** The
+> selection-not-generation gap was attacked from a direction this weakness did not anticipate: not a
+> grammar over expressions but a **composition algebra over deviations-from-default** (grammapy,
+> absorbed as an in-repo peer package). The app probe assembles a *runnable Textual app* from
+> separable fragments across three bridged vocabularies; four checked combinators replace the flat
+> candidate pool for the compositional part; emission is AST-built (string templates retired); and
+> `assemble(spec) → DeviationSpec → synthesize` is, in probe form, the end-to-end spec→source entry
+> point recommendation #4 asked for. What still stands: the atoms and fragments are hand-authored —
+> the generator front-end that would draft them (grammapy Phase 5 steps 5–6, the natural LLM slot)
+> is the named next build — and `spec_synthesis`/`codegen_understand` were never migrated onto
+> `emit` (now partly moot: the app path retired `emit.select` in favor of the sounder Choice/§12
+> resolution machinery, which suggests `emit.select` was the interim surface, not the destination).
 
 ---
 
@@ -304,7 +410,10 @@ The one-sentence comparison, updated: *systems exist that analyze better, repair
 generate far better — no system exists in which analysis, repair, and generation are the same
 small rule engine running in different directions, with every step of all three carrying a
 replayable proof.* That composite is still the only defensible pitch, and it got materially
-stronger this week.
+stronger this week. *(2026-07-14: "different directions" now counts five — analysis, repair,
+synthesis, diagnosis, conformance — and the synthesis direction gained a composition algebra
+whose design-time admissions are certified by execution. The sentence's shape survives; its
+scope keeps growing without yet breaking.)*
 
 ---
 
@@ -329,6 +438,18 @@ ambiguous is another quiet trap for the next consumer. The "loudly refuse, don't
 less" culture shift remains the most important ugm-side ask, together with the unchanged
 performance question: every triple is still 3 nodes / 2 edges folded in pure Python, and the
 synthesis loops just multiplied the number of KB rebuilds per user-visible operation.
+
+> **Update (2026-07-14).** The two-repo loop ran three more times in a single day, in both
+> directions. Downstream→upstream: an init-order crash (`'State' object is not iterable` on cold
+> import, never minimizable to a standalone repro) was filed and fixed same-day (#10). Upstream→
+> downstream, the good case: the combinators-as-CNL collapse was *unblocked by* two requested
+> primitives shipping the same day they were asked for — distinctness `?a != ?b` (#11) and
+> read-only `ask_goal(commit=False)` (#12) — and grammapy now imports ugm, so the substrate gained
+> its second in-repo consumer. Upstream→downstream, the tempering case: a firmware signature change
+> (`rules` became keyword-only on `suppose`/`chain_sip`) broke 74 downstream tests unannounced —
+> co-development speed cuts both ways, and pystrider is now effectively ugm's integration suite.
+> The performance ask is sharpened, not resolved: with the rule-bank revalidation memoized
+> downstream, the per-triple pure-Python fold is the only hot-path lever pystrider cannot reach.
 
 ---
 
@@ -360,12 +481,27 @@ synthesis loops just multiplied the number of KB rebuilds per user-visible opera
    it; see the PARTLY-ADDRESSED note under weakness #8. Remaining: an end-to-end spec→source *entry
    point*, and migrating the other probes onto the surface. (The sixth probe, `callgraph_synthesis`,
    was built before this note landed — and has now been refactored onto the productized surface,
-   which is the mitigation the critique asks for.)
+   which is the mitigation the critique asks for.) — **Reshaped (2026-07-14):** the app probe +
+   grammapy's `assemble(spec) → DeviationSpec → synthesize` *is* a spec→source entry point in probe
+   form, and it superseded rather than extended `emit.select`. The productization question is no
+   longer "add an entry point to `emit.py`" but "productize the two-half loop: reason (CNL) →
+   resolve (§12) → compose (combinators) → emit (AST) → verify by driving."
 5. **Prototype LLM-in-the-loop.** Carried over, upgraded from "promising" to "obvious": the
    checking half already exists (generator proposes → analyzer disposes, with proofs). Let an
    LLM be the generator — of hypotheses on the analysis side and of skeleton pools on the
    synthesis side — and the two hardest scaling problems (weaknesses #2 and #8) become the
-   LLM's job, while the part LLMs cannot do (checkable justification) stays here.
+   LLM's job, while the part LLMs cannot do (checkable justification) stays here. — **Now
+   concretely named (2026-07-14):** grammapy Phase 5 steps 5–6, the external generator that drafts
+   the deviation spec and fills atom-body AST holes, gated by the combinators and the execution
+   oracle ("compose by pattern, skip the math" as the front-end, with the math still run behind
+   it). Every prerequisite it was waiting on — AST emission, footprint honesty by execution, §12
+   resolution — landed this week. Still unbuilt; still first in line.
+6. **(New) Pay the documentation debt on the two newest oracles.** The diagnosis axis exists only
+   as a probe docstring — nothing in `docs/` names it — and the Pilot-drive oracle has no stated
+   contract (which event-trace properties a passing drive proves, and which it silently does not
+   check). Both are cheap to write and both are debts against the project's own auditability claim;
+   a critique that praises the probe→findings→pin pipeline has to flag the first two artifacts that
+   skipped the findings step.
 
 **Is it useful?** As a bug-finder against typed tooling: still no. As a code generator against
 LLMs: no, and it should not try. As a research vehicle: earning its keep faster than before —
@@ -374,6 +510,13 @@ are three real results in a week. As a substrate for *auditable machine reasonin
 where every conclusion, every fix, and now every generated function carries a checkable proof —
 it remains the most promising small system of its kind, and the synthesis axis widened that
 claim from "reads code" to "reads and writes code" without breaking it.
+
+*Second-revision addendum (2026-07-14): the week's second half added execution-grade verification
+(drive the app, instrument the writes, differential-test against Python itself), a composition
+algebra with honesty checks, knowledge-as-data absorption, and a measured-then-fixed performance
+story. The "research vehicle" verdict is compounding. The open question has sharpened accordingly:
+not "which axis is the product" but "which composed loop is" — and the generator front-end
+(item 5) is now the only missing piece of the most plausible answer.*
 
 ---
 
@@ -648,3 +791,13 @@ policy — and a verified minimal edit when it doesn't.*
 > Python text — the threshold is DATA (so repair genuinely edits + re-derives), but growing
 > `intake.py` with constants/comparisons to check *arbitrary foreign Python* remains the separate,
 > named cost. See `docs/spike_findings.md` ("conformance strider").
+
+> **Edge shrunk (2026-07-14, later the same day).** `experiments/intake_growth.py` built exactly
+> the named cost: a real Python decision function intaken *from source text* with constants and
+> comparisons as data, ground-evaluated by reasoning, and differential-tested against Python
+> execution over the whole boundary sweep. Beside it, `experiments/api_absorption.py`
+> (+ `docs/api_absorption_design.md`) showed the same mechanism one level up: library knowledge
+> (`dict.get returns_optional yes`) absorbed as facts that make the *unchanged* deref rule fire on
+> `x = d.get(k); x.attr` — conservatively (unknown receiver ⇒ no false positive) and with no
+> seeded hypothesis. The remaining wiring is slice 1b — pointing the `diverges` judge at code
+> intaken from text rather than hand-reified — documented, not built.

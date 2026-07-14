@@ -17,7 +17,7 @@ from typing import Iterable
 from grammapy.channels import Footprint, WriteConflict, disjoint_writes
 from grammapy.guards import GuardedProduction, guard_coverage
 from grammapy.scope import ScopeNode, unhandled_emissions
-from grammapy.lattice import Lattice, FoldItem, UnknownVerdict
+from grammapy.lattice import Lattice, FoldItem, UnknownVerdict, fold_unknowns, fold_winner
 
 __all__ = ["Item", "CompositionError", "Accumulate", "Choice", "Scope", "Fold"]
 
@@ -124,17 +124,15 @@ class Fold:
 
     @staticmethod
     def check(lattice: Lattice, items: Iterable[FoldItem]) -> None:
-        """Raise ``CompositionError`` if any contribution's verdict is outside the lattice domain."""
-        domain = lattice.domain()
-        bad = [UnknownVerdict(it.value, it.label) for it in items if it.value not in domain]
+        """Raise ``CompositionError`` if any contribution's verdict is outside the lattice domain.
+        The membership verdict is a CNL rule (`lattice.fold_unknowns`)."""
+        bad = fold_unknowns(lattice, items)
         if bad:
             raise CompositionError("Fold", bad, reason="a contribution's verdict is not in the lattice domain")
 
     @staticmethod
     def combine(lattice: Lattice, items: Iterable[FoldItem]) -> str:
         """Fold the contributions through the declared join (order-independent). Empty ⇒ the lattice
-        bottom (the join identity). Assumes ``check`` passed (all verdicts in domain)."""
-        result = lattice.bottom()
-        for it in items:
-            result = lattice.join(result, it.value)
-        return result
+        bottom (the join identity). Assumes ``check`` passed (all verdicts in domain). The winner is a
+        CNL set query (`lattice.fold_winner`), so order-independence is structural."""
+        return fold_winner(lattice, items)

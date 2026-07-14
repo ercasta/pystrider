@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+from grammapy._cnl import derive
+
 __all__ = [
     "ABSENT", "Guard", "GuardedProduction",
     "GuardOverlap", "GuardGap", "GuardUnknownValue", "guard_coverage",
@@ -112,28 +114,61 @@ class GuardUnknownValue:
         return f"guard of `{self.label}` admits `{self.value}`, which is not in the declared enum"
 
 
+# The determinacy analysis as a CNL rule-module. States and productions are namespaced (`s:`/`p:`) so a
+# production whose label equals an enum literal (the common `sql`-branch-for-`sql` case) never fuses with
+# the state node. The three verdicts: a guard literal outside the domain (`guard_unknown`, negation), a
+# state admitted by two DISTINCT productions (`state_overlap`, the `?p != ?q` distinctness — not disjoint),
+# and a domain state admitted by none (`state_gap`, stratified negation — not exhaustive).
+_GUARD_RULES = """
+?s is_admitted yes when ?p admits ?s
+?v guard_unknown yes when ?p admits ?v and not ?v domain_state yes
+?s state_overlap yes when ?p admits ?s and ?q admits ?s and ?p != ?q and ?s domain_state yes
+?s state_gap yes when ?s domain_state yes and not ?s is_admitted yes
+"""
+
+
+def _state_node(state) -> str:
+    return "s:absent" if state is ABSENT else f"s:{state}"
+
+
+def _from_state_node(node: str):
+    name = node[2:]                                      # strip the "s:" namespace
+    return ABSENT if name == "absent" else name
+
+
 def guard_coverage(enum: Iterable[str], productions: Iterable[GuardedProduction]) -> list:
     """The determinacy analysis, made operational (vision.md §4.3).
 
     Given the decision key's finite ``enum`` and its guarded productions, return every coverage
     conflict: guard **overlaps** (a state admitted twice — not disjoint), **gaps** (a state admitted
     never — not exhaustive), and **unknown values** (a guard literal outside the enum). Empty list ⇒ the
-    guards **partition** the domain ``enum ∪ {absent}`` exactly, so exactly one production fires per
-    spec. Order-independent by construction (it inspects the unordered state→owner map).
-    """
+    guards **partition** the domain ``enum ∪ {absent}`` exactly, so exactly one production fires per spec.
+
+    The verdict is the CNL rule-module ``_GUARD_RULES`` evaluated read-only; the violation objects are
+    reconstructed from the same guards for the message. Order-independent by construction (the CNL
+    negation/distinctness rules inspect unordered facts)."""
+    productions = list(productions)
     literals = set(enum)
-    domain = literals | {ABSENT}
-    owner: dict = {}
-    conflicts: list = []
+    facts: list[tuple[str, str, str]] = [(_state_node(l), "domain_state", "yes") for l in literals]
+    facts.append(("s:absent", "domain_state", "yes"))
     for p in productions:
+        facts.extend((f"p:{p.label}", "admits", _state_node(s)) for s in p.guard.covers())
+
+    def who(pred: str) -> set[str]:
+        return {a.split(" ", 1)[0] for a in derive(facts, _GUARD_RULES, f"who {pred} yes")
+                if a.split(" ", 1)[0].startswith("s:")}
+
+    unknown, overlapped, gaps = who("guard_unknown"), who("state_overlap"), who("state_gap")
+
+    conflicts: list = []
+    for p in productions:                                # unknown guard literals (production-scan order)
         for state in p.guard.covers():
-            if state is not ABSENT and state not in literals:
+            if _state_node(state) in unknown:
                 conflicts.append(GuardUnknownValue(state, p.label))
-                continue
-            prior = owner.get(state)
-            if prior is not None and prior != p.label:
-                conflicts.append(GuardOverlap(state, prior, p.label))
-            else:
-                owner.setdefault(state, p.label)
-    conflicts += [GuardGap(s) for s in sorted(domain - owner.keys(), key=str)]
+    for node in sorted(overlapped):                      # states admitted by two distinct productions
+        state = _from_state_node(node)
+        admitters = [p.label for p in productions if state in p.guard.covers()]
+        conflicts.extend(GuardOverlap(state, admitters[0], later) for later in admitters[1:])
+    conflicts += [GuardGap(_from_state_node(n))           # domain states no production admits
+                  for n in sorted(gaps, key=lambda n: str(_from_state_node(n)))]
     return conflicts

@@ -16,8 +16,8 @@ plus §12 cross-cutting constraint resolution — **RESOLVES and GATES** every d
 emitted app is **verified by DRIVING it** (Textual Pilot). Full design, status, and the phased plan:
 **[`grammapy_convergence.md`](grammapy_convergence.md) — read that first for this line.**
 
-**Status: Phases 1–4 + Phase 5 step 7 DONE (suite 236 green).** All four combinators are built and
-exercised by one app (`experiments/app_synthesis.py` — synthesize a runnable Textual cash-withdrawal app
+**Status: Phases 1–4 + Phase 5 step 7 DONE; bridges-vs-channels RESOLVED (suite 246 green).** All four
+combinators are built and exercised by one app (`experiments/app_synthesis.py` — synthesize a runnable Textual cash-withdrawal app
 across bridged business/framework/UX vocabularies, verified by driving). §12 resolution unifies the four
 decision points under one `DeviationSpec` (`assemble`); **emission is AST-built** (`assemble_ast(dev)`
 composes `ast` fragments into an `ast.Module`, unparsed; string templates retired); and **footprint
@@ -27,14 +27,24 @@ admitted from a dishonest atom). **Next: Phase 5 steps 5–6 — external genera
 deviation spec; this is where the deferred **bridges-vs-channels** decision and **libcst** (round-trip of
 user-owned atom bodies) become load-bearing (see the convergence doc).
 
-**Run:** `./.venv/Scripts/python.exe -m pytest -q` (236 green) · `python -m experiments.app_synthesis`
-· `python -m experiments.footprint_honesty`
+**Run:** `./.venv/Scripts/python.exe -m pytest -q` (246 green) · `python -m experiments.app_synthesis`
+· `python -m experiments.footprint_honesty` · `python -m experiments.combinators_as_cnl`
 (the walkthrough) · combinator tests: `tests/test_disjointness.py` (Accumulate), `test_choice.py`,
 `test_scope.py`, `test_fold.py`, `test_resolution.py` (§12).
 
-**Deferred decision (becomes load-bearing at Phase 3→5 boundary):** pystrider's untyped **bridges** vs
-grammapy's typed **channels** — currently built on untyped capability names; typing them is an additive
-follow-on (grammapy's own channel types are still placeholders).
+**Bridges-vs-channels — RESOLVED + FULLY ENACTED (collapse into CNL).** The two live in different engines
+(bridges = CNL facts; channels = Python checks); all four grammapy combinators are Datalog-shaped, so the
+unification target is **CNL rules over the one ugm graph** (the "type" question dissolves — types are
+facts, compatibility a rule). The real seam is **reason-about-it (CNL) vs run-it (Python)**, not pystrider
+vs grammapy. **Enacted for all four:** grammapy imports ugm; `grammapy/_cnl.py` runs rule banks read-only
+(`ask_goal(commit=False)`) — Accumulate (`disjoint_writes`/`_DISJOINT_WRITES_RULE`, `?a != ?b`), Scope
+(`unhandled_emissions`/`_UNHANDLED_RULES`, closure + `not handled`), Choice (`guard_coverage`/`_GUARD_RULES`,
+overlap `?p != ?q` + gap negation + unknown), Fold (`lattice.fold_winner`/`fold_unknowns`, `outranks`
+closure + `not beaten` winner). Public return types + messages preserved; all suites green. Unblocked by
+ugm feedback #11 (`?a != ?b`) + #12 (read-only `ask_goal`). **Cost (real):** a CNL check is ~1150× slower
+than the old Python one-liner — a single check ~3.2ms, entirely `ask_goal` (~2.8ms fixed floor); the suite
+went ~55s→~255s. Filed as ugm #13; our-side mitigation = switch `_cnl.derive` to the `chain_sip` tuple path
+(~2.7×). Fine off the hot path; revisit before checks land in a per-candidate drive loop.
 
 The pre-convergence pystrider loop (below) is unchanged and green — the substrate this line builds on.
 
@@ -118,6 +128,12 @@ same firmware; still a probe (like `state_threading.py`), not productized. See `
 
 ## ugm dependencies (verify at session start — they were in flux)
 
+- **Distinctness `?a != ?b` + read-only `ask_goal(commit=False)` — LANDED (ugm feedback #11, #12,
+  2026-07-14).** `?a != ?b` in a rule body is a distinctness condition honoured by the join (identity
+  semantics; loud on unsupported shapes — in a head, under `not`, a literal/unbound side). `ask_goal(...,
+  commit=False)` is read-only (ephemeral pencil scope) for yes/no + who questions — but a `why`/n-ary
+  render RAISES under `commit=False` (it materializes). These unblocked the composition-checks-as-CNL
+  collapse (see `experiments/combinators_as_cnl.py`).
 - **`rules` is KEYWORD-ONLY on `suppose`/`chain_sip` (ugm "firmware over ISA", `0709c74`, 2026-07-14).**
   The signature is now `suppose(fact_g, assumptions, predictions, *, rules=None, …)`; `ask_goal` is
   unchanged (positional `rules`). pystrider's `suppose(kb, rg, assumptions=…)` call sites were adapted to

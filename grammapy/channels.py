@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from grammapy._cnl import derive
+
 __all__ = ["Channel", "Footprint", "WriteConflict", "disjoint_writes"]
 
 
@@ -73,6 +75,12 @@ class WriteConflict:
         )
 
 
+# The frame rule as a CNL rule-module: a channel is a conflict iff TWO DISTINCT items write it.
+# `?a != ?b` is the distinctness condition honoured by the join (ugm feedback #11) — without it this
+# self-joins and over-fires on any single writer. This IS the soundness verdict (the collapse into CNL).
+_DISJOINT_WRITES_RULE = "?c write_conflict yes when ?a writes ?c and ?b writes ?c and ?a != ?b"
+
+
 def disjoint_writes(items: Iterable[tuple[str, Footprint]]) -> list[WriteConflict]:
     """The frame rule, made operational (vision.md §3.1, §7.4).
 
@@ -80,16 +88,28 @@ def disjoint_writes(items: Iterable[tuple[str, Footprint]]) -> list[WriteConflic
     Empty list ⇒ the items compose by disjoint footprint. This is the single check
     shared by REST decision points 4, 5, 7, and 9 (docs/rest-domain.md §10).
 
-    Detection is order-independent by construction (it inspects unordered pairs), which
-    is what the accumulation shape requires — property-tested at roadmap step 6.
+    The soundness verdict — *which channels are written by two distinct items* — is a CNL rule
+    (`_DISJOINT_WRITES_RULE`) evaluated read-only over the write facts (identity by label: two
+    same-labelled items are one writer, so a lone item never self-conflicts). The pairwise
+    ``WriteConflict`` list is then reconstructed from the same footprints for the human-facing
+    rejection message. Order-independent by construction — the CNL join inspects unordered pairs.
     """
-    conflicts: list[WriteConflict] = []
-    owner: dict[Channel, str] = {}
+    items = list(items)
+    facts = [(label, "writes", str(ch)) for label, fp in items for ch in fp.writes]
+    known = {str(ch) for _, fp in items for ch in fp.writes}
+    answers = derive(facts, _DISJOINT_WRITES_RULE, "who write_conflict yes")
+    conflicted = {a.split(" ", 1)[0] for a in answers if a.split(" ", 1)[0] in known}
+
+    # reconstruct pairwise conflicts (the first writer vs each later one) for the message, preserving
+    # input order and the Channel object (which carries the type) — reporting, not the verdict.
+    writers: dict[str, list[str]] = {}
+    channel_of: dict[str, Channel] = {}
     for label, fp in items:
-        for channel in fp.writes:
-            prior = owner.get(channel)
-            if prior is not None and prior != label:
-                conflicts.append(WriteConflict(channel, prior, label))
-            else:
-                owner.setdefault(channel, label)
-    return conflicts
+        for ch in fp.writes:
+            if str(ch) in conflicted:
+                channel_of[str(ch)] = ch
+                bucket = writers.setdefault(str(ch), [])
+                if label not in bucket:
+                    bucket.append(label)
+    return [WriteConflict(channel_of[name], ws[0], later)
+            for name, ws in writers.items() for later in ws[1:]]

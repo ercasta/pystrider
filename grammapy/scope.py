@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from grammapy._cnl import derive
+
 __all__ = ["ScopeNode", "Unhandled", "unhandled_emissions"]
 
 
@@ -47,12 +49,53 @@ class Unhandled:
         return f"control signal `{self.signal}` emitted by `{self.leaf}` has no covering handler in scope"
 
 
+# Reachability as a CNL rule-module: a signal a node EMITS is handled iff some STRICT ancestor HANDLES
+# it (the `parent_of` closure excludes the node itself, so a node never handles its own emission). The
+# closure is recursive Datalog; `not handled` is stratified negation over it — the soundness verdict.
+_UNHANDLED_RULES = """
+?a ancestor_of ?n when ?a parent_of ?n
+?a ancestor_of ?n when ?a parent_of ?m and ?m ancestor_of ?n
+?n handled ?sig when ?n emits ?sig and ?a ancestor_of ?n and ?a handles ?sig
+?n unhandled ?sig when ?n emits ?sig and not ?n handled ?sig
+"""
+
+# a synthetic ancestor above the root, carrying `handled_above` — signals handled by an enclosing scope.
+_ROOT_ABOVE = "\x00grammapy.scope.above"
+
+
 def unhandled_emissions(node: ScopeNode, handled_above: frozenset[str] = frozenset()) -> list[Unhandled]:
     """Walk the control tree; return every emission that escapes its scope (no handler ancestor covers
     it). ``handled_above`` is the set of signals handled by strict ancestors — a node's own ``handles``
-    covers its descendants, never its own ``emits``. Empty list ⇒ every effect is reachably handled."""
-    conflicts = [Unhandled(s, node.label) for s in node.emits if s not in handled_above]
-    handled = handled_above | node.handles
-    for child in node.children:
-        conflicts += unhandled_emissions(child, handled)
+    covers its descendants, never its own ``emits``. Empty list ⇒ every effect is reachably handled.
+
+    The verdict is the CNL rule-module ``_UNHANDLED_RULES`` evaluated read-only: a recursive ancestor
+    closure + stratified ``not handled``. ``handled_above`` is modelled as a synthetic handler node
+    above the root. Results are emitted in tree-walk order (the original traversal order)."""
+    facts: list[tuple[str, str, str]] = []
+    if handled_above:
+        facts.append((_ROOT_ABOVE, "parent_of", node.label))
+        facts.extend((_ROOT_ABOVE, "handles", s) for s in handled_above)
+
+    def walk(nd: ScopeNode) -> None:
+        facts.extend((nd.label, "emits", s) for s in nd.emits)
+        facts.extend((nd.label, "handles", s) for s in nd.handles)
+        for child in nd.children:
+            facts.append((nd.label, "parent_of", child.label))
+            walk(child)
+    walk(node)
+
+    signals = {s for (_, p, s) in facts if p == "emits"}
+    escaped: set[tuple[str, str]] = set()
+    for sig in signals:
+        for ans in derive(facts, _UNHANDLED_RULES, f"who unhandled {sig}"):
+            parts = ans.split()                         # a real answer is "<leaf> unhandled <sig>"
+            if len(parts) == 3 and parts[1] == "unhandled":
+                escaped.add((parts[0], parts[2]))
+
+    conflicts: list[Unhandled] = []
+    def collect(nd: ScopeNode) -> None:                 # tree-walk order, matching the original
+        conflicts.extend(Unhandled(s, nd.label) for s in nd.emits if (nd.label, s) in escaped)
+        for child in nd.children:
+            collect(child)
+    collect(node)
     return conflicts
