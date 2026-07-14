@@ -43,6 +43,17 @@ class Outcome:
     base_var: str = ""           # the variable dereferenced at the site (what a guard would test)
     trace: list[str] = field(default_factory=list)
 
+    @property
+    def key(self) -> tuple[str, str, str]:
+        """A STABLE identity for this outcome across a re-intake of edited source: (kind, base_var,
+        label). The structural `site` id renumbers whenever an edit shifts the AST, and `label` alone
+        conflates a different-KIND or different-VARIABLE problem at a look-alike site — so the repair
+        path compares outcomes by this key, asking "is the TARGET gone?" and "did a NEW outcome
+        appear?" of the logical outcome, not an unstable id or an ambiguous label (docs/critique.md
+        weakness #6c). Residual: two textually identical derefs still share a key — perfect site
+        identity would need intake to emit stable ids across edits (a deeper change)."""
+        return (self.kind, self.base_var, self.label)
+
     def headline(self) -> str:
         hyp = ", ".join(f"{k}={ 'None' if v=='none' else 'obj' }"
                         for k, v in self.hypothesis.items())
@@ -228,14 +239,16 @@ def repair(intake: Intake, hypothesis: dict[str, str], outcome: Outcome) -> Repa
     """Materialize an `if <base_var> is not None:` guard around the deref, then VERIFY by
     re-execution: re-intake the *edited source* (so the guard facts are derived, not
     hand-authored) and re-run the analysis under the same hypothesis. The edit is trusted only
-    if the outcome clears on the real transformed code."""
+    if the outcome clears on the real transformed code — checked across EVERY effect (`analyze_all`,
+    critique #6a) by the stable outcome key (#6c): the target must be gone and no new outcome may
+    appear."""
     var = outcome.base_var or hypothesis and next(iter(hypothesis))    # fall back to a param
     v2_source = insert_none_guard(intake.source, var, outcome.line)
-    v2 = intake_function(v2_source)
-    residual = analyze(v2, hypothesis)
-    cleared = all(o.site != outcome.site and o.label != outcome.label for o in residual)
-    return Repair(var=var, v2_source=v2_source, cleared=cleared and not residual,
-                  residual=residual)
+    residual = analyze_all(intake_function(v2_source), hypothesis)     # every effect, not just this one
+    baseline = {o.key for o in analyze_all(intake, hypothesis)}
+    resid_keys = {o.key for o in residual}
+    cleared = outcome.key not in resid_keys and not (resid_keys - baseline)   # gone + no regression
+    return Repair(var=var, v2_source=v2_source, cleared=cleared, residual=residual)
 
 
 # --- means-ends SELECTION: several candidate edits, verified, then CHOOSE the graded-best ------
@@ -247,9 +260,10 @@ class Candidate:
     var: str                     # the variable the guard tests
     description: str
     v2_source: str
-    cleared: bool                # did it verify (outcome gone under re-execution)?
+    cleared: bool                # did it verify (target gone AND no new outcome, EVERY effect)?
     locality: float              # 1.0 = acts at the deref's own base var; lower = upstream/wider
     compactness: float           # 1.0 = smallest edit; lower = wraps more code
+    residual: list = field(default_factory=list)   # outcomes (all effects) still present after the edit
 
     @property
     def fit(self) -> float:
@@ -259,24 +273,31 @@ class Candidate:
 
 
 def candidate_edits(intake: Intake, hypothesis: dict[str, str], outcome: Outcome, *,
-                    provides_fn: "Callable[[Intake, str], set[str]]" = ops.provides,
-                    analyzer: "Callable[..., list[Outcome]]" = analyze) -> list[Candidate]:
+                    provides_fn: "Callable[[Intake, str], set[str]]" = ops.provides) -> list[Candidate]:
     """RETRIEVE applicable operators from the effect-keyed library by backward-CHAIN (keyed on
     `outcome.kind`), materialize each as real source, and VERIFY each by re-execution. The candidate
     set is chosen by the library (operators-as-data), not a hard-coded Python list; fit weights come
-    from the library. `provides_fn` + `analyzer` swap the effect (None-deref by default; a
-    returns-None outcome passes `ops.provides_return` + `analyze_return_none`) with no new machinery."""
+    from the library. `provides_fn` selects the retrieval preconditions for the effect (None-deref by
+    default; a returns-None outcome passes `ops.provides_return`).
+
+    Verification runs `analyze_all` — EVERY effect, not just the target's (docs/critique.md #6a) — and
+    judges by the stable outcome KEY (#6c): a candidate `cleared`s iff the TARGET outcome is gone AND
+    no NEW outcome (of any effect) appears, so an edit that trades one bug for another is refused, not
+    counted a fix. Each candidate carries its `residual` (all outcomes still present) so a caller need
+    not re-analyze."""
     site_provides = provides_fn(intake, outcome.base_var)
     applicable = ops.retrieve(outcome.site, outcome.kind, site_provides)
+    baseline = {o.key for o in analyze_all(intake, hypothesis)}   # what was already wrong (no regression on these)
 
     out: list[Candidate] = []
     for op in applicable:
         var, v2 = ops.STRATEGIES[op.strategy](intake, outcome)
-        residual = analyzer(intake_function(v2), hypothesis)
-        cleared = not any(o.label == outcome.label for o in residual)
+        residual = analyze_all(intake_function(v2), hypothesis)   # every effect, not just the target's
+        resid_keys = {o.key for o in residual}
+        cleared = outcome.key not in resid_keys and not (resid_keys - baseline)   # gone + no new bug
         out.append(Candidate(name=op.name, var=var, description=op.description.format(var=var),
                              v2_source=v2, cleared=cleared,
-                             locality=op.locality, compactness=op.compactness))
+                             locality=op.locality, compactness=op.compactness, residual=residual))
     return out
 
 
@@ -305,13 +326,13 @@ def _choose(cands: list[Candidate],
 
 
 def choose_repair(intake: Intake, hypothesis: dict[str, str], outcome: Outcome, *,
-                  provides_fn: "Callable[[Intake, str], set[str]]" = ops.provides,
-                  analyzer: "Callable[..., list[Outcome]]" = analyze) -> Selection:
+                  provides_fn: "Callable[[Intake, str], set[str]]" = ops.provides) -> Selection:
     """Generate + verify candidate edits, then use the public CHOOSE firmware mode to pick the
     graded-best (smallest / most-local edit wins). Losers are retained + auditable (monotone).
-    `provides_fn` + `analyzer` select the effect (see `candidate_edits`)."""
-    cands = candidate_edits(intake, hypothesis, outcome,
-                            provides_fn=provides_fn, analyzer=analyzer)
+    `provides_fn` selects the effect's retrieval preconditions; verification is cross-effect
+    (`analyze_all`) inside `candidate_edits`, so a `cleared` candidate is one that introduces no new
+    bug of ANY effect, not just the target's (docs/critique.md #6a)."""
+    cands = candidate_edits(intake, hypothesis, outcome, provides_fn=provides_fn)
     winner, trace = _choose(cands, lambda c: c.fit)   # only verified edits carry positive fit
     return Selection(winner=winner, candidates=cands, trace=trace)
 
@@ -400,18 +421,19 @@ def repair_all(intake: Intake, hypothesis: dict[str, str], *, max_steps: int = 1
         if not outcomes:
             return RepairPlan(source=source, steps=steps, clean=True, caveats=caveats(cur))
         target = outcomes[0]
-        prev_labels = {o.label for o in outcomes}
-        provides_fn, analyzer = EFFECTS[target.kind]
+        prev_keys = {o.key for o in outcomes}                       # stable identity, not label (#6c)
+        provides_fn = EFFECTS[target.kind][0]
 
         # retrieve + materialize edits for the target's effect, then keep the regression-free ones.
-        cands = candidate_edits(cur, hypothesis, target,
-                                provides_fn=provides_fn, analyzer=analyzer)
+        # Each candidate already carries its cross-effect residual (verified via analyze_all), so we
+        # judge progress + regression off `c.residual` — no second analysis pass.
+        cands = candidate_edits(cur, hypothesis, target, provides_fn=provides_fn)
         accepted: list[Candidate] = []
         residual_of: dict[str, list[Outcome]] = {}
         for c in cands:
-            resid = analyze_all(intake_function(c.v2_source), hypothesis)
+            resid = c.residual
             makes_progress = len(resid) < len(outcomes)
-            introduces = {o.label for o in resid} - prev_labels     # a NEW outcome = regression
+            introduces = {o.key for o in resid} - prev_keys         # a NEW outcome (by key) = regression
             if makes_progress and not introduces:
                 accepted.append(c)
                 residual_of[c.name] = resid

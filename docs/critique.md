@@ -170,6 +170,20 @@ outcome with a different-labeled outcome of the same kind at the same site passe
 in the README example the winning repair still guards the deref and preserves the actual bug.
 (a)–(c) are afternoons; (d) is the library-breadth problem, which is structural.
 
+> **ADDRESSED (2026-07-14) — (a) + (c) done; (b) + (d) stand.** (a) The single-site path
+> (`choose_repair`/`candidate_edits`) now verifies via `analyze_all` — EVERY effect, not just the
+> target's — so a candidate `cleared`s iff its target is gone AND it introduces no new outcome of any
+> effect, and each `Candidate` carries the full cross-effect `residual` (a return-None fix no longer
+> hides a still-broken deref). Affordable now only because the rule-bank cache (weakness #4) removed
+> the per-analyze constant. (c) Both the single-site check and `repair_all`'s regression check now
+> compare a stable outcome KEY `(kind, base_var, label)` instead of the bare label — precise enough to
+> separate a different-kind/different-variable problem, and stable across the re-intake that renumbers
+> structural `site` ids (which is why raw site-id comparison was never an option). Pinned in
+> `tests/test_repair_verification.py` (3). **Not** fixed: (b) verification is still under the one
+> seeded hypothesis, not a sweep; (d) the library still cannot delete a clobbering assignment
+> (structural). Residual on (c): two textually identical derefs still share a key — perfect site
+> identity would need intake to emit ids stable across edits.
+
 **7. `link_calls` is still context-insensitive, now with one earned refinement.** Two callers
 of one function still merge into the callee's single entry cell — the classic imprecision, still
 unregistered in the docs as such. What *did* land is path-sensitivity at the call site
@@ -325,14 +339,18 @@ synthesis loops just multiplied the number of KB rebuilds per user-visible opera
    `.fully_modelled` + `emit.verify_clean` qualify the "clean"/"verified" verdicts. See the ADDRESSED
    note under weakness #5. Residual: the stale-framing under the marker and explicit UNKNOWN *values*
    (not just unmodelled *statements*) remain.
-2. ~~Cross-effect repair verification~~ — **done** (`repair_all`). Mop up the residuals:
-   per-site `choose_repair` should verify via `analyze_all` too, and the regression check should
-   compare sites, not just labels.
-3. **Benchmark the Session path.** Carried over undone, and the synthesis axis just made it a
-   hot path (every candidate = a Session rebuild + cross-call analysis). Cell-lattice size vs.
-   analyze time on a realistic 10-function working set, plus candidates × steps for a
-   `repair_all` run. If the curve is bad, that is an ugm conversation to have *before*
-   productizing synthesis.
+2. ~~Cross-effect repair verification~~ — **done** (`repair_all`), and the residuals **mopped up
+   (2026-07-14)**: `choose_repair`/`candidate_edits` now verify via `analyze_all`, and both the
+   single-site and `repair_all` regression checks compare a stable outcome key `(kind, base_var,
+   label)` rather than the bare label. See the ADDRESSED note under weakness #6. Still open: (b) a
+   hypothesis *sweep* (verification is under one seeded dict), and (d) an operator that deletes a
+   clobbering assignment.
+3. ~~**Benchmark the Session path.**~~ **Done (2026-07-14).** `experiments/session_benchmark.py`
+   measured scoped vs. global focus as a Session accretes: `seed_from_focus` keeps analyze ~flat
+   (×1.67 over an ×7.95 graph) while global goes super-linear (×13.22) — it is load-bearing. The
+   benchmark also surfaced the real hot-path cost: `load_machine_rules` re-validating the static bank
+   on every detect (~65% of each analyze), now memoized (`semantics.py`) — `repair_all` 8.2s → 0.21s,
+   suite 376s → ~24s. The remaining lever is ugm's per-triple constant (§7 Rust), fed back as ugm #9.
 4. **Productize one synthesis slice** instead of a sixth probe. The probes have answered the
    feasibility questions they were built for; the marginal information from another is low, and
    the shared emit/verify scaffolding they each re-implement should live in the package (an
@@ -617,3 +635,16 @@ policy — and a verified minimal edit when it doesn't.*
 > synthesis probes make the composed system more credible, not less necessary — and the
 > recognition escape hatch ("supply the fact in CNL when there is no fingerprint") is exactly
 > the binding layer this design describes.
+
+> **BUILT (2026-07-14).** The spike above is built: `experiments/conformance_strider.py`
+> (`tests/test_conformance_strider.py`, 6). A CNL policy + reified decision code co-resident in one
+> graph; `diverges` derived as a fact spanning both worlds; the planted `total > 100` vs. `over 50`
+> bug found on exactly the gold (50, 100] band (differential-tested against a plain-Python oracle);
+> a two-world `why`-trace; `align_threshold` repair (spec constant → code constant) verified by
+> RE-SWEEP to zero divergence and CHOSEN over a decoy that fails verification. Faithful to the
+> design's "what it costs": arithmetic stays in a Python calculator (ugm's §8 comparison boundary;
+> each swept scenario is fully ground), logic stays in rules, and the sweep is the hypothesis
+> generator. **Deliberate edge, as predicted:** the code is REIFIED directly, not intaken from
+> Python text — the threshold is DATA (so repair genuinely edits + re-derives), but growing
+> `intake.py` with constants/comparisons to check *arbitrary foreign Python* remains the separate,
+> named cost. See `docs/spike_findings.md` ("conformance strider").

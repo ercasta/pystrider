@@ -509,6 +509,50 @@ accretes N namespaced functions), pinned by `tests/test_semantics_cache.py` (4).
 3. **The remaining lever is ugm's per-triple Python constant** (§7 "Rust for the constant") — an engine
    property, not ours. Fed back below.
 
+4. **The perf headroom paid for a correctness fix.** With verification now cheap, the repair path was
+   hardened (critique #6 residuals a+c): `choose_repair`/`candidate_edits` verify via `analyze_all`
+   (every effect, not just the target's) and both regression checks compare a stable outcome key
+   `(kind, base_var, label)` — stable across the re-intake that renumbers `site` ids — instead of the
+   bare label. A return-None fix can no longer hide a still-broken deref. Pinned in
+   `tests/test_repair_verification.py`. The perf lever and the correctness lever compose: (1) enabled (4).
+
+---
+
+## Follow-up: conformance strider — proving code implements a POLICY (the critique's top-rated direction)
+
+Probe: `experiments/conformance_strider.py`, pinned by `tests/test_conformance_strider.py` (6). The
+critique's §"The unification play" calls this "the strongest version of the whole project": a CNL
+business POLICY and the CODE's decision logic co-resident in one graph, joined by a **derivable
+`diverges` relation**, swept over scenarios the policy itself generates — a machine-checkable answer
+to *"does this code implement this policy?"* that neither pyright, CodeQL, a DMN validator, nor an LLM
+produces.
+
+1. **The loop closes.** A planted boundary bug (code `total > 100` where the policy says `over 50`) is
+   found as `diverges` on **exactly** the gold scenarios with total in (50, 100] — verified against a
+   plain-Python oracle (`test_...match_the_python_oracle`). `diverges` is an ordinary derived fact
+   (`?sc diverges yes when ?sc policy_outcome ?x and ?sc code_outcome ?y and not ?x same_outcome ?y`),
+   so the spec-vs-code comparison is a JOIN, not imperative glue — queryable and explainable.
+
+2. **One trace spans both worlds.** The `why {sid} diverges` proof interleaves the business-rule
+   firing (`policy_hit` ← `over_policy` + `has_tier gold`) and the code-logic firing (`code_outcome
+   deny`) from one provenance journal — the artifact the critique says a developer, auditor, and LLM
+   each need and no tool emits.
+
+3. **Repair is spec-DIRECTED and proven by re-sweep.** `align_threshold` reads the POLICY constant and
+   rewrites the CODE constant (a real edit — the threshold is DATA in the model); re-sweeping the same
+   scenarios yields **zero** divergence, CHOSEN over a decoy edit that fails verification. Semantics
+   preservation ("code's outcomes == policy's on every swept scenario") is the verification condition
+   by construction — the root-level answer to weakness #6 the critique predicted.
+
+4. **The design's cost, paid the cheap way.** ugm's §8 "comparison-as-calculator" boundary keeps the
+   arithmetic in a Python calculator (each swept scenario is fully ground — deterministic interpretation,
+   no path explosion) while the LOGIC (AND, branch outcome, the judge) stays in rules. The sweep is the
+   **hypothesis generator** (policy vocabulary × boundary constants), dissolving weakness #2 for this
+   domain. Deliberate edge (per the critique's "what it costs"): the code is REIFIED directly, not
+   intaken from Python text — growing `intake.py` with constants + comparisons is the separate,
+   named cost; this probe answers the conformance-LOOP question, and the threshold-as-data makes the
+   repair loop real even with a hand-reified body.
+
 ## ugm issues found
 
 Nine bugs / limitations / surprises hit while building this are written up with minimal repros in

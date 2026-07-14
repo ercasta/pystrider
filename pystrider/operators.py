@@ -117,12 +117,23 @@ STRATEGIES: dict[str, Callable[[Intake, "Outcome"], tuple[str, str]]] = {
 # --- retrieval via backward-CHAIN over the effect key + precondition -------------------------
 
 _RETRIEVAL_CNL = Path(__file__).with_name("operators.cnl").read_text(encoding="utf-8")
+_RETRIEVAL_RULES: "list | None" = None   # the retrieval bank is static — parse+validate it once
+
+
+def _retrieval_rules() -> list:
+    """The operator-retrieval rules, parsed once and memoized. `load_machine_rules` validates by
+    running the bank (see ugm feedback #9), and `retrieve` runs per candidate, so re-parsing here was
+    the same redundant cost the semantics-bank cache removed — memoized for the same reason."""
+    global _RETRIEVAL_RULES
+    if _RETRIEVAL_RULES is None:
+        _RETRIEVAL_RULES = list(load_machine_rules(_RETRIEVAL_CNL))
+    return _RETRIEVAL_RULES
 
 
 def retrieve(site: str, error_kind: str, site_provides: set[str]) -> list[Operator]:
     """Backward-CHAIN the operator library: which operators prevent `error_kind` at `site` AND
     have a precondition the site provides? Runs entirely through the public `ask_goal`."""
-    rules = load_machine_rules(_RETRIEVAL_CNL)
+    rules = _retrieval_rules()
     g = h.Graph(); ids: dict[str, str] = {}
     def n(x):
         if x not in ids: ids[x] = g.add_node(x)

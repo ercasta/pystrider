@@ -51,8 +51,7 @@ def test_both_effects_coexist_on_one_function():
 def test_choose_repair_selects_a_verified_edit_for_the_new_effect():
     ik = intake_function(RETURNS_NONE)
     outcome = analyze_return_none(ik, {"x": "none"})[0]
-    sel = choose_repair(ik, {"x": "none"}, outcome,
-                        provides_fn=ops.provides_return, analyzer=analyze_return_none)
+    sel = choose_repair(ik, {"x": "none"}, outcome, provides_fn=ops.provides_return)
     # both coalesce operators are retrieved by backward-CHAIN on the `returns_none` effect key
     assert {c.name for c in sel.candidates} == {"coalesce_or", "coalesce_ifexp"}
     assert all(c.cleared for c in sel.candidates)          # each verified by re-execution
@@ -63,7 +62,7 @@ def test_choose_repair_selects_a_verified_edit_for_the_new_effect():
 
 def test_none_deref_repair_is_unchanged():
     # the original effect's means-ends selection still picks the local guard (no regression from
-    # generalizing candidate_edits/choose_repair to take a provides_fn + analyzer).
+    # generalizing candidate_edits/choose_repair to a provides_fn + cross-effect analyze_all verify).
     ik = intake_function("def f(x):\n    y = x\n    return y.bar()\n")
     outcome = analyze(ik, {"x": "none"})[0]
     sel = choose_repair(ik, {"x": "none"}, outcome)      # defaults = the None-deref effect
