@@ -54,10 +54,34 @@ not built. The withdrawal app forces all four, so it is the natural forcing func
 | Phase | Goal | grammapy dependency | Status |
 |---|---|---|---|
 | **1** | Compose the confirm button set through `Accumulate`; reject interference at design time; Pilot stays oracle | `Accumulate` (exists) | **done** |
-| **2** | Build `Choice` / `Scope` / `Fold`, driven by the app; each with soundness check + property test | new combinators | next |
+| **2a** | Build `Choice` (guard partition: disjoint + exhaustive), driven by the app's screen selection | **`Choice` built** | **done** |
+| **2b** | Build `Scope` (reachability) and `Fold` (declared join), driven by the confirm gate and deontic conflict | new combinators | next |
 | **3** | pystrider's `REFINE` bank emits a grammapy *deviation spec* (cross-cutting constraints → forced/surfaced productions) | Choice + constraint resolution | |
 | **4** | AST emission (libcst) — combinators emit fragments, grammapy assembles; retire string templates | grammapy roadmap step 5 | |
 | **5** | External generator front-end drafts the deviation spec; grammapy guarantees + emits; pystrider drive-verifies + checks footprint honesty | steps 5–7 | |
+
+## Phase 2a as landed (Choice)
+
+- New grammapy substrate [`grammapy/guards.py`](../grammapy/guards.py): `Guard` (enum-literal +
+  presence/absence atoms, the decidable fragment), `GuardedProduction`, and `guard_coverage` — the
+  determinacy analysis returning overlaps (not disjoint), gaps (not exhaustive), and unknown-enum-value
+  conflicts. `Choice.check` / `Choice.select` added to [`grammapy/combinators.py`](../grammapy/combinators.py)
+  (`CompositionError` generalized with a `reason`, backward-compatible with `Accumulate`).
+- The app's screen selection is now `Choice` over key `confirmation`, enum `{required}`, guards
+  partitioning `{required, absent}` (the `absent` branch is the Reiter default). `Choice.check` runs
+  once at import; `choose_screen` selects the one firing branch from the state pystrider's reasoning
+  supplies. `emit.select` is retired from the probe. Pins: `tests/test_choice.py` (7) +
+  `tests/test_app_synthesis.py`.
+
+## A ugm init-order dependency surfaced — and was fixed same day
+
+Retiring the `pystrider.emit` import in Phase 2 exposed that a plain `ugm.ask_goal` join (`who needed_by
+<spec>`, no negation) raised `TypeError: 'State' object is not iterable` (`chain._solve_demand_rule`,
+`set(env0)` where `env0` was a `State`) on a **cold** ugm import — but *not* if `pystrider.analysis` had
+been imported first (an init-order dependency on some ugm global). It was never minimizable to a
+standalone repro. **Resolved by concurrent ugm work (2026-07-14)**: the cold path now works with no
+prime, the `import pystrider` workaround was removed, suite green. Recorded as `feedback_from_pystrider.md`
+#10 (a fingerprint in case it recurs).
 
 ## Phase 1 as landed
 

@@ -11,9 +11,13 @@ Textual `App`/`Screen` with event handlers — and it fuses THREE vocabularies j
 
 Everything but the verifier REUSES what is already built:
 
-  * SELECTION is the productized `pystrider.emit.select` (realize -> CHOOSE -> trace) — the same loop
-    the five synthesis probes share, here choosing among app-shaped SKELETONS instead of function
-    templates. Rules only select a pre-minted candidate; the emit tool owns the source.
+  * SELECTION is a grammapy exclusive-`Choice` (Phase 2): the screen shape is a decision point whose
+    guards PARTITION the domain `{required, absent}` (checked once at import — determinacy, not a graded
+    pick). pystrider's reasoning supplies the decision key's state; grammapy proves exactly one branch
+    fires. This retired the ad-hoc `pystrider.emit.select` the earlier draft used.
+  * COMPOSITION of a screen's features is a grammapy `Accumulate` (Phase 1): each button is a
+    footprint-declared atom, and `Accumulate.check` (the frame rule) admits the set iff their writes are
+    disjoint — rejecting interference (two proceed-buttons) at design time, before any source is emitted.
   * The REQUIRED features are DERIVED across the three domains by a small refinement bank (the mirror
     of `codegen_understand`'s `requires named_steps`): a business fact (`withdrawal is_irreversible`)
     fires a UX rule (`requires confirmation_step`) that is admitted only because the framework SUPPORTS
@@ -55,8 +59,8 @@ from dataclasses import dataclass, field
 import ugm as h
 from ugm import load_machine_rules, ask_goal
 
-from pystrider.emit import Candidate, select, Selection
-from grammapy import Accumulate, Channel, CompositionError, Footprint, Item
+from grammapy import (Accumulate, Channel, Choice, CompositionError, Footprint, Guard,
+                      GuardedProduction, Item, ABSENT)
 
 
 # --- the succinct business spec (DATA) --------------------------------------------------------
@@ -328,12 +332,32 @@ def _emit_confirm_screen(spec: Spec) -> str:
             + "\n\n" + _APP_BODY + "\n" + _HANDLER_CONFIRM)
 
 
-# the pre-minted candidate pool — the rules only SELECT among these (fit: compact wins by default).
-CANDIDATES: list[Candidate] = [
-    Candidate("one_screen", provides=frozenset(), fit=1.0, emit=_emit_one_screen),
-    Candidate("confirm_screen", provides=frozenset({"confirmation_step"}), fit=0.7,
-              emit=_emit_confirm_screen),
+# --- PHASE 2: the screen shape as a grammapy exclusive-CHOICE (guards partition, one branch fires) ---
+# The winner-flip was an ad-hoc `emit.select` (realize + graded CHOOSE). It is really an EXCLUSIVE
+# CHOICE: the decision key is `confirmation` over enum {required}, and the guards partition the domain
+# {required, absent}. pystrider's deontic reasoning supplies the key's STATE (required iff the obligation
+# fired, else absent — the Reiter default); grammapy proves the guards partition (determinacy, checked
+# ONCE at import) and selects the one firing production. Sound selection, no ad-hoc fit.
+CONFIRMATION_ENUM = ("required",)
+SCREEN_PRODUCTIONS = [
+    GuardedProduction("one_screen", Guard.of(absent=True)),                 # default: spec silent -> compact
+    GuardedProduction("confirm_screen", Guard.of("required")),             # the obligation forced a confirm
 ]
+_SCREEN_EMIT = {"one_screen": _emit_one_screen, "confirm_screen": _emit_confirm_screen}
+Choice.check(CONFIRMATION_ENUM, SCREEN_PRODUCTIONS)   # determinacy proven once: guards partition {required, absent}
+
+
+def _confirmation_state(spec: Spec):
+    """The decision key's STATE from pystrider's reasoning: `required` iff the deontic obligation put
+    `confirmation_step` in the required set, else ABSENT (the silent-spec default). The one value the
+    grammapy Choice consumes — reasoning decides the state, the combinator decides the branch."""
+    return "required" if "confirmation_step" in required_features(spec) else ABSENT
+
+
+def choose_screen(spec: Spec) -> str:
+    """Select the app's screen shape via the grammapy exclusive-Choice — the sound replacement for the
+    ad-hoc `emit.select`. Exactly one production fires, by construction of the partitioning guards."""
+    return Choice.select(SCREEN_PRODUCTIONS, _confirmation_state(spec)).label
 
 
 # --- VERIFY by DRIVING the app (the feasibility crux — concrete-exec scaled to a UI) -----------
@@ -391,33 +415,32 @@ def verify_by_pilot(source: str, spec: Spec, confirm_choice: str = "ok") -> Veri
 class Synthesis:
     spec: Spec
     required: set[str]
-    selection: Selection
+    screen: str                          # the screen shape grammapy's Choice selected (the winner)
     source: str
     verify: VerifyResult | None
     composed: bool                       # grammapy admitted the feature composition (Accumulate check)
     composition_error: str | None        # the design-time rejection message, if it did not
-    candidates: list[Candidate] = field(default_factory=list)
 
     @property
-    def winner(self) -> str | None:
-        return self.selection.winner
+    def winner(self) -> str:
+        return self.screen
 
 
 def synthesize(spec: Spec) -> Synthesis:
-    """spec -> DERIVE required features -> SELECT the realizing graded-best app (`emit.select`) ->
-    COMPOSE its features through grammapy (Accumulate: reject interfering sets at design time) ->
-    EMIT real Textual source -> VERIFY by DRIVING it. The synthesis loop with pystrider reasoning as
-    the front-end and grammapy's sound-composition algebra as the emit gate, one repo."""
+    """spec -> DERIVE required features -> CHOOSE the screen shape (grammapy exclusive-Choice, guards
+    proven to partition) -> COMPOSE its features through grammapy (Accumulate: reject interfering sets
+    at design time) -> EMIT real Textual source -> VERIFY by DRIVING it. pystrider reasoning is the
+    front-end (what deviates); grammapy's sound-composition algebra selects and gates; one repo."""
     required = required_features(spec)
-    sel = select(spec.name, required, CANDIDATES)
+    screen = choose_screen(spec)
     try:
-        source = sel.winner_candidate.emit(spec) if sel.winner_candidate else ""
+        source = _SCREEN_EMIT[screen](spec)
         composed, comp_err = True, None
     except CompositionError as e:                 # grammapy refused the composition -> no source emitted
         source, composed, comp_err = "", False, str(e)
     vr = verify_by_pilot(source, spec) if source else None
-    return Synthesis(spec=spec, required=required, selection=sel, source=source, verify=vr,
-                     composed=composed, composition_error=comp_err, candidates=CANDIDATES)
+    return Synthesis(spec=spec, required=required, screen=screen, source=source, verify=vr,
+                     composed=composed, composition_error=comp_err)
 
 
 # --- live walkthrough -------------------------------------------------------------------------
@@ -427,7 +450,8 @@ def _show(spec: Spec) -> None:
     flag = "IRREVERSIBLE (UX demands a confirm step)" if spec.irreversible else "lenient (compact allowed)"
     print(f"=== spec: {spec.procedure} app - {flag} ===")
     print(f"  refine (business -> deontic -> framework) -> required features: {sorted(r.required) or '[]'}")
-    print(f"  select -> realizing apps: {r.selection.realizing}  ->  winner: {r.winner}")
+    print(f"  choice (guards partition {{required, absent}}) -> confirmation={_confirmation_state(spec)!r}"
+          f" -> screen: {r.screen}")
     vr = r.verify
     print(f"  drive  -> events: {vr.events}")
     print(f"           performed={vr.performed}  gated={vr.gated}  "
@@ -441,9 +465,10 @@ def main() -> None:
     _show(Spec(name="withdraw_spec"))                       # lenient: compact one-screen wins
     _show(Spec(name="withdraw_spec", irreversible=True))    # irreversible: the FLIP -> confirm-screen
 
-    print("Why the flip: both apps withdraw, so CHOOSE prefers the compact one-screen - until the\n"
-          "business fact `withdrawal is_irreversible` fires the deontic obligation `obliged confirm`,\n"
-          "which needs `confirmation_step` (through the framework bridge) - only the confirm app provides it.\n")
+    print("Why the flip: the screen is a grammapy exclusive-Choice whose guards partition {required,\n"
+          "absent}. pystrider's deontic reasoning sets the `confirmation` state: silent -> absent (the\n"
+          "default branch, one_screen); `withdrawal is_irreversible` -> `obliged confirm` -> required ->\n"
+          "the confirm_screen branch fires. Determinacy, not a graded pick - exactly one branch, proven.\n")
 
     print("RECORD -> the composed proof for `needs confirmation_step` (business + deontic + framework):")
     for line in requirement_trace(Spec(name="withdraw_spec", irreversible=True), "confirmation_step"):

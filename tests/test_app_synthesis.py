@@ -12,23 +12,32 @@ from experiments.app_synthesis import (
     Spec, required_features, requirement_trace, synthesize,
     verify_by_pilot, confirm_buttons, confirm_button_trace,
     compose_confirm_screen, _affirmative_of,
+    choose_screen, _confirmation_state, SCREEN_PRODUCTIONS, CONFIRMATION_ENUM,
     _emit_one_screen, _emit_confirm_screen,
 )
-from grammapy import CompositionError
+from grammapy import ABSENT, Choice, CompositionError, guard_coverage
 
 
 def test_lenient_spec_requires_nothing_and_picks_the_compact_app():
     r = synthesize(Spec(name="withdraw_spec"))
     assert r.required == set()
-    assert r.winner == "one_screen"                       # compact wins by fit when nothing required
-    assert set(r.selection.realizing) == {"one_screen", "confirm_screen"}
+    assert _confirmation_state(r.spec) is ABSENT          # spec silent on confirmation -> default branch
+    assert r.winner == "one_screen"                       # the grammapy Choice fires the default production
 
 
 def test_irreversible_fact_flips_the_winner_to_the_confirm_app():
     r = synthesize(Spec(name="withdraw_spec", irreversible=True))
-    assert r.required == {"confirmation_step"}            # DERIVED across business -> UX -> framework
-    assert r.selection.realizing == ["confirm_screen"]    # one_screen no longer realizes the spec
-    assert r.winner == "confirm_screen"
+    assert r.required == {"confirmation_step"}            # DERIVED across business -> deontic -> framework
+    assert _confirmation_state(r.spec) == "required"      # the obligation set the decision key's state
+    assert r.winner == "confirm_screen"                   # so the Choice fires the confirm production
+
+
+def test_screen_choice_guards_partition_the_domain():
+    # the app's screen decision is a SOUND exclusive-Choice: its guards partition {required, absent}.
+    assert guard_coverage(CONFIRMATION_ENUM, SCREEN_PRODUCTIONS) == []
+    Choice.check(CONFIRMATION_ENUM, SCREEN_PRODUCTIONS)   # no raise
+    assert choose_screen(Spec(name="s")) == "one_screen"
+    assert choose_screen(Spec(name="s", irreversible=True)) == "confirm_screen"
 
 
 def test_required_feature_is_gated_by_framework_support():

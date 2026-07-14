@@ -15,8 +15,9 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from grammapy.channels import Footprint, WriteConflict, disjoint_writes
+from grammapy.guards import GuardedProduction, guard_coverage
 
-__all__ = ["Item", "CompositionError", "Accumulate"]
+__all__ = ["Item", "CompositionError", "Accumulate", "Choice"]
 
 
 @dataclass(frozen=True)
@@ -39,10 +40,11 @@ class CompositionError(Exception):
     and the shared channel, never a combinator soundness trace).
     """
 
-    def __init__(self, shape: str, conflicts: list[WriteConflict]):
+    def __init__(self, shape: str, conflicts: list, reason: str = "writes are not disjoint"):
         self.shape = shape
         self.conflicts = conflicts
-        lines = [f"{shape} rejected: writes are not disjoint"]
+        self.reason = reason
+        lines = [f"{shape} rejected: {reason}"]
         for c in conflicts:
             lines.append(f"  - {c}")
         super().__init__("\n".join(lines))
@@ -62,3 +64,30 @@ class Accumulate:
         conflicts = disjoint_writes((it.label, it.footprint) for it in items)
         if conflicts:
             raise CompositionError("Accumulate", conflicts)
+
+
+class Choice:
+    """Exclusive-choice (vision.md §3.4, §4.3).
+
+    Guards over a single spec key partition the domain ``enum ∪ {absent}``; exactly one production
+    fires per spec. The shape is sound iff the guards are pairwise **disjoint** and jointly
+    **exhaustive** — a static enum-cover analysis (the moding/determinacy analysis of logic
+    programming), never a search. Selection is then a direct lookup, not a constraint solve.
+    """
+
+    @staticmethod
+    def check(enum: Iterable[str], productions: Iterable[GuardedProduction]) -> None:
+        """Raise ``CompositionError`` unless the guards partition the domain (disjoint AND exhaustive)."""
+        conflicts = guard_coverage(enum, productions)
+        if conflicts:
+            raise CompositionError("Choice", conflicts,
+                                   reason="guards do not partition the spec space")
+
+    @staticmethod
+    def select(productions: Iterable[GuardedProduction], state) -> GuardedProduction:
+        """The production admitting ``state`` (an enum literal or ``ABSENT``). For a checked Choice
+        exactly one matches; raises ``KeyError`` if none does (an unchecked or malformed choice)."""
+        for p in productions:
+            if state in p.guard.covers():
+                return p
+        raise KeyError(f"no production admits state {state!r}")
