@@ -58,6 +58,7 @@ Run it: `python -m experiments.app_synthesis`  (requires `textual`; see requirem
 """
 from __future__ import annotations
 
+import ast
 import asyncio
 from dataclasses import dataclass, field
 
@@ -251,20 +252,31 @@ def _affirmative_of(spec: Spec) -> str:
     return next((b for b in _ordered_buttons(spec) if b in AFFIRMATIVE), "ok")
 
 
-# --- the emit tool: pre-minted app SKELETONS, each carrying its own source template ------------
-# Rules cannot MINT an app (the existential wall). So the tool pre-mints a bounded pool of app
-# skeletons; the CNL rules only SELECT the realizing one. Each skeleton emits real Textual source
-# that RECORDS its events (`gate_shown`, `withdrawn <amt>`) so the Pilot verifier can OBSERVE them,
-# and also `print("withdrawn")` — the user-visible effect the spec asks for.
+# --- PHASE 4: AST emission — each production contributes an AST FRAGMENT, grammapy assembles ---
+# Rules cannot MINT an app (the existential wall), so the tool still owns emission; but emission is no
+# longer a string-concatenating template. Each production (the screen shape, the confirm handler, each
+# button) is an `ast` FRAGMENT; `assemble_ast` composes the fragments into one `ast.Module`, unparsed to
+# source. This is the structural fix for the candidate cross-product: the module body is BUILT per
+# feature (imports + optional ConfirmScreen + WithdrawApp with the chosen handler) rather than selected
+# from two whole strings, and the button set composes as AST nodes spliced into `ConfirmScreen.compose`.
+#
+# The INVARIANT Textual boilerplate that never varies per feature (imports, `_validate`, `_perform`,
+# `__init__`, `WithdrawApp.compose`, the two handlers) is authored as canonical, NON-interpolated
+# snippets and `ast.parse`d into fragments — real AST, no f-string source-building. Only the genuinely
+# per-feature pieces are SYNTHESIZED as AST: the confirm button `yield`s and the affirmative `dismiss`
+# comparison. Class names, widget `id`s, and the recorded `events` trace are byte-identical to before,
+# so `verify_by_pilot` and its assertions are unchanged; `ast.unparse` normalizes quoting/whitespace.
 
-_APP_HEADER = '''\
+_IMPORTS_SRC = """\
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Button
-'''
+"""
+_CONFIRM_IMPORT_SRC = "from textual.screen import ModalScreen"
 
-_APP_BODY = '''\
+_WITHDRAW_APP_SRC = '''
 class WithdrawApp(App):
     """Synthesized cash-withdrawal app. `events` is the observable trace the verifier reads."""
+
     def __init__(self):
         super().__init__()
         self.events = []
@@ -278,70 +290,134 @@ class WithdrawApp(App):
         print("withdrawn")
 
     def _validate(self, raw):
-        # business rule: the amount must be a positive number
         try:
             amt = float(raw)
         except ValueError:
-            self.events.append("rejected non-numeric"); return None
+            self.events.append("rejected non-numeric")
+            return None
         if amt <= 0:
-            self.events.append("rejected non-positive"); return None
+            self.events.append("rejected non-positive")
+            return None
         return raw
 '''
 
-_HANDLER_DIRECT = '''\
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id != "ok":
-            return
-        amount = self._validate(self.query_one("#amount", Input).value)
-        if amount is not None:
+_HANDLER_DIRECT_SRC = '''
+def on_button_pressed(self, event: Button.Pressed) -> None:
+    if event.button.id != "ok":
+        return
+    amount = self._validate(self.query_one("#amount", Input).value)
+    if amount is not None:
+        self._perform(amount)
+'''
+
+_HANDLER_CONFIRM_SRC = '''
+def on_button_pressed(self, event: Button.Pressed) -> None:
+    if event.button.id != "ok":
+        return
+    amount = self._validate(self.query_one("#amount", Input).value)
+    if amount is None:
+        return
+    def after(confirmed):
+        if confirmed:
             self._perform(amount)
+    self.push_screen(ConfirmScreen(), after)
 '''
 
-def _confirm_screen_block(buttons: list[str], affirmative: str) -> str:
-    """Emit the confirmation ModalScreen with exactly the DERIVED buttons (the defeasible preference,
-    materialized). The affirmative button — the single proceed atom grammapy admitted — dismisses
-    `True`; any other dismisses as abort, so one `dismiss` line handles any admitted button subset."""
-    yields = "\n".join(f'        yield Button("{b.title()}", id="confirm-{b}")' for b in buttons)
-    return (
-        "from textual.screen import ModalScreen\n\n\n"
-        "class ConfirmScreen(ModalScreen):\n"
-        '    """UX confirmation gate for the irreversible withdrawal."""\n'
-        "    def compose(self) -> ComposeResult:\n"
-        f"{yields}\n\n"
-        "    def on_mount(self) -> None:\n"
-        '        self.app.events.append("gate_shown")\n\n'
-        "    def on_button_pressed(self, event: Button.Pressed) -> None:\n"
-        "        event.stop()\n"
-        f'        self.dismiss(event.button.id == "confirm-{affirmative}")\n'
-    )
+# The ConfirmScreen shell carries the invariant methods (`on_mount` records `gate_shown`, the
+# `on_button_pressed` dismiss shell); `compose`'s body and the dismiss argument are filled per feature.
+_CONFIRM_SCREEN_SRC = '''
+class ConfirmScreen(ModalScreen):
+    """UX confirmation gate for the irreversible withdrawal."""
 
+    def compose(self) -> ComposeResult:
+        pass
 
-_HANDLER_CONFIRM = '''\
+    def on_mount(self) -> None:
+        self.app.events.append("gate_shown")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id != "ok":
-            return
-        amount = self._validate(self.query_one("#amount", Input).value)
-        if amount is None:
-            return
-        def after(confirmed):
-            if confirmed:
-                self._perform(amount)
-        self.push_screen(ConfirmScreen(), after)
+        event.stop()
+        self.dismiss(False)
 '''
+
+
+def _parse_one(src: str) -> ast.stmt:
+    """Parse a single-statement snippet into its AST node (a class/def/import fragment)."""
+    return ast.parse(src).body[0]
+
+
+def _method(cls: ast.ClassDef, name: str) -> ast.FunctionDef:
+    return next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def _button_yield(label: str, widget_id: str) -> ast.stmt:
+    """AST for `yield Button("<label>", id="<widget_id>")` — one confirm-screen compose fragment."""
+    call = ast.Call(func=ast.Name(id="Button", ctx=ast.Load()),
+                    args=[ast.Constant(value=label)],
+                    keywords=[ast.keyword(arg="id", value=ast.Constant(value=widget_id))])
+    return ast.Expr(value=ast.Yield(value=call))
+
+
+def _affirmative_compare(affirmative: str) -> ast.expr:
+    """AST for `event.button.id == "confirm-<affirmative>"` — the proceed test the screen dismisses on."""
+    button_id = ast.Attribute(
+        value=ast.Attribute(value=ast.Name(id="event", ctx=ast.Load()), attr="button", ctx=ast.Load()),
+        attr="id", ctx=ast.Load())
+    return ast.Compare(left=button_id, ops=[ast.Eq()],
+                       comparators=[ast.Constant(value=f"confirm-{affirmative}")])
+
+
+def _withdraw_app(handler: ast.FunctionDef) -> ast.ClassDef:
+    """The WithdrawApp class fragment with the chosen `on_button_pressed` handler appended as a method."""
+    cls = _parse_one(_WITHDRAW_APP_SRC)
+    cls.body.append(handler)
+    return cls
+
+
+def _confirm_screen(buttons: list[str], affirmative: str) -> ast.ClassDef:
+    """The ConfirmScreen class fragment: splice one `yield Button(...)` per DERIVED button into
+    `compose`, and set the dismiss to proceed on the affirmative id. The button set composes as AST
+    nodes (the defeasible preference, materialized), not a string join."""
+    cls = _parse_one(_CONFIRM_SCREEN_SRC)
+    _method(cls, "compose").body = [_button_yield(b.title(), f"confirm-{b}") for b in buttons]
+    dismiss_call = _method(cls, "on_button_pressed").body[-1].value   # Expr -> self.dismiss(...) Call
+    dismiss_call.args = [_affirmative_compare(affirmative)]
+    return cls
+
+
+def _build_module(spec: Spec, screen: str) -> ast.Module:
+    """Assemble the app as an `ast.Module` from per-feature fragments: imports, an optional ConfirmScreen
+    (with the composed button set), and WithdrawApp carrying the screen's handler. The compositional
+    replacement for two whole-string skeletons."""
+    body: list[ast.stmt] = list(ast.parse(_IMPORTS_SRC).body)
+    if screen == "confirm_screen":
+        body.append(_parse_one(_CONFIRM_IMPORT_SRC))
+        body.append(_confirm_screen(_ordered_buttons(spec), _affirmative_of(spec)))
+        body.append(_withdraw_app(_parse_one(_HANDLER_CONFIRM_SRC)))
+    else:
+        body.append(_withdraw_app(_parse_one(_HANDLER_DIRECT_SRC)))
+    mod = ast.Module(body=body, type_ignores=[])
+    ast.fix_missing_locations(mod)
+    return mod
+
+
+def assemble_ast(dev: "DeviationSpec") -> ast.Module:
+    """Build the emitted module from a RESOLVED deviation spec — the AST-emission seam. Every design-time
+    gate (Accumulate/Scope/§12/Fold) already ran in `assemble`; this only materializes the admitted shape."""
+    return _build_module(dev.spec, dev.screen)
 
 
 def _emit_one_screen(spec: Spec) -> str:
-    """The compact app: input -> OK -> validate -> withdraw. No confirmation gate."""
-    return _APP_HEADER + "\n\n" + _APP_BODY + "\n" + _HANDLER_DIRECT
+    """The compact app: input -> OK -> validate -> withdraw. No confirmation gate. AST-built."""
+    return ast.unparse(_build_module(spec, "one_screen"))
 
 
 def _emit_confirm_screen(spec: Spec) -> str:
     """The gated app: input -> OK -> validate -> push a ModalScreen (with the grammapy-COMPOSED buttons)
     -> proceed/abort -> withdraw. `compose_confirm_screen` is the design-time gate: it raises
     `CompositionError` on a malformed button set, so emission only ever runs on an admitted composition."""
-    compose_confirm_screen(spec)      # grammapy Accumulate gate — raises before any source is produced
-    return (_APP_HEADER + "\n" + _confirm_screen_block(_ordered_buttons(spec), _affirmative_of(spec))
-            + "\n\n" + _APP_BODY + "\n" + _HANDLER_CONFIRM)
+    compose_confirm_screen(spec)      # grammapy Accumulate gate — raises before any AST is produced
+    return ast.unparse(_build_module(spec, "confirm_screen"))
 
 
 # --- PHASE 3: the screen shape as a grammapy DECISION POINT, resolved by cross-cutting constraint (§12) ---
@@ -360,7 +436,6 @@ SCREEN_POINT = DecisionPoint(
     ),
     default="one_screen",
 )
-_SCREEN_EMIT = {"one_screen": _emit_one_screen, "confirm_screen": _emit_confirm_screen}
 
 
 # --- PHASE 2c: resolve conflicting deontic verdicts with a grammapy FOLD (declared, order-independent) ---
@@ -587,7 +662,7 @@ def synthesize(spec: Spec) -> Synthesis:
     required = required_features(spec)
     dev = assemble(spec)
     if dev.admitted and dev.screen:
-        source, composed, comp_err = _SCREEN_EMIT[dev.screen](spec), True, None
+        source, composed, comp_err = ast.unparse(assemble_ast(dev)), True, None
     else:
         source, composed, comp_err = "", False, dev.rejection
     vr = verify_by_pilot(source, spec) if source else None

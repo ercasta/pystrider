@@ -1,8 +1,10 @@
 # pystrider ⟷ grammapy convergence
 
 **Status (2026-07-14):** grammapy absorbed as an in-repo top-level peer package (`grammapy/`, source
-commit `3f05ccc`, history still on `ercasta/grammapy`). Phase 1 landed — the app-synthesis probe
-composes its confirmation-screen feature set through grammapy's `Accumulate`. Full suite 186 green.
+commit `3f05ccc`, history still on `ercasta/grammapy`). **Phases 1–4 landed** — all four combinators
+built and exercised by one app, unified under one `DeviationSpec` (§12), and emission is now **AST-built**
+(each production an `ast` fragment, assembled + unparsed; string templates retired). Full suite 228 green.
+**Next: Phase 5** — external generator front-end drafts the deviation spec.
 
 ## Why they converge
 
@@ -58,7 +60,7 @@ not built. The withdrawal app forces all four, so it is the natural forcing func
 | **2b** | Build `Scope` (binder-scoped reachability), driven by the confirm gate as a handler over the withdrawal effect | **`Scope` built** | **done** |
 | **2c** | Build `Fold` (declared commutative/associative join), driven by deontic conflict (obligation vs waiver) | **`Fold` built** | **done** |
 | **3** | pystrider's reasoning emits a *cross-cutting constraint*; grammapy §12 resolves each decision point; all four points unified under one `DeviationSpec` | **§12 resolver + `assemble`** | **done** |
-| **4** | AST emission (libcst) — combinators emit fragments, grammapy assembles; retire string templates | grammapy roadmap step 5 | |
+| **4** | AST emission (stdlib `ast`) — productions emit fragments, grammapy assembles; retire string templates | grammapy roadmap step 5 | **done** |
 | **5** | External generator front-end drafts the deviation spec; grammapy guarantees + emits; pystrider drive-verifies + checks footprint honesty | steps 5–7 | |
 
 ## Phase 2a as landed (Choice)
@@ -129,6 +131,75 @@ That is the evidence for grammapy's central bet — that safe composition reduce
   resolved cleanly. `synthesize` now emits iff `dev.admitted`, so a rejection at *any* point (a colliding
   button set, an escaping effect, an unresolved screen) surfaces the same way: no source, no drive. The
   four scattered call sites are gone. Pins: `tests/test_app_synthesis.py` (deviation-spec tests).
+
+## Phase 4 as landed (AST emission) — Phase 4 complete
+
+Emission is no longer a string-concatenating template. `experiments/app_synthesis.py` now builds each
+app as an **`ast` fragment tree** assembled into one `ast.Module`, unparsed to source:
+
+- **Per-feature fragments.** `_build_module(spec, screen)` composes the module body from fragments:
+  imports, an optional `ConfirmScreen`, and `WithdrawApp` carrying the screen's handler. The invariant
+  Textual boilerplate (imports, `_validate`/`_perform`/`__init__`/`compose`, the two `on_button_pressed`
+  handlers) is authored as canonical **non-interpolated** snippets and `ast.parse`d into fragments — real
+  AST, no f-string source-building. Only the genuinely per-feature pieces are **synthesized** as AST: the
+  confirm-button `yield Button(...)` nodes spliced into `ConfirmScreen.compose`, and the affirmative
+  `dismiss(event.button.id == 'confirm-<b>')` comparison.
+- **`assemble_ast(dev: DeviationSpec) -> ast.Module`** is the emission seam: every design-time gate
+  (Accumulate/Scope/§12/Fold) already ran in `assemble`; `assemble_ast` only materializes the admitted
+  shape. `synthesize` routes through it (the `_SCREEN_EMIT` string-template dispatch is gone).
+- **Class names, widget `id`s, and the recorded `events` trace are byte-identical**, so `verify_by_pilot`
+  and its Pilot assertions are unchanged — the phase's correctness check (behaviour identical, source now
+  AST-built). `ast.unparse` normalizes quoting (single quotes) and whitespace; the two source-substring
+  test assertions that keyed on the old double-quote formatting were made quote-agnostic.
+- **New pins** (`tests/test_app_synthesis.py`): emitted source **parses** and **round-trips**
+  (`ast.unparse(ast.parse(src)) == src`, i.e. normalized/stable), `assemble_ast` builds the right class
+  set per shape, the button set composes as `yield` **AST nodes** in `ConfirmScreen.compose`, and the
+  AST-built confirm app still drives green (`['gate_shown', 'withdrawn 42']`). Suite 228 green.
+- **Tool decision as executed:** stdlib `ast` + `ast.unparse` (not libcst). Greenfield emission needs no
+  round-trippable formatting preservation; libcst becomes load-bearing only at Phase 5, for round-tripping
+  *user-owned atom bodies*.
+
+## Phase 4 — AST emission: the concrete plan (as executed)
+
+**Goal.** Retire the string-template emit (in `experiments/app_synthesis.py`: the `_APP_HEADER` /
+`_APP_BODY` / `_HANDLER_DIRECT` / `_HANDLER_CONFIRM` string constants, `_confirm_screen_block`, and the
+string-concatenating `_emit_one_screen` / `_emit_confirm_screen`) and emit each production as an **AST
+fragment** that grammapy assembles into a module, unparsed to source. Why it matters: emission becomes
+compositional *per feature* (each decision point's production contributes AST), which is the structural
+fix for the candidate cross-product and the setup for the external code generator (Phase 5).
+
+**Tool decision (make first).** stdlib `ast` + `ast.unparse` is enough for greenfield emission and is
+already used by `experiments/codegen_understand.py` — recommended for the app. grammapy's roadmap names
+**libcst** for "round-trippable" emission; that value is preserving formatting of *existing / user-owned*
+code (the atom bodies of Phase 5), not emitting fresh code — adopt libcst on the grammapy side when
+atom-body round-tripping is needed, not for this step.
+
+**Steps.**
+1. **Per-production AST emitters.** `one_screen` and `confirm_screen` each build their `WithdrawApp`
+   (+ `ConfirmScreen`) class as an `ast` tree, not a string. Keep the class names, widget `id`s, and the
+   `events` trace **byte-identical** so `verify_by_pilot` and its assertions are unchanged.
+2. **Compose the buttons as AST.** Each `Accumulate`-admitted button atom contributes a
+   `yield Button("<Label>", id="confirm-<b>")` AST node into `ConfirmScreen.compose`'s body — the button
+   set composes as AST nodes, not a string join. This is the per-feature AST composition the phase is about.
+3. **`assemble_ast(dev: DeviationSpec) -> ast.Module`.** Build the module from the resolved deviation
+   spec's productions (screen fragment + button fragments + the confirm handler the Scope structure
+   implies). `ast.fix_missing_locations` then `ast.unparse` → source.
+4. **Route `synthesize` through it.** Replace `_SCREEN_EMIT[screen](spec)` with the AST assembler; the
+   *same* `verify_by_pilot` drives the result. Existing app tests should stay green **unchanged**
+   (behaviour identical, source now AST-built) — that is the phase's correctness check.
+5. **New pins.** the emitted source parses (`ast.parse`), round-trips (`ast.unparse(ast.parse(src)) ==
+   src`, i.e. normalized/stable), and still drives green.
+6. **Delete the string-template constants** once green.
+
+**Watch.** async handlers, the nested `def after(confirmed)` closure, and Textual message-handler methods
+are all expressible in `ast`; `ast.unparse` is deterministic given the tree. Do **not** change the emitted
+`events` trace or widget ids, or the Pilot driver/assertions break.
+
+**After Phase 4 → Phase 5.** External code generator fills atom-body AST holes (LLM front-end); grammapy
+guarantees the composition; pystrider drive-verifies **and** checks atom footprint honesty by execution
+(grammapy roadmap step 7 — pystrider's analyze/Pilot is a natural implementation). This is where the
+**bridges-vs-channels** decision (deferred) and **libcst** (round-trip of user-owned atom bodies) become
+load-bearing.
 
 ## Do humans need the lattice math? (a design note)
 

@@ -6,6 +6,38 @@ built and green; this plan is what's next.
 
 ---
 
+## Current work line — the grammapy convergence (2026-07-14)  ← START HERE
+
+The active work is a NEW line. **grammapy was absorbed in-repo** (top-level peer package `grammapy/`,
+`import grammapy`, no external install) and pystrider + grammapy are being wired into one loop:
+**pystrider REASONS** what deviates from default (deontic obligations, defeasible preferences, bridges);
+**grammapy's sound-composition algebra** — four combinators (`Choice`, `Accumulate`, `Scope`, `Fold`)
+plus §12 cross-cutting constraint resolution — **RESOLVES and GATES** every decision point; and the
+emitted app is **verified by DRIVING it** (Textual Pilot). Full design, status, and the phased plan:
+**[`grammapy_convergence.md`](grammapy_convergence.md) — read that first for this line.**
+
+**Status: Phases 1–4 DONE (suite 228 green).** All four combinators are built and exercised by one app
+(`experiments/app_synthesis.py` — synthesize a runnable Textual cash-withdrawal app across bridged
+business/framework/UX vocabularies, verified by driving). §12 resolution unifies the four decision points
+under one `DeviationSpec` (`assemble`), and **emission is now AST-built** — each production is an `ast`
+fragment, `assemble_ast(dev)` composes them into one `ast.Module`, unparsed to source (string templates
+retired; `ast.unparse` round-trips stable). **Next: Phase 5 — external generator front-end** drafts the
+deviation spec, grammapy guarantees + emits, pystrider drive-verifies + checks footprint honesty; this is
+where the deferred **bridges-vs-channels** decision and **libcst** (round-trip of user-owned atom bodies)
+become load-bearing (see the convergence doc).
+
+**Run:** `./.venv/Scripts/python.exe -m pytest -q` (228 green) · `python -m experiments.app_synthesis`
+(the walkthrough) · combinator tests: `tests/test_disjointness.py` (Accumulate), `test_choice.py`,
+`test_scope.py`, `test_fold.py`, `test_resolution.py` (§12).
+
+**Deferred decision (becomes load-bearing at Phase 3→5 boundary):** pystrider's untyped **bridges** vs
+grammapy's typed **channels** — currently built on untyped capability names; typing them is an additive
+follow-on (grammapy's own channel types are still placeholders).
+
+The pre-convergence pystrider loop (below) is unchanged and green — the substrate this line builds on.
+
+---
+
 ## Where we are (2026-07-12)
 
 A working dynamic, hypothesis-driven code analyzer on ugm. The full design loop runs with correct

@@ -16,8 +16,9 @@ from experiments.app_synthesis import (
     check_reachability, app_scope_tree, CONFIRM_SIGNAL,
     resolve_confirm, _confirm_verdicts, CONFIRM_SAFETY, CONFIRM_LENIENT,
     assemble, DeviationSpec,
-    _emit_one_screen, _emit_confirm_screen,
+    _emit_one_screen, _emit_confirm_screen, assemble_ast,
 )
+import ast
 from grammapy import CompositionError, Forced, Defaulted, Rejected, resolve, unhandled_emissions
 
 
@@ -94,7 +95,7 @@ def test_default_cancel_button_is_real_driving_it_aborts():
 def test_overridden_buttons_appear_in_the_emitted_screen():
     spec = Spec(name="s", irreversible=True, buttons=("ok",))
     src = _emit_confirm_screen(spec)
-    assert 'id="confirm-ok"' in src and 'id="confirm-cancel"' not in src   # the override materialized
+    assert "confirm-ok" in src and "confirm-cancel" not in src   # the override materialized (AST-emitted)
 
 
 def test_driving_the_winner_withdraws_and_is_gated():
@@ -163,7 +164,8 @@ def test_affirmative_button_drives_the_emitted_dismiss():
     # an overridden affirmative (`yes`) must be the id the emitted screen proceeds on.
     spec = Spec(name="s", irreversible=True, buttons=("yes", "cancel"))
     assert _affirmative_of(spec) == "yes"
-    assert 'event.button.id == "confirm-yes"' in _emit_confirm_screen(spec)
+    # the dismiss proceeds on `yes` specifically (only the dismiss compares against the id).
+    assert "== 'confirm-yes'" in _emit_confirm_screen(spec)
 
 
 # --- Phase 2b: reachability of the withdrawal effect through grammapy's Scope -----------------
@@ -253,6 +255,47 @@ def test_a_rejected_point_makes_the_deviation_spec_not_admitted():
     r = synthesize(Spec(name="s", irreversible=True, buttons=("ok", "yes")))
     assert not r.composed and r.source == "" and r.verify is None
     assert isinstance(r.deviation, DeviationSpec) and not r.deviation.admitted
+
+
+# --- Phase 4: AST emission (the source is BUILT from fragments, not string-concatenated) -------
+
+def test_emitted_source_parses_and_round_trips():
+    # every emitted shape is real Python and is NORMALIZED (unparse is a fixpoint) — a stable artifact.
+    for src in (_emit_one_screen(Spec(name="s")),
+                _emit_confirm_screen(Spec(name="s", irreversible=True)),
+                _emit_confirm_screen(Spec(name="s", irreversible=True, buttons=("ok",)))):
+        tree = ast.parse(src)                                   # parses
+        assert ast.unparse(tree) == src                        # round-trips (stable/normalized)
+
+
+def test_assemble_ast_builds_the_module_from_the_deviation_spec():
+    dev = assemble(Spec(name="s", irreversible=True))
+    mod = assemble_ast(dev)
+    assert isinstance(mod, ast.Module)
+    classes = {n.name for n in mod.body if isinstance(n, ast.ClassDef)}
+    assert classes == {"WithdrawApp", "ConfirmScreen"}         # both fragments composed into one module
+    # the reversible spec builds only WithdrawApp (no confirm fragment).
+    one = assemble_ast(assemble(Spec(name="s")))
+    assert {n.name for n in one.body if isinstance(n, ast.ClassDef)} == {"WithdrawApp"}
+
+
+def test_ast_built_confirm_app_still_drives_green():
+    # the phase's correctness check: behaviour is identical, source is now AST-built.
+    spec = Spec(name="withdraw_spec", irreversible=True)
+    vr = verify_by_pilot(_emit_confirm_screen(spec), spec)
+    assert vr.performed and vr.gated and vr.ok
+    assert vr.events == ["gate_shown", "withdrawn 42"]
+
+
+def test_button_set_composes_as_ast_nodes_in_confirm_screen():
+    # each derived button is a `yield Button(...)` NODE spliced into ConfirmScreen.compose (per-feature).
+    mod = assemble_ast(assemble(Spec(name="s", irreversible=True)))
+    confirm = next(n for n in mod.body if isinstance(n, ast.ClassDef) and n.name == "ConfirmScreen")
+    compose = next(n for n in confirm.body if isinstance(n, ast.FunctionDef) and n.name == "compose")
+    yielded_ids = [kw.value.value
+                   for stmt in compose.body                    # each is `yield Button('Ok', id='confirm-ok')`
+                   for kw in stmt.value.value.keywords if kw.arg == "id"]
+    assert yielded_ids == ["confirm-ok", "confirm-cancel"]     # the default set, in stable order, as AST
 
 
 if __name__ == "__main__":
