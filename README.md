@@ -31,7 +31,7 @@ A **fourth axis — crash → root cause (diagnosis)** is proven as a probe: the
 over the *hypothesis* space, abducing the input that reproduces an observed exception, then handing the
 cause to the repair axis. A **fifth axis — code ⟷ policy conformance** is proven as a probe: a business
 policy and the code in one graph, joined by a declarative **bridge** across their vocabularies, with
-spec-vs-code divergence derived as a fact and repaired spec-directed. All green (155 tests):
+spec-vs-code divergence derived as a fact and repaired spec-directed. All green (159 tests):
 
 - **Slice A — correct value flow.** Value lives in a per-`(program-point, variable)` **cell
   lattice**, so reassignment (`y = a; y = b`), **branch-merge** (union of both arms), bounded
@@ -458,8 +458,8 @@ of the rules and into the graph as facts generic rules consume — so that a lib
 | `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
 | `pystrider/demo.py` | end-to-end packaged walkthrough (`python -m pystrider.demo`) |
 | `demos/` | five focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](demos/README.md) |
-| `experiments/` | feasibility probes — `state_threading.py` (state-succession), `spec_synthesis.py` (the spec→code synthesis axis), `codegen_understand.py` (compositional codegen from a business rule + round-trip recognition), `controlflow_synthesis.py` (control-flow synthesis, demand-driven minting, analyzer-gated), `multifunction_synthesis.py` (emit + call a helper, verified cross-call), `minting_comparison.py` (rule-grown vs tool-minted candidate pools), `callgraph_synthesis.py` (synthesizing the call-graph shape / factoring), `diagnosis.py` (the fourth axis — abduce a crash's root cause, then fix), `conformance_strider.py` (**the fifth axis** — code⟷policy conformance across a vocabulary bridge), and `intake_growth.py` (constants + comparisons + ground evaluation — the value-domain growth) |
-| `tests/` | behaviour pins (155 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_repair_verification.py`, `test_spec_synthesis.py`, `test_codegen_understand.py`, `test_controlflow_synthesis.py`, `test_multifunction_synthesis.py`, `test_minting_comparison.py`, `test_callgraph_synthesis.py`, `test_diagnosis.py`, `test_conformance_strider.py`, `test_intake_growth.py`, `test_caveats.py`, `test_emit.py`, `test_semantics_cache.py` |
+| `experiments/` | feasibility probes — `state_threading.py` (state-succession), `spec_synthesis.py` (the spec→code synthesis axis), `codegen_understand.py` (compositional codegen from a business rule + round-trip recognition), `controlflow_synthesis.py` (control-flow synthesis, demand-driven minting, analyzer-gated), `multifunction_synthesis.py` (emit + call a helper, verified cross-call), `minting_comparison.py` (rule-grown vs tool-minted candidate pools), `callgraph_synthesis.py` (synthesizing the call-graph shape / factoring), `diagnosis.py` (the fourth axis — abduce a crash's root cause, then fix), `conformance_strider.py` (**the fifth axis** — code⟷policy conformance across a vocabulary bridge), `intake_growth.py` (constants + comparisons + ground evaluation — the value-domain growth), and `api_absorption.py` (an absorbed library-API fact — `dict.get returns_optional` — firing the existing None-deref effect) |
+| `tests/` | behaviour pins (159 green): `test_spike.py`, `test_state_threading.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_repair_verification.py`, `test_spec_synthesis.py`, `test_codegen_understand.py`, `test_controlflow_synthesis.py`, `test_multifunction_synthesis.py`, `test_minting_comparison.py`, `test_callgraph_synthesis.py`, `test_diagnosis.py`, `test_conformance_strider.py`, `test_intake_growth.py`, `test_caveats.py`, `test_emit.py`, `test_semantics_cache.py` |
 | `docs/` | the design (`code_reasoning_design.md`), the plan (`implementation_plan.md`), the API-absorption / bridge direction (`api_absorption_design.md`), the spike findings (`spike_findings.md`) |
 
 ## Run
@@ -477,5 +477,6 @@ python -m experiments.callgraph_synthesis # synthesizing the call-graph shape / 
 python -m experiments.diagnosis      # the fourth axis: crash -> root cause (abduction) + fix
 python -m experiments.conformance_strider # the fifth axis: code <-> policy conformance across a bridge
 python -m experiments.intake_growth  # value-domain growth: constants + comparisons + ground eval
-pytest -q                            # the behaviour pins (155 green)
+python -m experiments.api_absorption # an absorbed library-API fact firing the existing None-deref
+pytest -q                            # the behaviour pins (159 green)
 ```

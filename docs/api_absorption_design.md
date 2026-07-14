@@ -152,9 +152,13 @@ written code, or a library surface). This is the critique's "binding layer" made
 1. **Value-domain growth (slice 1).** Reify constants + comparisons; ground-evaluate at the §8
    calculator; prove by porting `conformance_strider` to intake the discount function from REAL Python
    text and reproduce the same `diverges` set. *Foundation; independently useful.*
-2. **Return-ness as data (slice 2).** Model a call's `returns_optional` as a fact; a tiny hand-authored
-   API bank (`dict.get`, `os.environ.get`, `re.match`); wire the None-flow rule to consume it, and add
-   a pin: `x = d.get(k); x.foo` raises under analysis via the absorbed fact — no new None machinery.
+2. **Return-ness as data (slice 2).** ✅ BUILT — `experiments/api_absorption.py` (+
+   `tests/test_api_absorption.py`). An absorbed `dict.get returns_optional yes` + a §8 resolution tool
+   (receiver type + method → `dict.get`) + TWO bridge rules drive pystrider's REAL semantics so
+   `x = d.get(k); x.attr` raises via the UNCHANGED `raises attribute_error` rule — no None hypothesis on
+   any parameter, and conservative (a non-optional method or an unknown receiver type → no false
+   positive). The absorbed fact just gives the call result a `none` value the existing assign/deref
+   rules thread; no new None machinery.
 3. **The absorber tool (slice 3).** `absorb(module)` from stubs/`typing` for a NARROW surface
    (Optional-returning methods + `has_method`) of one real library; the fact bank generated, not
    hand-authored.

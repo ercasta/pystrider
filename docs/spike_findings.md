@@ -558,6 +558,32 @@ produces.
    named cost; this probe answers the conformance-LOOP question, and the threshold-as-data makes the
    repair loop real even with a hand-reified body.
 
+---
+
+## Follow-up: intake growth + API absorption — knowledge as DATA, not baked into rules
+
+The thesis (`docs/api_absorption_design.md`): pystrider hardcodes its value domain (`{none, object}`)
+and "what an operation produces" INSIDE the rules — a constant, a comparison, and every library call
+collapse to `unknown_expr`. Two growths share ONE mechanism (facts the generic rules consume):
+
+1. **Value-domain growth (slice 1)** — `experiments/intake_growth.py` (+ `tests/test_intake_growth.py`,
+   3). Real Python decision functions intaken with CONSTANTS + COMPARISONS as data, ground-evaluated by
+   reasoning (a §8 calculator grounds each comparison), pinned against Python EXECUTION itself as the
+   differential oracle. The value domain now sees `int`/`str`/`bool` and `==`/`>`/`>=` — the foundation
+   conformance-strider needs to check code intaken from real Python text (bridged vocabularies, §above),
+   not a hand-reified model.
+
+2. **API absorption (slice 2)** — `experiments/api_absorption.py` (+ `tests/test_api_absorption.py`,
+   4). An absorbed `dict.get returns_optional yes` (a fact a real absorber emits from type stubs) + a §8
+   resolution tool (receiver type + method → `dict.get`) + TWO bridge rules drive pystrider's REAL
+   `SEMANTICS` so `x = d.get(k); x.attr` raises via the UNCHANGED `?e raises attribute_error …` rule —
+   NO None hypothesis on any parameter (the None comes only from the absorbed-optional call result), and
+   conservatively (a non-optional method `str.upper`, or an unknown receiver type → no false positive).
+   Proves the thesis end to end on the real analyzer: analyzing library-using code is a matter of
+   absorbing FACTS, not authoring per-library rules. Next: the `absorb(module)` tool that generates the
+   fact bank from a real library's declared surface (slice 3), and a `method_not_found` effect from
+   `has_method` facts (slice 4).
+
 ## ugm issues found
 
 Nine bugs / limitations / surprises hit while building this are written up with minimal repros in
