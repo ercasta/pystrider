@@ -101,7 +101,7 @@ drive -> events: ['discount_shown 135.0', 'highlighted', 'gate_shown', 'complete
 The discount was shown, and highlighted, and the irreversible checkout was gated _before_ it
 completed — not because a template said so, but because the running app _did_ so.
 
-![playground screenshot](demos/screenshot.png)
+![playground screenshot](https://github.com/ercasta/pystrider/blob/main/demos/screenshot.png)
 
 
 
