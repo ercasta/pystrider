@@ -6,15 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "pystrider"
 version = "0.0.1"
 description = "Dynamic, hypothesis-driven Python code analyzer built on the ugm graph machine (spike)."
-requires-python = ">=3.10"
+requires-python = ">=3.11"                        # grammapy (absorbed, in-repo) needs 3.11
 dependencies = ["universal-graph-machine"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "hypothesis"]                    # hypothesis: grammapy combinator property tests (roadmap step 6)
 experiments = ["textual>=8,<9"]   # drives experiments/app_synthesis.py via textual's Pilot
 
 [tool.setuptools]
-packages = ["pystrider"]
+# grammapy is absorbed as a TOP-LEVEL PEER package (its own composition substrate that pystrider
+# builds on), not a subpackage — `import grammapy` is unchanged. Source: grammapy repo @ 3f05ccc.
+packages = ["pystrider", "grammapy"]
 
 [tool.setuptools.package-data]
 pystrider = ["*.cnl"]
