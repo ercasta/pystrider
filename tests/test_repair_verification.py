@@ -1,13 +1,17 @@
-"""Pins for the repair-verification hardening (docs/critique.md weakness #6, residuals a & c).
+"""Pins for the repair-verification hardening (docs/critique.md weakness #6, residuals a, b & c).
 
 Before: `choose_repair`/`candidate_edits` verified only the TARGET effect (a single `analyzer`), and
 the regression check compared outcome LABELS — so a fix could silently leave another effect broken,
 and a look-alike label could conflate distinct outcomes. Now verification runs `analyze_all` (every
-effect) and judges by a STABLE outcome key `(kind, base_var, label)` that survives re-intake.
+effect) and judges by a STABLE outcome key `(kind, base_var, label)` that survives re-intake. Residual
+(b), the swept hypothesis space, is now closed too: `repair_all`'s no-regression gate re-verifies over
+`sweep_hypotheses`, not the one seeded dict — see the sweep pins at the bottom.
 """
-from pystrider import intake_function, analyze, analyze_return_none, choose_repair
+from pystrider import intake_function, analyze, analyze_return_none, choose_repair, repair_all
 from pystrider import operators as ops
-from pystrider.analysis import Outcome, candidate_edits
+from pystrider.analysis import (
+    Outcome, candidate_edits, sweep_hypotheses, regressions_over_sweep, analyze_all,
+)
 
 
 # --- residual (c): a stable, precise outcome identity, not a raw site id or an ambiguous label ---
@@ -51,3 +55,41 @@ def test_a_fix_that_would_introduce_a_new_effect_is_not_cleared():
     sel = choose_repair(ik, {"x": "none"}, outcome)
     assert sel.winner is not None
     assert all(c.residual == [] for c in sel.candidates if c.cleared)   # cleared => truly nothing left
+
+
+# --- residual (b): repair verification sweeps the hypothesis space, not one seeded dict ------------
+
+def test_sweep_hypotheses_enumerates_the_parameter_value_product():
+    ik = intake_function("def f(a, b):\n    return a.x\n")
+    sweep = sweep_hypotheses(ik)
+    # two params x {none, object} -> the full product of total assignments (the input space to re-verify).
+    assert {tuple(sorted(h.items())) for h in sweep} == {
+        (("a", "none"), ("b", "none")), (("a", "none"), ("b", "object")),
+        (("a", "object"), ("b", "none")), (("a", "object"), ("b", "object"))}
+
+
+def test_sweep_hypotheses_falls_back_below_the_cap_for_many_params():
+    ik = intake_function("def f(a, b, c, d):\n    return a.x\n")   # 2**4 = 16 <= 64 default -> full product
+    assert len(sweep_hypotheses(ik)) == 16
+    assert len(sweep_hypotheses(ik, cap=8)) == 5      # over cap -> all-object baseline + one-None-each (4)
+
+
+def test_the_sweep_catches_a_regression_the_seeded_check_misses():
+    # THE residual-(b) case: an edit that clears the seeded bug (a is None) but plants a NEW deref that
+    # is only reachable when a DIFFERENT parameter (b) is None. At the seeded point it looks like a
+    # clean fix; only sweeping the hypothesis space exposes the regression.
+    baseline = "def f(a, b):\n    return a.x\n"
+    edited = "def f(a, b):\n    if a is not None:\n        return a.x\n    return b.y\n"
+    seeded = {"a": "none", "b": "object"}
+    base_seeded = {o.key for o in analyze_all(intake_function(baseline), seeded)}
+    edit_seeded = {o.key for o in analyze_all(intake_function(edited), seeded)}
+    assert not (edit_seeded - base_seeded)             # BLIND: at the seeded point, no new outcome
+    reg = regressions_over_sweep(baseline, edited, sweep_hypotheses(intake_function(baseline)))
+    assert ("attribute_error", "b", "b.y") in reg      # SWEPT: the b-deref regression is caught
+
+
+def test_a_monotone_guard_repair_still_reaches_clean_under_the_sweep():
+    # the stronger gate must not reject a legitimate fix: guards only remove reachability, so the
+    # README-shape deref still repairs to clean (no false regression anywhere in the input space).
+    plan = repair_all(intake_function("def f(x):\n    y = x\n    return y.bar()\n"), {"x": "none"})
+    assert plan.clean and plan.steps

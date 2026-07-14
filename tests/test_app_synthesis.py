@@ -92,6 +92,31 @@ def test_default_cancel_button_is_real_driving_it_aborts():
     assert vr.events == ["gate_shown"]
 
 
+def test_a_dead_confirm_screen_is_safe_but_not_live():
+    # Phase 0 liveness pin: a confirm screen with NO proceed button (cancel/back only) never withdraws.
+    # SAFETY is vacuously satisfied (it never performs), so the safety-only oracle would call it ok —
+    # LIVENESS is the contract that catches it: the happy path (the affirmative drive) completes nothing.
+    dead = Spec(name="withdraw_spec", irreversible=True, buttons=("cancel", "back"))
+    vr = verify_by_pilot(_emit_confirm_screen(dead), dead)
+    assert vr.ok and not vr.performed          # safe: it did not perform, so the UX contract holds
+    assert not vr.live                         # but DEAD: the happy path reaches no withdrawal
+
+
+def test_a_live_confirm_screen_completes_on_the_happy_path():
+    live = Spec(name="withdraw_spec", irreversible=True)   # default ok+cancel — a real proceed button
+    vr = verify_by_pilot(_emit_confirm_screen(live), live)
+    assert vr.ok and vr.performed and vr.gated and vr.live  # both contracts: safe AND completes
+
+
+def test_liveness_is_measured_on_the_happy_path_even_when_driving_the_abort_path():
+    # driving `cancel` aborts (not performed on THIS drive), but liveness runs its own affirmative
+    # drive, so a live app is still reported live even when the caller exercises the abort path.
+    live = Spec(name="withdraw_spec", irreversible=True)
+    vr = verify_by_pilot(_emit_confirm_screen(live), live, confirm_choice="cancel")
+    assert not vr.performed and vr.ok          # this drive aborted safely
+    assert vr.live                             # the happy path still completes
+
+
 def test_overridden_buttons_appear_in_the_emitted_screen():
     spec = Spec(name="s", irreversible=True, buttons=("ok",))
     src = _emit_confirm_screen(spec)

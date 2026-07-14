@@ -522,13 +522,22 @@ def check_reachability(spec: Spec, screen: str) -> None:
 
 @dataclass
 class VerifyResult:
-    """What DRIVING the emitted app OBSERVED. `performed` = the withdrawal happened; `gated` = a
-    confirmation screen appeared BEFORE it; `ok` = the observable UX contract holds — an irreversible
-    action never performs WITHOUT a prior gate (so an aborted run is still `ok`: it did not perform)."""
+    """What DRIVING the emitted app OBSERVED, under TWO independent contracts (Phase 0 hardening):
+
+    * `ok` — the SAFETY contract on the driven path: an irreversible action never performs WITHOUT a
+      prior gate (`¬irreversible ∨ ¬performed ∨ gated`). An aborted run is still safe: it did not
+      perform. `performed`/`gated` are the observations this verdict reads.
+    * `live` — the LIVENESS contract: driving the HAPPY path (pressing the affirmative/proceed button)
+      the withdrawal actually COMPLETES. Safety alone is vacuously satisfied by a dead app that never
+      performs — a confirm screen with no proceed button passes `ok` while withdrawing nothing — so
+      liveness is what makes "it works" a checked property, not an assumption.
+
+    A trustworthy app needs BOTH: `ok` (never does the wrong thing) AND `live` (does the right thing)."""
     events: list[str]
     performed: bool
     gated: bool
     ok: bool
+    live: bool
 
 
 async def _drive(app, choice: str = "ok") -> None:
@@ -550,21 +559,37 @@ async def _drive(app, choice: str = "ok") -> None:
             await pilot.pause()
 
 
-def verify_by_pilot(source: str, spec: Spec, confirm_choice: str = "ok") -> VerifyResult:
-    """RUN the emitted app under Textual's headless Pilot and OBSERVE its event trace — trust by
-    execution, never by the skeleton's `provides` claim. Drive the gate with `confirm_choice` (`ok`
-    proceeds, `cancel` aborts). `ok` = the UX contract holds: for an irreversible action, any
-    withdrawal was gated. Safe: our own pre-minted, self-contained app source."""
+def _run_events(source: str, choice: str) -> list[str]:
+    """Exec the emitted app source and DRIVE it once (pressing `choice` at any gate), returning the
+    observed event trace. Safe: our own pre-minted, self-contained app source."""
     ns: dict[str, object] = {}
     exec(compile(source, "<emitted-app>", "exec"), ns)
     app = ns["WithdrawApp"]()
-    asyncio.run(_drive(app, confirm_choice))
-    events = list(app.events)
+    asyncio.run(_drive(app, choice))
+    return list(app.events)
+
+
+def verify_by_pilot(source: str, spec: Spec, confirm_choice: str = "ok") -> VerifyResult:
+    """RUN the emitted app under Textual's headless Pilot and OBSERVE its event trace — trust by
+    execution, never by the skeleton's `provides` claim. Drive the gate with `confirm_choice` (`ok`
+    proceeds, `cancel` aborts). Reports BOTH contracts (see `VerifyResult`): `ok` (SAFETY — for an
+    irreversible action, any withdrawal was gated) and `live` (LIVENESS — driving the HAPPY path, the
+    affirmative/proceed button, the withdrawal COMPLETES). Liveness is measured on its own affirmative
+    drive so it is meaningful even when the caller drives an abort path (`confirm_choice='cancel'`)."""
+    events = _run_events(source, confirm_choice)
     withdrawn_at = next((i for i, e in enumerate(events) if e.startswith("withdrawn")), None)
     performed = withdrawn_at is not None
     gated = "gate_shown" in events and (withdrawn_at is None or events.index("gate_shown") < withdrawn_at)
     ok = (not spec.irreversible) or (not performed) or gated     # irreversible => performing requires a gate
-    return VerifyResult(events=events, performed=performed, gated=gated, ok=ok)
+
+    # LIVENESS — drive the HAPPY path (press the affirmative proceed button) and require completion. A
+    # dead confirm screen with no proceed button never withdraws, so this rejects it where safety cannot.
+    affirmative = _affirmative_of(spec)
+    if confirm_choice == affirmative:
+        live = performed                                          # this drive already IS the happy path
+    else:
+        live = any(e.startswith("withdrawn") for e in _run_events(source, affirmative))
+    return VerifyResult(events=events, performed=performed, gated=gated, ok=ok, live=live)
 
 
 # --- PHASE 3 (finish): ONE deviation spec — the app as its resolved decision points ------------

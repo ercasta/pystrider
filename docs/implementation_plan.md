@@ -51,6 +51,53 @@ than the old Python one-liner — a single check ~3.2ms, entirely `ask_goal` (~2
 went ~55s→~255s. Filed as ugm #13; our-side mitigation = switch `_cnl.derive` to the `chain_sip` tuple path
 (~2.7×). Fine off the hot path; revisit before checks land in a per-candidate drive loop.
 
+### Roadmap Phase 0 — harden the trust core (STARTED 2026-07-14; suite 259)
+
+`docs/roadmap.md` promoted **Phase 0 (harden the disposers) to "do first."** First slice DONE — the
+three interlocking oracle holes it named:
+- **Liveness in the drive oracle.** `VerifyResult` now carries `live` alongside `ok`: `ok` is the
+  SAFETY contract (unchanged — no ungated irreversible withdrawal), `live` is the LIVENESS contract
+  (driving the affirmative/proceed button, the withdrawal COMPLETES). Safety alone was vacuously
+  satisfied by a DEAD app (a confirm screen with no proceed button — `("cancel","back")` — was
+  certified `ok=True` while withdrawing nothing). Liveness is measured on its own happy-path drive, so
+  it holds even when a caller drives the abort path. (`experiments/app_synthesis.py`.)
+- **GATE 4 is now a real rejector.** `generator_frontend.gate` rejects on `¬live` (new
+  `pystrider/Pilot-liveness` verdict); a new `sterile_generator` drafts the dead app, slips past the
+  obligation + Scope + Accumulate, and is caught ONLY at the Pilot — then repaired by reasoning.
+- **Gate the emitted artifact, not the draft.** `gate` now runs Accumulate on `_ordered_buttons(
+  emit_spec)` (the preference-resolved set that ships) and drives the emitted `emit_spec`, closing the
+  `draft.buttons or None` gap where the gate certified a different button set than emission shipped.
+
+Pins: `test_app_synthesis.py::test_a_dead_confirm_screen_is_safe_but_not_live` (+ live/abort-path
+companions); `test_generator_frontend.py::test_sterile_generator_is_caught_by_the_liveness_gate`,
+`::test_the_gated_button_set_is_the_one_that_ships`.
+
+Second slice DONE — **oracle contracts written** (`docs/oracle_contracts.md`, critique rec #6): every
+verdict surface (forward analyzer, Pilot `ok`/`live`, the four grammapy gates, footprint honesty, the
+obligation gate, conformance, verify-by-re-execution, diagnosis) now has a stated contract — *a pass
+proves X / does NOT prove Y / bounded by Z* — and the **diagnosis axis is named in `docs/`** for the
+first time (it lived only in a probe docstring). The "every verdict surface ships its contract" Held
+Line (`roadmap.md` #2), made a maintained document.
+
+Third slice DONE — **`repair_all` verifies under a swept hypothesis space** (critique residual (b)).
+New `sweep_hypotheses(intake)` enumerates the parameter × `VALUE_KINDS` product (bounded by `cap=64`;
+all-object + one-None-each fallback above it) — the mirror of `conformance_strider.sweep_scenarios`.
+`repair_all`'s no-regression gate now re-verifies each surviving candidate over the whole input space
+(`regressions_over_sweep` / an inlined precomputed-baseline variant in the hot loop), so an edit that
+clears the seeded bug but plants a new one reachable only when a *different* parameter is None is
+rejected — where the single-seeded-dict check passed it blind. Guards/coalesce are monotone (they only
+remove outcomes), so no current operator regresses under the sweep → existing repairs still reach clean;
+the gate's teeth are pinned directly on `regressions_over_sweep` (a hand-crafted regressing edit).
+Perf: the sweep's marginal cost is ~`|sweep|×2` extra `analyze_all` calls per step (~25ms on the README
+example), riding the existing CNL per-check floor (ugm #13, Phase 1) rather than adding an order of
+magnitude. Pins: `tests/test_repair_verification.py` (4 new — enumeration, cap fallback, the swept-catch,
+monotone-still-clean). **PHASE 0 COMPLETE.**
+
+**Phase 0 residual still open (NOT part of (b)):** the single-site `repair`/`candidate_edits`/
+`choose_repair` path still verifies under the one passed hypothesis — the sweep was wired into
+`repair_all` (the productized driver the roadmap names) only. `sweep_hypotheses` /
+`regressions_over_sweep` are public, so adopting the sweep single-site later is a small follow-on.
+
 The pre-convergence pystrider loop (below) is unchanged and green — the substrate this line builds on.
 
 ---

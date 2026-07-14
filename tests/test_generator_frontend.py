@@ -9,10 +9,10 @@ import pytest
 
 from experiments.generator_frontend import (
     parse_intent, Draft, gate, repair, run,
-    sound_generator, lazy_generator, sloppy_generator,
+    sound_generator, lazy_generator, sloppy_generator, sterile_generator,
 )
-from experiments.app_synthesis import Spec, check_reachability
-from grammapy import CompositionError
+from experiments.app_synthesis import Spec, check_reachability, required_capabilities, _button_atom
+from grammapy import Accumulate, CompositionError
 
 IRREVERSIBLE = "a cash withdrawal app; the withdrawal is irreversible"
 LENIENT = "a cash withdrawal app"
@@ -49,8 +49,32 @@ def test_sloppy_generator_is_caught_by_accumulate():
     assert o.first.gate == "grammapy/Accumulate"      # passes obligation + Scope, fails the frame rule
 
 
+def test_sterile_generator_is_caught_by_the_liveness_gate():
+    # Phase 0: a confirm screen with no proceed button passes the obligation, Scope, and Accumulate
+    # (its writes are disjoint), and is caught ONLY by the Pilot's LIVENESS contract — the gate the
+    # safety-only oracle could never fire, making GATE 4 a real rejector for the first time.
+    draft = sterile_generator(parse_intent(IRREVERSIBLE))
+    # it genuinely survives the three design-time gates:
+    assert draft.screen == "confirm_screen"                       # provides confirmation (GATE 1 ok)
+    check_reachability(draft.spec, draft.screen)                  # Scope admits (GATE 2 ok, no raise)
+    Accumulate.check([_button_atom(b) for b in draft.buttons])    # disjoint writes (GATE 3 ok, no raise)
+    o = run(IRREVERSIBLE, sterile_generator)
+    assert not o.first.accepted
+    assert o.first.gate == "pystrider/Pilot-liveness"             # only the liveness contract catches it
+    assert o.first.verify is not None and not o.first.verify.live
+    assert o.repaired.screen == "confirm_screen" and o.final.accepted and o.trustworthy
+
+
+def test_the_gated_button_set_is_the_one_that_ships():
+    # Phase 0 draft-vs-artifact: a confirm draft with an EMPTY button set emits the preference default
+    # (ok+cancel). The gate must certify THAT emitted set — driving green — not the empty draft set.
+    o = run(IRREVERSIBLE, lambda spec: Draft(spec, "confirm_screen", ()))
+    assert o.first.accepted and o.trustworthy
+    assert o.first.verify.events == ["gate_shown", "withdrawn 42"]   # the shipped default set drives live
+
+
 def test_a_rejected_draft_is_repaired_by_reasoning_and_then_accepted():
-    for generator in (lazy_generator, sloppy_generator):
+    for generator in (lazy_generator, sloppy_generator, sterile_generator):
         o = run(IRREVERSIBLE, generator)
         assert not o.first.accepted                   # the draft was rejected
         assert o.repaired.screen == "confirm_screen"  # reasoning re-derived the sound design

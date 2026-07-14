@@ -14,6 +14,7 @@ version — and re-runs the analysis inside it to confirm the outcome clears.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import product
 from typing import Callable
 
 import ugm as h
@@ -400,6 +401,44 @@ class RepairPlan:
         return lines
 
 
+# --- swept verification: the hypothesis space, not one seeded dict (critique residual (b)) --------
+# `repair_all` drives progress toward "clean" under the seeded hypothesis, but VERIFYING a candidate
+# under only that one dict is blind to a regression it introduces on a DIFFERENT input — an edit can
+# clear the seeded bug while planting a new one reachable only when another parameter is None. So the
+# no-regression gate sweeps the whole parameter-value hypothesis space, the mirror of
+# `conformance_strider.sweep_scenarios` (declared vocabulary × boundary constants) and its re-sweep.
+
+def sweep_hypotheses(intake: Intake, *, cap: int = 64) -> list[dict[str, str]]:
+    """Enumerate the parameter-value hypothesis space to verify repairs over. The parameters are the
+    declared vocabulary and `VALUE_KINDS` ({none, object}) the values; the sweep is their full product
+    — every total None/object assignment — bounded by `cap`. When the product would exceed `cap`
+    (`2**len(params)`), fall back to the single-suspect sweep: the all-object baseline plus each
+    parameter None in turn, enough to catch an edit that regresses on a non-seeded input without the
+    exponential blowup. A no-parameter function has the one empty hypothesis."""
+    params = list(intake.params)
+    kinds = list(VALUE_KINDS)
+    if not params:
+        return [{}]
+    if len(kinds) ** len(params) <= cap:
+        return [dict(zip(params, combo)) for combo in product(kinds, repeat=len(params))]
+    all_object = {p: "object" for p in params}                    # bounded fallback: baseline + 1-None
+    return [dict(all_object)] + [{**all_object, p: "none"} for p in params]
+
+
+def regressions_over_sweep(baseline_src: str, edited_src: str,
+                           sweep: list[dict[str, str]]) -> set[tuple[str, str, str]]:
+    """The outcome keys the edit INTRODUCES anywhere in the swept hypothesis space: for each swept
+    hypothesis `h`, `keys(edited, h) - keys(baseline, h)`, unioned. Empty means the edit regresses
+    NOWHERE in the input space — the swept re-verification (mirror of conformance's zero-new-divergence
+    re-sweep). A non-empty result names bugs an edit verified at one seeded point would have hidden."""
+    base_i, edit_i = intake_function(baseline_src), intake_function(edited_src)
+    introduced: set[tuple[str, str, str]] = set()
+    for hyp in sweep:
+        base_keys = {o.key for o in analyze_all(base_i, hyp)}
+        introduced |= {o.key for o in analyze_all(edit_i, hyp)} - base_keys
+    return introduced
+
+
 def repair_all(intake: Intake, hypothesis: dict[str, str], *, max_steps: int = 12) -> RepairPlan:
     """Repair a WHOLE function to a fixpoint: while any outcome remains under `hypothesis`, retrieve
     + verify candidate edits for it, keep only those that **make progress** (strictly fewer outcomes)
@@ -409,10 +448,14 @@ def repair_all(intake: Intake, hypothesis: dict[str, str], *, max_steps: int = 1
 
     Each candidate is judged by re-executing the edited source through `analyze_all` (every effect),
     so a guard that clears an AttributeError but a lingering returns-None is still counted honestly,
-    and an edit that trades one bug for another is refused. If no regression-free edit removes the
-    current outcome, the plan stops with `stuck` set (an honest 'I can't fix this locally')."""
+    and an edit that trades one bug for another is refused. The no-regression check is SWEPT over the
+    whole parameter-value hypothesis space (`sweep_hypotheses`), not just the seeded dict (critique
+    residual (b)): an edit that clears the seeded bug but plants a new one reachable only under a
+    different input is rejected. If no regression-free edit removes the current outcome, the plan stops
+    with `stuck` set (an honest 'I can't fix this locally')."""
     source = intake.source
     steps: list[RepairStep] = []
+    sweep = sweep_hypotheses(intake)                                # the input space to re-verify over
 
     for _ in range(max_steps):
         cur = intake_function(source)
@@ -427,15 +470,23 @@ def repair_all(intake: Intake, hypothesis: dict[str, str], *, max_steps: int = 1
         # Each candidate already carries its cross-effect residual (verified via analyze_all), so we
         # judge progress + regression off `c.residual` — no second analysis pass.
         cands = candidate_edits(cur, hypothesis, target, provides_fn=provides_fn)
+        # baseline outcome keys across the whole input space — computed ONCE per step (identical for
+        # every candidate), so the swept regression check re-analyzes only each surviving EDIT.
+        baseline_sweep = [{o.key for o in analyze_all(cur, hyp)} for hyp in sweep]
         accepted: list[Candidate] = []
         residual_of: dict[str, list[Outcome]] = {}
         for c in cands:
             resid = c.residual
             makes_progress = len(resid) < len(outcomes)
             introduces = {o.key for o in resid} - prev_keys         # a NEW outcome (by key) = regression
-            if makes_progress and not introduces:
-                accepted.append(c)
-                residual_of[c.name] = resid
+            if not (makes_progress and not introduces):
+                continue
+            edit_i = intake_function(c.v2_source)                   # swept gate: regresses on ANY input?
+            if any({o.key for o in analyze_all(edit_i, hyp)} - base_keys
+                   for hyp, base_keys in zip(sweep, baseline_sweep)):
+                continue                                            # yes -> refuse, the swept gate's teeth
+            accepted.append(c)
+            residual_of[c.name] = resid
         if not accepted:
             return RepairPlan(source=source, steps=steps, clean=False, stuck=target)
 

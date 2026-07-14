@@ -44,7 +44,7 @@ from grammapy import Accumulate, CompositionError
 
 from experiments.app_synthesis import (
     Spec, required_capabilities, check_reachability, _build_module, verify_by_pilot,
-    _button_atom, assemble, CONFIRM_SIGNAL,
+    _button_atom, assemble, CONFIRM_SIGNAL, _ordered_buttons, _affirmative_of,
 )
 
 
@@ -93,6 +93,16 @@ def sloppy_generator(spec: Spec) -> Draft:
     return Draft(spec, "one_screen")
 
 
+def sterile_generator(spec: Spec) -> Draft:
+    """A front-end that drafts a confirm screen with NO proceed button (`cancel`, `back` only) — a
+    DEAD app: it gates, but the happy path can never complete. It slips past the obligation (a confirm
+    screen is present), Scope (the effect is handled), and Accumulate (the writes are disjoint) — and
+    is caught ONLY by the Pilot's LIVENESS contract, the gate the safety-only oracle could never fire."""
+    if spec.irreversible:
+        return Draft(spec, "confirm_screen", ("cancel", "back"))
+    return Draft(spec, "one_screen")
+
+
 # --- the gates: pystrider reasoning + grammapy algebra + the Pilot oracle -----------------------
 
 @dataclass
@@ -117,6 +127,10 @@ def gate(draft: Draft) -> GateResult:
     catches whole classes before any code is emitted), then execution (the Pilot). The first gate to
     reject stops the pipeline and names itself; surviving all four emits and drives the app."""
     spec = draft.spec
+    emit_spec = _emit_spec(draft)      # the spec that actually SHIPS (preference-resolved button set)
+    # the button set that will really be in the emitted screen — gate THIS, not the raw draft, so no
+    # gate ever certifies an artifact other than the one emitted (Phase 0: draft-vs-artifact hole).
+    emitted_buttons = _ordered_buttons(emit_spec) if draft.screen == "confirm_screen" else []
 
     # GATE 1 — pystrider REASONING: does the draft satisfy the derived OBLIGATION? (the `re-derive` edge)
     required = set(required_capabilities(spec))
@@ -133,19 +147,25 @@ def gate(draft: Draft) -> GateResult:
     except CompositionError as e:
         return GateResult(False, "grammapy/Scope", str(e).splitlines()[0])
 
-    # GATE 3 — grammapy ACCUMULATE: does the proposed confirm button set compose (disjoint writes)?
+    # GATE 3 — grammapy ACCUMULATE: does the EMITTED confirm button set compose (disjoint writes)?
     if draft.screen == "confirm_screen":
         try:
-            Accumulate.check([_button_atom(b) for b in draft.buttons])
+            Accumulate.check([_button_atom(b) for b in emitted_buttons])
         except CompositionError as e:
             return GateResult(False, "grammapy/Accumulate", str(e).splitlines()[0])
 
     # PASSED design-time — grammapy guarantees composition. EMIT (AST) and DRIVE (GATE 4, the oracle).
-    source = ast.unparse(_build_module(_emit_spec(draft), draft.screen))
-    vr = verify_by_pilot(source, spec)
+    # Drive the EMITTED artifact along the HAPPY path (the affirmative button): the Pilot must attest
+    # BOTH the SAFETY contract (`ok`) and the LIVENESS contract (`live` — the app actually completes).
+    source = ast.unparse(_build_module(emit_spec, draft.screen))
+    vr = verify_by_pilot(source, emit_spec, confirm_choice=_affirmative_of(emit_spec))
     if not vr.ok:
         return GateResult(False, "pystrider/Pilot",
                           f"driving violated the UX contract (events={vr.events})", source, vr)
+    if not vr.live:
+        return GateResult(False, "pystrider/Pilot-liveness",
+                          f"the happy path never completed — a dead app: driving the proceed button "
+                          f"withdrew nothing (events={vr.events})", source, vr)
     return GateResult(True, "accepted", f"survived every gate; driven green (events={vr.events})", source, vr)
 
 
@@ -216,13 +236,16 @@ def main() -> None:
     print("PART 3 — a SLOPPY generator (broken button set): caught by grammapy's frame rule, then repaired\n")
     _show(irreversible, sloppy_generator)
 
-    print("PART 4 — a lenient intent: the compact app is correct, and every generator that drafts it passes\n")
+    print("PART 4 — a STERILE generator (gates, but no proceed button): a DEAD app, caught by LIVENESS\n")
+    _show(irreversible, sterile_generator)
+
+    print("PART 5 — a lenient intent: the compact app is correct, and every generator that drafts it passes\n")
     _show(lenient, sound_generator)
 
     print("The front-end can be arbitrarily unreliable; each mistake it can make maps to a gate it does")
     print("not control — the derived OBLIGATION, grammapy's SCOPE and ACCUMULATE (now CNL rule-modules),")
-    print("and the Pilot. A rejection re-derives the sound design from reasoning. Unreliable proposer +")
-    print("trusted disposers = trustworthy software: the productization thesis, made runnable.")
+    print("and the Pilot's SAFETY and LIVENESS contracts. A rejection re-derives the sound design from")
+    print("reasoning. Unreliable proposer + trusted disposers = trustworthy software, made runnable.")
 
 
 if __name__ == "__main__":
