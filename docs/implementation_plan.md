@@ -2,7 +2,8 @@
 
 A cold-start guide for the next session. Read this, then `docs/spike_findings.md` (what's proven)
 and `docs/code_reasoning_design.md` (the design + open questions). Everything below the spike is
-built and green; this plan is what's next.
+built and green; this plan is what's next. The *strategic* layer — which product this becomes and
+in what phase order — is `docs/roadmap.md` (2026-07-14); this file stays tactical.
 
 ---
 
