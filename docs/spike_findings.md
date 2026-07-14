@@ -482,13 +482,42 @@ as generators. The difference is in four dimensions that matter for synthesis:
    emit/verify path would let synthesis use rule-grown pools without the naming tax — i.e. this
    probe's conclusion flips only when ugm #8 (id-addressed goals + stable skolem labels) lands.
 
+---
+
+## Follow-up: benchmarked the Session path (critique rec #3) — and killed a 65% self-inflicted cost
+
+Critique.md's top undone recommendation (#3, "benchmark the Session path") and the empirical test of
+whether ugm's `seed_from_focus` (feedback #7, adopted in `analysis.py`/`session.py`) actually helps us.
+Probe: `experiments/session_benchmark.py` (scoped vs. global focus, one variable — attention-scope
+size — driven through the identical productized `analyze(kb=shared, focus_scope=…)` path as a Session
+accretes N namespaced functions), pinned by `tests/test_semantics_cache.py` (4).
+
+1. **The measured "wall" was mostly redundant work, not engine cost.** `build_rule_graph`/`rule_list`
+   re-ran `load_machine_rules(SEMANTICS)` on EVERY detect (7× per `repair_all`), and that call
+   *validates the bank by running it* (`machine_rule_defects`) — so it was ~65% of every `analyze`.
+   The bank is static, so `semantics.py` now parses it ONCE and memoizes (`_parsed_rules`), still
+   assembling a FRESH rule graph per call (no shared graph-state hazard). Measured, 138/138 green:
+   **`repair_all` 8220ms → 213ms (~39×), per-`analyze` 1372ms → 497ms (~2.8×), suite 376s → 31s (~12×)**.
+
+2. **`seed_from_focus` is load-bearing — provably, once the constant was gone.** With the masking
+   validation cost removed, scoped focus stays ~flat (**×1.67** as the graph grows ×7.95) while global
+   goes **super-linear (×13.22)** — the flat-vs-superlinear curve the ISA-control-machine doc §7.4/§8
+   claims, now reproduced on *our* facts. The scope→cost link is direct: per-analysis cost tracks the
+   function under analysis, not the accreted session. The answer to "does it benefit us?" is emphatically
+   yes, and increasingly so as a Session grows.
+
+3. **The remaining lever is ugm's per-triple Python constant** (§7 "Rust for the constant") — an engine
+   property, not ours. Fed back below.
+
 ## ugm issues found
 
-Six bugs / limitations / surprises hit while building this are written up with minimal repros in
+Nine bugs / limitations / surprises hit while building this are written up with minimal repros in
 [`../../ugm/docs/feedback_from_pystrider.md`](../../ugm/docs/feedback_from_pystrider.md) — most
 are **silent-failure** modes (mis-parsed rule clauses, undropped facts, case-folded queries,
-un-minted existentials). None blocked the spike, but a strict/verbose mode in ugm would have
-saved most of the debugging time.
+un-minted existentials); the latest (#9) is a **hidden cost** — `load_machine_rules` re-validates the
+bank by running it on every call (~65% of every `analyze` until we memoized the parse). None blocked
+the spike, but a strict/verbose mode and a load-without-revalidate path would have saved most of the
+debugging and runtime.
 
 ---
 
