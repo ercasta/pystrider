@@ -162,6 +162,27 @@ minimal (reusing the pystrider repair machinery — `choose_repair` already take
 The homoiconic meta-rules need ugm's rule-reification vocabulary (`rl_lhs`/`k_pred` per the critique) —
 probe it first.
 
+### Roadmap Phase 3 — the generation wedge: mode-1 spec→code (the CODE GENERATION track, resumed 2026-07-14)
+
+Resumed the code-generation line (the app_synthesis/generator_frontend loop Phase 0 hardened). Phase 3
+is mode-1 pure-derivational spec→code; its headline deliverable is the artifact no LLM regeneration can
+produce. **Re-derivation diff DONE** — `experiments/rederivation.py` (+ `tests/test_rederivation.py`, 7):
+`rederive(before, after)` runs `synthesize` on both specs and diffs three things in lockstep — the SPEC
+delta (which succinct sentence moved), the DECISION delta (which resolved decision points re-resolved:
+screen / confirm_buttons / confirm_policy / effect_handling, each still forced/defaulted, never guessed),
+and the emitted SOURCE delta (unified diff) — with each changed decision carrying its WHY (the RECORD
+derivation: the screen flips to `confirm_screen` *because* `withdrawal is_irreversible` fires the deontic
+obligation, reached through the framework bridge). Both before+after apps are Pilot-verified (`verified`
+= both ok AND live, using the Phase-0 liveness), so it is a *verified* code change; a no-op spec change
+re-derives to an empty delta (determinism). This is the "policy change → verified code change" artifact,
+made runnable. Suite 288 → 295.
+
+**Phase 3 NEXT (roadmap work items):** the REFUSAL UX (an uncovered spec region → a named gap "no
+fragment provides X; a KB entry of shape Y would fill it" — held line #3, and the on-ramp to Track C /
+the hole mode 2 hands an LLM); deepen expansion (more deontic rules / bridges / decision points on the
+Phase 2 harness); a SECOND scaffold family generated from a Track-C fragment KB without touching engine
+code (proof the fragment KB, not the probe, does the work — depends on Track C).
+
 The pre-convergence pystrider loop (below) is unchanged and green — the substrate this line builds on.
 
 ---
