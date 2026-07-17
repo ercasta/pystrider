@@ -221,13 +221,25 @@ The make-or-break: did authoring CNL *reduce* the work, or just move it? `experi
   few spec lines" vs. "author new bundles." A first *illustrative* read
   (`experiments/composability_coverage.py`): over a spectrum of new requirements against the 23-token
   bundle vocabulary, ~58% are cheap (compose-existing or a-few-rule-lines) and ~42% need a new bundle —
-  and even a re-target (Textual→web) reuses the business/ux decisions. So the economics reduce to the
-  bundle library's *coverage* — the same ecosystem question any framework faces — which a real corpus of
-  app specs would measure.
-- **And the LOC model *understates* the win** (argued): hand-code must manage ~2^F feature-interaction
-  combinations while CNL grows linearly and grammapy *checks* the interactions; the same business/ux rules
-  re-target a new library for a few rule-lines; and every change is re-derived, re-verified, and carries a
-  why-trace for free.
+  and even a re-target reuses the business/ux decisions. That re-target is now a **driven fact**, not a
+  vocabulary read (`experiments/retarget_family.py` + `tests/test_retarget_family.py`, 5): the *same*
+  `business.cnl` + `ux.cnl` (7 decision-lines) drive **two** independent, driven toolkits — the existing
+  Textual app *and* a headless CLI family — and a whole spectrum of carts satisfies the **same** behavioral
+  contracts on **both** (a confirm gate precedes completion iff irreversible; the discount shows iff
+  granted). The 7 decision-lines are reused **verbatim** across targets; only a 5-line library port is
+  re-authored. So the economics reduce to the bundle library's *coverage* — the same ecosystem question any
+  framework faces — which a real corpus of app specs would measure.
+- **And the LOC model *understates* the win** — now **demonstrated**, not argued
+  (`experiments/interaction_scaling.py` + `tests/test_interaction_scaling.py`, 5, on grammapy's real
+  `Accumulate` and by running the emitted programs): as a feature library grows to *F*, the author's ledger
+  stays **linear** (one bundle per feature) while the interaction-audit surface grows **quadratically**
+  (`C(F,2)` pairs that could clobber a shared slot) — and grammapy's frame rule bears that quadratic
+  **automatically**. At *F*=32 the injected collider is **caught structurally in one pass** (the author wrote
+  zero interaction code), while the naive additive program **silently clobbers** the shared slot at runtime —
+  the exact bug hand-additive code ships. The structural check's boundary is named (it audits *resource*
+  collisions, not *semantics*); a semantic interaction on disjoint slots falls to the **second automatic
+  layer, driven execution** — not to the author. Plus: the same business/ux rules re-target a new library for
+  a few rule-lines, and every change is re-derived, re-verified, and carries a why-trace for free.
 
 **Verdict:** for a platform user the compression is real and repeatable, the platform given like any
 framework. The approach did not move the work — the CNL is the irreducible decisions, the rest is derived.
