@@ -33,6 +33,27 @@ discount_policy rate 10
     </div>
   </div>
 
+  <details class="ps-port">
+    <summary>The library port — <strong>read-only</strong> (swap this to re-target a different toolkit)</summary>
+    <div class="ps-grid">
+      <div class="ps-field">
+        <label>textual.cnl — what the Textual toolkit can build (absorbed facts)</label>
+        <textarea class="ps-textual ps-cnl-input" readonly spellcheck="false">modal_confirm supported_by textual
+styled_label  supported_by textual
+input_value   supported_by textual
+button_widget supported_by textual</textarea>
+      </div>
+      <div class="ps-field">
+        <label>bridge.cnl — the only crosswalk between the vocabularies</label>
+        <textarea class="ps-bridge ps-cnl-input" readonly spellcheck="false">confirmation_step    realized_by modal_confirm
+highlighted_discount realized_by styled_label
+
+# A required UX feature is ADMITTED only if the library supports its realizer.
+?feat admitted_for ?cart when ?cart requires_feature ?feat and ?feat realized_by ?cap and ?cap supported_by textual</textarea>
+      </div>
+    </div>
+  </details>
+
   <div class="ps-knobs">
     <label>customer
       <select class="ps-tier">

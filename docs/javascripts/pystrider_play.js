@@ -158,9 +158,14 @@
         var tier = q(container, ".ps-tier").value;
         var spend = parseFloat(q(container, ".ps-spend").value || "0");
         var irrev = q(container, ".ps-irrev").checked;
+        // the library port is shown read-only on the page; read it from there so shown == used, with
+        // the JS constants as a fallback if a page omits the fields.
+        var textualEl = q(container, ".ps-textual");
+        var bridgeEl = q(container, ".ps-bridge");
         json = eng.api.generate(
           q(container, ".ps-business").value, q(container, ".ps-ux").value,
-          TEXTUAL_CNL, BRIDGE_CNL, tier, spend, irrev
+          textualEl ? textualEl.value : TEXTUAL_CNL, bridgeEl ? bridgeEl.value : BRIDGE_CNL,
+          tier, spend, irrev
         );
       }
       var r = JSON.parse(json);

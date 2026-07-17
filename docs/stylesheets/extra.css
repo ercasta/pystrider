@@ -35,6 +35,14 @@
 .ps-code-input { min-height: 15rem; }
 .ps-cnl-input { min-height: 12rem; }
 
+.ps-playground textarea[readonly] {
+  opacity: 0.72;
+  cursor: default;
+  background: var(--md-code-bg-color);
+}
+.ps-port { margin: 0.4rem 0 0.2rem; }
+.ps-port > summary { font-size: 0.82rem; cursor: pointer; opacity: 0.85; }
+
 .ps-knobs { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin: 0.6rem 0; }
 .ps-knobs label { font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.35rem; }
 .ps-knobs select, .ps-knobs input[type="number"] {

@@ -78,37 +78,71 @@ def _subscript_base(node: ast.expr) -> ast.expr:
     return node
 
 
-def modelable(source: str, *, store: str = "out") -> bool:
-    """Statically decide whether `footprint_of` can SOUNDLY derive this fragment's write footprint. The
-    static/dynamic oracles only capture writes made by **subscripting the store directly** (``store[k] =
-    …``). The moment the store is reached any other way, its writes escape that model and a derived
-    footprint may silently MISS one — so the honest answer is *unknown*, not a confident under-approx.
+def _is_fresh_container(value: ast.expr) -> bool:
+    """A value that binds the store to a NEW empty/literal mutable container — a clean (re)init that
+    introduces no alias: ``{}`` / ``[]`` / ``{1}`` literals, or ``dict()`` / ``list()`` / ``set()``.
+    A *comprehension* (`{k: v for …}`) is deliberately NOT fresh: it builds the container by writes the
+    subscript model never sees, so an accumulator bound that way must abstain."""
+    if isinstance(value, (ast.Dict, ast.List, ast.Set)):     # {} [] {..}  (NOT DictComp/ListComp/SetComp)
+        return True
+    if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+            and value.func.id in ("dict", "list", "set")):
+        return True
+    return False
 
-    Concretely, the fragment is modelable **iff every reference to the store is the object of a
-    subscript** (``store[...]``). Any other reference is a store-escape and abstains:
+
+def _store_ref_is_safe(node: ast.Name, parent: "ast.AST | None") -> bool:
+    """Is this reference to the store harmless for footprint derivation? A store reference is safe when it
+    is subscripted, cleanly (re)bound, or merely READ — and unsafe when it could carry an out-of-view
+    WRITE (a method mutation, a callee, an alias, an operator-mutation)."""
+    if isinstance(parent, ast.Subscript) and parent.value is node:
+        return True                                          # store[...]          (the visible write/read)
+    if isinstance(parent, ast.Assign) and node in parent.targets and _is_fresh_container(parent.value):
+        return True                                          # store = {}          (a clean init, not an alias)
+    if isinstance(parent, (ast.Return, ast.Yield, ast.YieldFrom)) and getattr(parent, "value", None) is node:
+        return True                                          # return store        (leaves scope; no in-scope write)
+    if isinstance(parent, ast.Compare) and (node is parent.left or node in parent.comparators):
+        return True                                          # k in store / store == y   (a read)
+    if isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension)) and parent.iter is node:
+        return True                                          # for k in store      (a read)
+    return False
+
+
+def modelable(source: str, *, store: str = "out") -> bool:
+    """Statically decide whether `footprint_of` can SOUNDLY derive this code's write footprint for
+    ``store``. The static/dynamic oracles only capture writes made by **subscripting the store directly**
+    (``store[k] = …``). If a write could reach the store any OTHER way — out of view of that model — a
+    derived footprint may silently MISS it, so the honest answer is *unknown*, not a confident under-approx.
+
+    A reference to the store is SAFE when it is subscripted (`store[...]`), cleanly (re)bound to a fresh
+    container (`store = {}`), or merely READ (`return store`, `k in store`, `for k in store`). It is an
+    ESCAPE — and abstains — when it could carry an out-of-view write:
 
       * a method call on it            ``store.update(...)`` / ``store.setdefault(...)`` (bypasses ``__setitem__``)
       * an operator-mutation           ``store |= {...}``                      (an aug-assign to the bare name)
       * the store passed to a callee   ``h(store)``                            (writes happen out of view)
       * the store aliased              ``d = store`` / ``box = [store]``        (writes through the alias are unseen)
       * a chained subscript on it      ``store[a][b] = …``                     (writes through the inner object)
+      * built by a comprehension       ``store = {k: v for …}``                (comprehension writes are unseen)
 
     This is a **sound over-refusal**, an enumerated boundary (not a full alias analysis): it never blesses
-    a construct it cannot see through, and hands off — the membrane where the core says 'I don't know'."""
+    a construct it cannot see through, and hands off — the membrane where the core says 'I don't know'. A
+    call argument is refused conservatively even for a pure read (`len(store)`): the callee is opaque."""
     tree = ast.parse(textwrap.dedent(source))
-    # Name nodes that sit in a SAFE position: the immediate object of a subscript, `store[...]`.
-    safe: set[int] = set()
+    parent: "dict[int, ast.AST]" = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Subscript):
-            if isinstance(node.value, ast.Name):
-                safe.add(id(node.value))
-            else:                                            # a chained subscript — `store[a][b]` writes
-                base = _subscript_base(node.value)           # through the inner object, out of the model
-                if isinstance(base, ast.Name) and base.id == store:
-                    return False
+        for child in ast.iter_child_nodes(node):
+            parent[id(child)] = node
+    # a chained subscript on the store (`store[a][b] = …`) writes through the inner object — out of model.
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id == store and id(node) not in safe:
-            return False                                     # a store reference that is not `store[...]`
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Subscript):
+            base = _subscript_base(node.value)
+            if isinstance(base, ast.Name) and base.id == store:
+                return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == store:
+            if not _store_ref_is_safe(node, parent.get(id(node))):
+                return False
     return True
 
 
