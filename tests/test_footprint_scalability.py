@@ -1,23 +1,36 @@
 """Pins for the footprint scalability sweep (experiments/footprint_scalability.py).
 
 The highest-information scalability finding: the derivation stays sound on self-contained subscript
-fragments but SILENTLY MISSES writes on common real-code constructs (method mutation, aliasing/helpers
-across untaken branches) — and an abstention detector (`modelable`) converts every silent miss into an
-honest-unknown. These pins hold the finding so a regression (a construct newly silently-unsound, or the
-abstention no longer catching one) is caught. Scalability = derive-what-you-can + know-when-you-can't.
+fragments but SILENTLY MISSES writes on common real-code constructs (method mutation, aliasing) — and an
+abstention detector (`modelable`) converts every silent miss into an honest-unknown. These pins hold the
+finding so a regression (a construct newly silently-unsound, or the abstention no longer catching one) is
+caught. Scalability = derive-what-you-can + know-when-you-can't.
+
+A store passed to a LOCAL helper is no longer a silent miss NOR an abstention: it is FOLLOWED into the
+callee exactly (the inter-procedural slice), so `helper_taken`/`helper_untaken` derive EXACTLY — including
+the helper called on an UNTAKEN branch, which static following catches (branch-complete) where a runtime
+observation never would.
 """
 from experiments.footprint_scalability import CASES, classify, modelable, abstaining_verdict
 
 _BY_LABEL = {c.label: c for c in CASES}
 # the constructs that escape BOTH oracles with no uncertainty signal — the fatal class. (update/setdefault
-# are no longer here: they are now MODELED as dict writes, so their footprint is derived exactly.)
-SILENT = {"alias_untaken", "helper_untaken"}
+# are MODELED as dict writes; the helper cases are now FOLLOWED into the local callee — so only aliasing,
+# genuinely out of the subscript model, remains silently-unsound naively.)
+SILENT = {"alias_untaken"}
 
 
 def test_clean_subscript_fragments_are_sound():
     for label in ("subscript", "two_keys", "aug_assign", "branch", "computed_key", "loop_computed"):
         verdict = classify(_BY_LABEL[label])[0]
         assert verdict in {"EXACT", "SOUND(over)"}, (label, verdict)
+
+
+def test_a_store_passed_to_a_local_helper_is_followed_exactly():
+    # the inter-procedural slice: the store handed to an in-view helper is modelled, not abstained —
+    # on the taken AND the untaken branch (static following is branch-complete).
+    for label in ("helper_taken", "helper_untaken"):
+        assert classify(_BY_LABEL[label])[0] == "EXACT", label
 
 
 def test_the_killer_constructs_are_silently_unsound_naively():

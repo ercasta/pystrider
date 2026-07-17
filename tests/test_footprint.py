@@ -66,6 +66,38 @@ def test_modelable_covers_subscripts_reads_and_known_methods():
     assert not modelable("out['a']['b'] = 1")              # chained subscript (writes the inner object)
 
 
+def test_store_passed_to_a_local_helper_is_followed_exactly():
+    # the inter-procedural slice: a store handed to an IN-VIEW helper is not an escape — it is followed
+    # into the callee, mapping the store onto the callee's parameter (the write-side of session.link_calls).
+    fp = footprint_of("def add_total(o):\n    o['total'] = x\nadd_total(out)")
+    assert fp.modelable and not fp.unknown
+    assert fp.writes == frozenset({"out.total"})
+
+
+def test_following_a_helper_is_branch_complete_where_a_run_is_not():
+    # a branch INSIDE the callee: the static follow sees BOTH arms; this input's run sees only one.
+    fp = footprint_of("def fill(o):\n    if x < 0:\n        o['neg'] = 1\n    else:\n        o['pos'] = 1\nfill(out)", x=5)
+    assert fp.dynamic == frozenset({"out.pos"})              # the taken arm only
+    assert fp.writes == frozenset({"out.neg", "out.pos"})    # the follow recovers the untaken arm
+
+
+def test_helper_following_chains_and_renames_through_each_hop():
+    # out -> mid(y) -> leaf(z): the deep write is renamed z->y->out, no intermediate-param phantom leaks.
+    fp = footprint_of("def leaf(z):\n    z['deep'] = 1\ndef mid(y):\n    leaf(y)\nmid(out)")
+    assert fp.modelable and fp.writes == frozenset({"out.deep"})
+
+
+def test_a_callee_that_itself_escapes_abstains():
+    # following is EXACT, not blind: if the callee hands the store to an OPAQUE callee, the unknown
+    # propagates back out as an honest abstention.
+    assert not modelable("def bad(o):\n    h(o)\nbad(out)")   # inner h is opaque
+    assert not modelable("h(out)")                            # a callee with no local def, unchanged
+
+
+def test_helper_recursion_is_cycle_guarded():
+    assert modelable("def rec(o):\n    o['a'] = 1\n    rec(o)\nrec(out)")
+
+
 def test_unknown_footprint_is_flagged_and_refuses_trust():
     clean = footprint_of("out['scaled'] = x * 2")
     assert clean.modelable and not clean.unknown           # a plain subscript write is trusted

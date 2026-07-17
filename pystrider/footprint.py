@@ -63,14 +63,76 @@ _MUTATOR_METHODS = frozenset({
 _READER_METHODS = frozenset({"get", "keys", "values", "items", "copy", "count", "index", "fromkeys"})
 
 
+# --- INTER-PROCEDURAL: follow the store into a LOCAL helper -----------------------------------------
+# A store passed to a callee (`h(out)`) is normally an out-of-view write. But when the callee is a
+# function DEFINED IN VIEW (a local helper), the write is not out of view at all — it can be modelled
+# EXACTLY by mapping the store onto the callee's parameter and deriving the callee's footprint. This is
+# the write-side analog of `session.link_calls` (arg cell -> param cell): the argument the store lands
+# on IS the store, under the callee's local name. Opaque callees (builtins, imports, a name with no
+# local def) stay an honest escape — this only ever follows a def it can see.
+
+def _local_helpers(tree: ast.AST) -> "dict[str, ast.FunctionDef]":
+    """Every function DEFINED in this source, by name — the callees whose bodies are in view and so can
+    be followed EXACTLY (not guessed at). A later def wins on a duplicate name (last binding), matching
+    Python's own rebind order."""
+    helpers: "dict[str, ast.FunctionDef]" = {}
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            helpers[n.name] = n
+    return helpers
+
+
+def _passed_to_local(call: ast.AST, store: str, helpers: "dict[str, ast.FunctionDef]"
+                     ) -> "tuple[ast.FunctionDef, str] | None":
+    """If `call` passes the bare store name DIRECTLY to a local helper, return `(callee, param_name)` —
+    the callee and the local name the store lands on inside it. Only a direct positional/keyword `Name`
+    argument is followed; a starred arg, or the store buried in a sub-expression (`h(out or {})`), is
+    NOT a clean hand-off and stays an escape (returns None -> caller abstains)."""
+    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)):
+        return None
+    h = helpers.get(call.func.id)
+    if h is None:
+        return None
+    params = h.args.posonlyargs + h.args.args
+    for i, a in enumerate(call.args):
+        if isinstance(a, ast.Name) and a.id == store and i < len(params):
+            return h, params[i].arg
+    for kw in call.keywords:
+        if kw.arg and isinstance(kw.value, ast.Name) and kw.value.id == store:
+            return h, kw.arg
+    return None
+
+
+def _analysis_root(tree: ast.Module) -> ast.AST:
+    """The scope whose writes `static_writes` reports. When the whole source is a SINGLE function (the
+    corpus convention — one `def foo(): …`), that function IS the scope; otherwise the module. Either way,
+    a NESTED helper def below the root is not part of it — its writes are the callee's internal frame,
+    surfaced (renamed) only when a call actually follows into it (`_followed_static_writes`)."""
+    body = tree.body
+    if len(body) == 1 and isinstance(body[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return body[0]
+    return tree
+
+
+def _walk_own_scope(root: ast.AST):
+    """`root` and its descendants, WITHOUT descending into nested function/lambda bodies (a separate
+    scope, followed explicitly through calls rather than merged in blind)."""
+    yield root
+    for child in ast.iter_child_nodes(root):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        yield from _walk_own_scope(child)
+
+
 def static_writes(source: str) -> "frozenset[str]":
     """Scan the AST for every channel written on ANY path (both arms of a branch): assignment targets
     (including tuple/list unpacking and augmented assignment) AND recognized container MUTATOR methods
     (``lst.append(x)`` / ``s.add(x)`` / ``d.update(…)`` -> the whole-container channel ``<store>.<items>``).
-    Branch-complete; a computed subscript key stays unresolved as ``<store>.<computed>``."""
+    Branch-complete; a computed subscript key stays unresolved as ``<store>.<computed>``. Writes inside a
+    NESTED helper def are excluded (they are the callee's frame — surfaced only when a call follows in)."""
     tree = ast.parse(textwrap.dedent(source))
     writes: set[str] = set()
-    for node in ast.walk(tree):
+    for node in _walk_own_scope(_analysis_root(tree)):
         targets = (node.targets if isinstance(node, ast.Assign)
                    else [node.target] if isinstance(node, ast.AugAssign) else [])
         for t in targets:
@@ -148,7 +210,8 @@ def _store_ref_is_safe(node: ast.Name, parent: "ast.AST | None") -> bool:
     return False
 
 
-def modelable(source: str, *, store: str = "out") -> bool:
+def modelable(source: str, *, store: str = "out", helpers: "dict[str, ast.FunctionDef] | None" = None
+              ) -> bool:
     """Statically decide whether `footprint_of` can SOUNDLY derive this code's write footprint for
     ``store``. The static/dynamic oracles only capture writes made by **subscripting the store directly**
     (``store[k] = …``). If a write could reach the store any OTHER way — out of view of that model — a
@@ -162,7 +225,7 @@ def modelable(source: str, *, store: str = "out") -> bool:
 
       * an UNKNOWN method on it        ``store.some_custom_method(...)``        (might mutate in a way we don't model)
       * an operator-mutation           ``store |= {...}``                      (an aug-assign to the bare name)
-      * the store passed to a callee   ``h(store)``                            (writes happen out of view)
+      * passed to an OPAQUE callee     ``ext(store)`` (no local def)           (writes happen out of view)
       * the store aliased              ``d = store`` / ``box = [store]``        (writes through the alias are unseen)
       * a chained subscript on it      ``store[a][b] = …``                     (writes through the inner object)
       * built by a comprehension       ``store = {k: v for …}``                (comprehension writes are unseen)
@@ -171,11 +234,32 @@ def modelable(source: str, *, store: str = "out") -> bool:
     a construct it cannot see through, and hands off — the membrane where the core says 'I don't know'. A
     call argument is refused conservatively even for a pure read (`len(store)`): the callee is opaque.
 
+    A store passed to a LOCAL HELPER — a callee whose def is in view (``h(out)`` with ``def h(o): …`` in
+    the same source) — is NOT an escape: it is followed EXACTLY, mapping the store onto ``h``'s parameter
+    and requiring ``h`` modelable on it (recursively, cycle-guarded). Only an OPAQUE callee (a builtin, an
+    import, an undefined name) stays an escape.
+
     BOUNDARY on the whole-container channel: a mutator write is the coarse ``<items>`` (a list/set has no
     key to name). A consuming disjointness check must treat ``<items>`` / ``<computed>`` as store-WILDCARDS
     (conflicting with any same-store write) for full soundness on a store mixed between keyed and
-    whole-container writes — a stated follow-on, not exercised by the subscript-only compose demo."""
+    whole-container writes — a stated follow-on, not exercised by the subscript-only compose demo.
+
+    ``helpers`` supplies callees defined OUTSIDE ``source`` (a module's sibling functions when ``source``
+    is one function of it) so a store passed to a sibling is followed too; defs local to ``source`` win on
+    a name clash. Omit it and only in-``source`` callees are followed (the self-contained-fragment case)."""
     tree = ast.parse(textwrap.dedent(source))
+    table = _local_helpers(tree)
+    if helpers:
+        table = {**helpers, **table}                         # a def local to `source` shadows a sibling
+    return _scope_modelable(tree, store, table, frozenset())
+
+
+def _scope_modelable(tree: ast.AST, store: str, helpers: "dict[str, ast.FunctionDef]",
+                     visited: "frozenset[str]") -> bool:
+    """The recursive core of `modelable`: is every reference to `store` in `tree` one the write model can
+    see through? Follows a clean hand-off to a local helper (via `helpers`) by re-asking the question of
+    the callee's parameter; `visited` guards a helper-call cycle (a name already being proven up-stack is
+    taken as safe — sound, since the whole cycle is on the hook for its own modelability)."""
     parent: "dict[int, ast.AST]" = {}
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
@@ -188,8 +272,17 @@ def modelable(source: str, *, store: str = "out") -> bool:
                 return False
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id == store:
-            if not _store_ref_is_safe(node, parent.get(id(node))):
-                return False
+            p = parent.get(id(node))
+            if _store_ref_is_safe(node, p):
+                continue
+            # a clean hand-off to a local helper: follow it (an exact model), don't abstain.
+            if isinstance(p, ast.Call):
+                res = _passed_to_local(p, store, helpers)
+                if res is not None:
+                    h, param = res
+                    if h.name in visited or _scope_modelable(h, param, helpers, visited | {h.name}):
+                        continue
+            return False
     return True
 
 
@@ -213,8 +306,42 @@ def dynamic_writes(source: str, *, store: str = "out", x: int = 5) -> "frozenset
     Resolves computed keys concretely, but only sees the branch this input takes. Safe for self-contained
     fragments (their bodies write only the store); the caller owns what code it hands in."""
     out = _RecordingStore(store)
-    exec(compile(textwrap.dedent(source), "<fragment>", "exec"), {}, {store: out, "x": x})
+    # ONE namespace (globals only): a local helper the store is passed into is looked up here, and its
+    # body's free vars (`x`) resolve here too — a split globals/locals would hide both from the callee.
+    try:
+        exec(compile(textwrap.dedent(source), "<fragment>", "exec"), {store: out, "x": x})
+    except Exception:
+        # This input's run diverged before completing — the store is used as a shape the dict-backed
+        # recorder can't be (`out.append`, a list mutator), or a free var this seed doesn't supply. Keep
+        # the channels observed UP TO the failure: dynamic is only the confirming oracle, and the static
+        # oracle + the union carry branch-completeness, so a partial observation is sound (never a MISS).
+        pass
     return frozenset(out.written)
+
+
+def _followed_static_writes(tree: ast.AST, store: str, helpers: "dict[str, ast.FunctionDef]",
+                            visited: "frozenset[str]") -> "frozenset[str]":
+    """The store's write channels that flow THROUGH calls to local helpers, renamed from the callee's
+    parameter back to `store` (`o.total` inside `def h(o)` -> `out.total` at a `h(out)` call). Keeps the
+    static oracle branch-complete across the call — static sees every arm of a branch INSIDE the callee,
+    where the dynamic oracle only sees the arm this input took. Recurses through chained hand-offs."""
+    writes: set[str] = set()
+    for call in [n for n in ast.walk(tree) if isinstance(n, ast.Call)]:
+        res = _passed_to_local(call, store, helpers)
+        if res is None:
+            continue
+        h, param = res
+        if h.name in visited:
+            continue
+        # the callee's channels for its parameter — its own direct writes AND anything IT hands on —
+        # all in the callee's `param` view, then renamed once to the caller's `store`.
+        callee = set(static_writes(ast.unparse(h))) | _followed_static_writes(
+            h, param, helpers, visited | {h.name})
+        for w in callee:
+            base, _, rest = w.partition(".")
+            if base == param:
+                writes.add(f"{store}.{rest}")
+    return frozenset(writes)
 
 
 # --- the DERIVED footprint: cross-check the two oracles ---------------------------------------------
@@ -270,5 +397,8 @@ def footprint_of(source: str, *, store: str = "out", x: int = 5) -> CodeFootprin
     flagged ``unknown`` when the store escapes the analyzable model (``modelable`` is False). A caller MUST
     check ``.unknown`` and refuse before trusting ``.writes``. Cached on ``(source, store, x)`` (a
     fragment's code is immutable, so its footprint is a pure function of it)."""
-    return CodeFootprint(static_writes(source), dynamic_writes(source, store=store, x=x),
+    tree = ast.parse(textwrap.dedent(source))
+    helpers = _local_helpers(tree)
+    static = static_writes(source) | _followed_static_writes(tree, store, helpers, frozenset())
+    return CodeFootprint(static, dynamic_writes(source, store=store, x=x),
                          modelable(source, store=store))

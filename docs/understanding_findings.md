@@ -180,7 +180,7 @@ needs an interface, not a name — the base tier already provides it.
 ## 7. The checker's honest boundary — a red-team
 
 The whole guarantee rests on the checker (derive a footprint + verify by execution), so the credible move
-is to attack it hardest. `experiments/soundness_redteam.py` (+ `tests/test_soundness_redteam.py`, 5) is an
+is to attack it hardest. `experiments/soundness_redteam.py` (+ `tests/test_soundness_redteam.py`, 6) is an
 adversarial battery that tries to make the checker certify wrong code, and maps exactly where it is blind:
 
 - **Footprint oracle** — of 9 adversarial writes, plain writes are SOUND, the dict methods `update` /

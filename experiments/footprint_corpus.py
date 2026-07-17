@@ -34,7 +34,8 @@ import os
 from collections import Counter
 from dataclasses import dataclass, field
 
-from pystrider.footprint import modelable, _is_fresh_container, _MUTATOR_METHODS, _READER_METHODS
+from pystrider.footprint import (modelable, _is_fresh_container, _local_helpers,
+                                  _MUTATOR_METHODS, _READER_METHODS)
 
 _KNOWN_METHODS = _MUTATOR_METHODS | _READER_METHODS
 
@@ -105,6 +106,7 @@ def scan_source(source: str, result: Result) -> None:
         tree = ast.parse(source)
     except SyntaxError:
         return
+    helpers = _local_helpers(tree)          # the module's sibling functions — followed inter-procedurally
     for func in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
         result.functions += 1
         src = ast.get_source_segment(source, func) or ast.unparse(func)
@@ -112,7 +114,7 @@ def scan_source(source: str, result: Result) -> None:
         if accs:
             result.builder_functions += 1
         for name in sorted(accs):
-            if modelable(src, store=name):
+            if modelable(src, store=name, helpers=helpers):
                 result.modelable += 1
             else:
                 result.abstain += 1
@@ -163,11 +165,14 @@ def main() -> None:
     print("\n  READING: the write-footprint core derives a SOUND footprint for the subscript- AND known-method-")
     print(f"  built slice and ABSTAINS honestly on the rest — {100 * r.modelable / acc:.0f}% modelable, "
           f"{100 * r.abstain / acc:.0f}% handed off, ZERO silent-unsound. Modeling container methods")
-    print(f"  (`.append`/`.add`/`.update`/…) roughly DOUBLED coverage; the dominant remaining escape is now")
-    print(f"  PASSED-to-a-callee ({100 * passed / acc:.0f}%), a genuine inter-procedural boundary — not a missing rule.")
-    print("  That is the honest, scalable posture: cover what you can prove, refuse (visibly) on what you can't.")
-    print("  This is the write-side reclaim curve; the next lever is inter-procedural (follow the store into the")
-    print("  callee), each step an EXACT model, never a guess.")
+    print(f"  (`.append`/`.add`/`.update`/…) roughly DOUBLED coverage; the dominant remaining escape is")
+    print(f"  PASSED-to-a-callee ({100 * passed / acc:.0f}%), a genuine inter-procedural boundary.")
+    print("  Inter-procedural FOLLOWING is now on — a store handed to a LOCAL sibling function is followed")
+    print("  into the callee EXACTLY (mapped onto its parameter, recursively), not abstained. On the stdlib")
+    print("  that recovers only a handful: the passed-slice is dominated by calls to METHODS (`self.m(acc)`,")
+    print("  needing receiver-type resolution) and IMPORTS (cross-module) — genuinely out of view, honestly")
+    print("  abstained; the small local-sibling slice it CAN prove, it now does. Each recovered step is an")
+    print("  EXACT model, never a guess — the honest posture holds: cover what you can prove, refuse the rest.")
 
 
 if __name__ == "__main__":

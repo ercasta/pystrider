@@ -15,8 +15,9 @@ The one metric that matters is the count of UNSOUND-SILENT rows: each is a const
 does NOT scale safely today. This probe is a STRESS TEST — it is designed to FIND those, not to pass.
 
 PART 2 then shows the FIX that makes the approach scale: an `modelable()` detector that spots the
-un-analyzable constructs (a store method call, the store passed to a function, the store aliased) and
-ABSTAINS — turning every UNSOUND-SILENT into an HONEST-UNKNOWN. Scalability of a symbolic core is not
+un-analyzable constructs (a store method call it doesn't model, the store passed to an OPAQUE callee, the
+store aliased) and ABSTAINS — turning every UNSOUND-SILENT into an HONEST-UNKNOWN. (A store passed to a
+LOCAL helper, by contrast, is now FOLLOWED exactly, not abstained.) Scalability of a symbolic core is not
 "analyze everything"; it is "analyze what you can and KNOW when you can't" — the honest-unknown is exactly
 the membrane where the core hands off (to a stronger analysis, or to a proposer/human).
 
@@ -117,10 +118,10 @@ def main() -> None:
 
     print(f"\n  SCALABILITY VERDICT: {len(silent)} of {len(CASES)} constructs are UNSOUND-SILENT "
           f"(a missed write with NO signal): {silent}")
-    print("  These are aliasing/helper writes across an UNTAKEN branch — genuinely out of the model. (The")
-    print("  dict methods `update`/`setdefault` that once appeared here are now MODELED as writes, so they")
-    print("  are derived exactly, not missed.) Without a signal, the derivation can confidently miss a real")
-    print("  write on these — which is exactly what abstention must refuse on.\n")
+    print("  This is an ALIASED write across an UNTAKEN branch — genuinely out of the subscript model. (The")
+    print("  dict methods `update`/`setdefault` are now MODELED as writes; a store passed to a LOCAL helper")
+    print("  is now FOLLOWED into the callee exactly — so both are derived, not missed.) Without a signal,")
+    print("  the derivation can confidently miss a real write on aliasing — which abstention must refuse on.\n")
 
     print("PART 2 — the FIX: an `modelable()` detector abstains on the un-analyzable, so a silent miss")
     print("becomes an HONEST-UNKNOWN the check can refuse on. Scalability = knowing when you don't know.\n")

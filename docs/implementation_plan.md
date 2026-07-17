@@ -7,7 +7,67 @@ in what phase order — is `docs/roadmap.md` (2026-07-14); this file stays tacti
 
 ---
 
-## Current work line — the grammapy convergence (2026-07-14)  ← START HERE
+## Current state — START HERE (2026-07-17)
+
+The durable record is the **memory files** (`footprint-synthesis`, `pattern-writer`, `docs-site`) and the
+current docs: **[`the_case.md`](the_case.md)** (the whole argument), **[`understanding_findings.md`](understanding_findings.md)**
+(the findings), **[`deep_dive.md`](deep_dive.md)** (the tour), **[`roadmap.md`](roadmap.md)** (strategy).
+Everything below the next heading is the *historical* grammapy-convergence line, superseded.
+
+**The thesis is made, demonstrated, documented, and shipped.** "Trustworthy code from a symbolic core +
+execution, with a language model nowhere in the trust path" — for the orchestration-and-decision class of
+software. Backed by four adversarial limit-tests (soundness, economic, composability, membrane-vagueness) and
+two scale legs (feature-interaction, re-targeted families), each pinned to a runnable probe. The strong claim
+is on the README front door and in `the_case.md`.
+
+**Repo is the current generation only.** The previous template/skeleton-selection codegen was deleted
+(`emit.py` + the `*_synthesis` probes + `app_synthesis` + the phase-3 UX/frontend). What remains: the
+analysis/repair core; the humble writer (`pattern_compose`, `footprint_*`, `compose_recover`); understanding
+(`understand_*`, `base_tier`); the playground; the scale demos; the limit-tests; and `grammapy` as the
+optional checker.
+
+**Docs site + live playgrounds (MkDocs → GitHub Pages).** `mkdocs.yml` + `.github/workflows/docs.yml` build
+the ugm + pystrider wheels and publish; two in-browser Pyodide playgrounds — **Generate** (CNL → emitted
+Textual code) and **Understand** (code → recognized aspects). To go live: enable *Settings → Pages → Source:
+GitHub Actions*.
+
+**Footprint synthesis — abstention productized + coverage measured & grown + inter-procedural following.**
+`pystrider.footprint`: `footprint_of` carries an `unknown` flag from `modelable` (the honest-unknown
+membrane); the compose check refuses on unknown. Real-corpus coverage (`experiments/footprint_corpus.py`)
+over the stdlib: **31% of container-accumulators modelable, 69% honest-abstain, zero silent-unsound** —
+after modeling subscripts + known container methods (`append`/`add`/`update`/`setdefault`/…).
+
+**Inter-procedural following DONE (2026-07-17).** A store passed to a LOCAL helper (a callee whose `def`
+is in view — `h(out)` with `def h(o): …` in the same source, or a module sibling via the new `helpers=`
+arg) is no longer an escape: it is FOLLOWED into the callee EXACTLY — mapped onto the callee's parameter,
+recursively, cycle-guarded, renamed back at each hop (`o.total`→`out.total`) — the write-side analog of
+`session.link_calls`. Static following is branch-complete (it sees a helper called on an UNTAKEN branch a
+run never would); `dynamic_writes` switched to a single exec namespace (so a callee resolves free vars +
+sibling names) and degrades to a partial observation instead of crashing. This turned the `helper_untaken`
+/ `helper_mutate` cases from UNSOUND-SILENT / abstained into EXACT / SOUND (scalability + red-team pins
+updated). HONEST REACH: on the stdlib it recovers only ~5 accumulators — the passed-slice (49%) is
+dominated by calls to METHODS (`self.m(acc)`, needs receiver-type resolution) and IMPORTS (cross-module),
+genuinely out of view and honestly abstained. The exact local-sibling slice it *can* prove, it now does.
+
+**Suite: 301 green** (`python -m pytest -q`). Playground: `python demos/playground/playground.py`. Site:
+`python -m mkdocs build`.
+
+**Next steps (candidates, rough priority):**
+
+1. **Inter-procedural footprint — LOCAL-helper leg DONE (2026-07-17).** Following the store into a
+   local/sibling callee is built; the remaining reach of the 49% "passed" slice is METHODS (`self.m(acc)`
+   — needs receiver-type resolution, the `absorb`/`method_not_found` territory) and IMPORTS (cross-module
+   analysis). Those are the next coverage levers on this axis, each still an exact model.
+2. **A bigger scale demo / real app family** — the economic case pays at scale (§8); more interacting
+   features, or a re-targeted family beyond the CLI.
+3. **The `<items>`/`<computed>` wildcard-conflict** in a consuming disjointness check — the stated soundness
+   follow-on for a store mixed between keyed and whole-container writes.
+4. **A real LLM at the input surface** (free-NL → CNL), gated — the last optional, non-load-bearing seam to
+   show end-to-end.
+
+---
+
+## Historical — the grammapy convergence line (2026-07-14, superseded)
 
 The active work is a NEW line. **grammapy was absorbed in-repo** (top-level peer package `grammapy/`,
 `import grammapy`, no external install) and pystrider + grammapy are being wired into one loop:

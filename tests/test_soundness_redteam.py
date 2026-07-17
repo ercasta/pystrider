@@ -1,11 +1,11 @@
 """Pins for the soundness red-team (experiments/soundness_redteam.py).
 
 The credibility of the whole thesis is the checker's honesty, so the red-team maps exactly where it can
-be fooled. These pins hold that boundary so a regression is caught: plain writes are SOUND; and every
-footprint escape — update/setdefault/helper/alias AND (since abstention was productized + strengthened)
-operator-mutation (`|=`) and container-aliasing across an untaken branch — is CAUGHT by abstention, so the
-footprint oracle has NO remaining silent slip. The execution oracle's input-dependence blind spot (still
-open) is also pinned.
+be fooled. These pins hold that boundary so a regression is caught: plain writes, dict methods, AND a
+store passed to a LOCAL helper are derived SOUNDLY (the helper is followed into exactly); every genuine
+escape — an OPAQUE callee, an alias, operator-mutation (`|=`), container-aliasing across an untaken branch
+— is CAUGHT by abstention, so the footprint oracle has NO remaining silent slip. The execution oracle's
+input-dependence blind spot (still open) is also pinned.
 """
 from experiments.soundness_redteam import CASES, classify
 
@@ -21,15 +21,18 @@ def test_plain_writes_are_sound():
     assert _verdict("tuple_targets") == "SOUND"
 
 
-def test_dict_methods_are_now_modeled_soundly():
-    # update/setdefault graduated from abstained to MODELED: their key-writes are derived exactly.
+def test_dict_methods_and_local_helpers_are_modeled_soundly():
+    # update/setdefault graduated from abstained to MODELED: their key-writes are derived exactly. A store
+    # passed to a LOCAL helper likewise graduated — it is followed into the callee, deriving `out.a` exactly.
     assert _verdict("update_method") == "SOUND"
     assert _verdict("setdefault_chain") == "SOUND"
+    assert _verdict("helper_mutate") == "SOUND"
 
 
 def test_abstention_catches_the_genuinely_unmodelable_escapes():
-    # what remains out of the model — a callee, an alias, operator-mutation, container-aliasing — abstains.
-    for label in ("helper_mutate", "alias_direct", "ior_operator", "container_alias_untaken"):
+    # what remains out of the model — an OPAQUE callee, an alias, operator-mutation, container-aliasing —
+    # abstains (a local helper is followed instead; only an out-of-view callee is a genuine escape).
+    for label in ("opaque_callee", "alias_direct", "ior_operator", "container_alias_untaken"):
         assert _verdict(label) == "CAUGHT(abstain)", label
 
 
