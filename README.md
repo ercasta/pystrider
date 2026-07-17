@@ -223,4 +223,6 @@ pytest -q                                       # the behaviour pins (310 green)
 ```
 
 For everything else — the five reasoning axes, the generation loop in full, the layout of every module
-and probe — see **[docs/deep_dive.md](docs/deep_dive.md)**.
+and probe — see **[docs/deep_dive.md](docs/deep_dive.md)**. For the newer exploration — deriving a
+fragment's footprint from its source, recognizing code patterns by aspect, and where the symbolic core
+reaches vs. where it honestly abstains — see **[docs/understanding_findings.md](docs/understanding_findings.md)**.

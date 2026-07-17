@@ -177,6 +177,62 @@ needs an interface, not a name — the base tier already provides it.
 
 ---
 
+## 7. The checker's honest boundary — a red-team
+
+The whole guarantee rests on the checker (derive a footprint + verify by execution), so the credible move
+is to attack it hardest. `experiments/soundness_redteam.py` (+ `tests/test_soundness_redteam.py`, 5) is an
+adversarial battery that tries to make the checker certify wrong code, and maps exactly where it is blind:
+
+- **Footprint oracle** — of 9 adversarial writes, plain writes are SOUND, and `update` / `setdefault` /
+  helper-mutation / direct-aliasing are **CAUGHT by abstention** (honest UNKNOWN). **Two classes still
+  SLIP**: operator-mutation (`out |= {…}`, which bypasses `__setitem__` and is not a method/alias) and
+  container-aliasing across an untaken branch (`box = [out]; if …: box[0]['a'] = …`). Both escape the two
+  oracles *and* the abstention detector. Fix: extend abstention to refuse operator-mutation and container
+  aliasing.
+- **Execution oracle** — verifying on one input is not verification (a falsy-but-valid input is silently
+  dropped: `v or 'default'` "passes" at `v=5`, drops `v=0`), and a single run certifies a
+  non-reproducible value (`random.random()`). Fixes: multi-input / property-based verification, and a
+  determinism check.
+
+The point is not that the checker is unbreakable — it is that it breaks in **named, bounded** ways, each
+with a known mitigation. "The guarantee holds up to *this enumerated boundary*" is a credible claim; "the
+guarantee always holds" is not. This is the same discipline as the rest of the doc: state the limit
+precisely, and abstain (or extend) rather than over-claim.
+
+## 8. The economic limit — a compression, but a platform bet
+
+The make-or-break: did authoring CNL *reduce* the work, or just move it? `experiments/economic_test.py`
+(+ `tests/test_economic_test.py`, 5) measures it on the real `demos/playground/`, no rigging:
+
+- **The compression is real.** ~**10 rule-lines** of per-app spec (business + ux + bridge, plus 4 reused
+  library lines) emit an *unbounded* family of verified apps — every knob setting a different app of
+  **50–78 lines** of driven-green Textual source. The CNL is the irreducible decisions (the discount rule,
+  the confirm obligation, the bridge); the emitted lines are those decisions *plus* derived
+  widgets/wiring/gate/verify. It is **not** relocated boilerplate — it compresses to the decision content
+  and derives the rest.
+- **The platform is *given*, not the author's cost.** ugm 9,750 + grammapy 644 + pystrider 1,586 + brew
+  356 ≈ 12,336 sloc is reusable infrastructure adopted once — you no more count it against 10 spec-lines
+  than you count CPython against a script. (Counting the platform's own source against the author's spec
+  was a framing error, corrected here.) The author's ledger is simply: **10 spec-lines in → 50–78 verified
+  lines out, × an unbounded family** — a clear compression.
+- **The real economic variable is bundle-composability *coverage*, not platform LOC.** The
+  10-lines-in win holds only *within* the coverage of the composable bundle library. The open question —
+  the write-side analog of the reclaim curve — is how much of a *new* app is "compose existing bundles + a
+  few spec lines" vs. "author new bundles." A first *illustrative* read
+  (`experiments/composability_coverage.py`): over a spectrum of new requirements against the 23-token
+  bundle vocabulary, ~58% are cheap (compose-existing or a-few-rule-lines) and ~42% need a new bundle —
+  and even a re-target (Textual→web) reuses the business/ux decisions. So the economics reduce to the
+  bundle library's *coverage* — the same ecosystem question any framework faces — which a real corpus of
+  app specs would measure.
+- **And the LOC model *understates* the win** (argued): hand-code must manage ~2^F feature-interaction
+  combinations while CNL grows linearly and grammapy *checks* the interactions; the same business/ux rules
+  re-target a new library for a few rule-lines; and every change is re-derived, re-verified, and carries a
+  why-trace for free.
+
+**Verdict:** for a platform user the compression is real and repeatable, the platform given like any
+framework. The approach did not move the work — the CNL is the irreducible decisions, the rest is derived.
+The open economic question is the bundle library's **coverage**, not the platform's size.
+
 ## The picture, in one line per tier
 
 | Tier | What it is | Coverage of real loops | Needs a model? |
