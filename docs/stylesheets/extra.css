@@ -32,8 +32,8 @@
   color: var(--md-default-fg-color);
   resize: vertical;
 }
-.ps-code-input { min-height: 11rem; }
-.ps-cnl-input { min-height: 7rem; }
+.ps-code-input { min-height: 15rem; }
+.ps-cnl-input { min-height: 12rem; }
 
 .ps-knobs { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin: 0.6rem 0; }
 .ps-knobs label { font-size: 0.8rem; display: inline-flex; align-items: center; gap: 0.35rem; }

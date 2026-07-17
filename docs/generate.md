@@ -9,7 +9,7 @@ verify. No model is involved: every line traces to a rule.
 locally, no server.)*
 
 <div class="ps-playground" data-mode="generate" markdown="0">
-  <div class="ps-grid ps-two">
+  <div class="ps-grid">
     <div class="ps-field">
       <label>business.cnl — your pricing &amp; loyalty decisions</label>
       <textarea class="ps-business ps-cnl-input" spellcheck="false"># The discount policy, as data (the numbers are KNOBS).
