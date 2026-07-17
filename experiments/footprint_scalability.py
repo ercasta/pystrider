@@ -24,11 +24,9 @@ Run it: `python -m experiments.footprint_scalability`
 """
 from __future__ import annotations
 
-import ast
-import textwrap
 from dataclasses import dataclass
 
-from pystrider.footprint import footprint_of
+from pystrider.footprint import footprint_of, modelable   # abstention is now PRODUCTIZED in the package
 
 
 @dataclass(frozen=True)
@@ -91,25 +89,11 @@ def classify(case: Case) -> tuple[str, set[str], bool]:
     return verdict, missed, signalled
 
 
-# --- PART 2: the abstention that makes it scale — detect the un-analyzable, refuse to guess ----------
-
-def modelable(source: str) -> bool:
-    """Statically decide whether `footprint_of` can SOUNDLY analyze this code: it cannot when the store
-    escapes the subscript-assignment model it understands — a method call ON the store (`out.update(...)`),
-    the store PASSED to a function (`h(out)`), or the store ALIASED (`d = out`). Any of those and the
-    honest answer is 'I don't know this fragment's footprint', not a confident under-approximation."""
-    tree = ast.parse(textwrap.dedent(source))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            fn = node.func
-            if isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name) and fn.value.id == "out":
-                return False                            # out.update(...) / out.setdefault(...) — a store method
-            if any(isinstance(a, ast.Name) and a.id == "out" for a in node.args):
-                return False                            # h(out) — the store handed to a callee
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name) and node.value.id == "out":
-            return False                                # d = out — the store aliased
-    return True
-
+# --- PART 2: the abstention that makes it scale — now PRODUCTIZED in `pystrider.footprint.modelable` --
+# (was spiked here; promoted into the package so `footprint_of` carries the `unknown` flag and every
+# caller — not just this probe — refuses on it. The productized rule is STRONGER than the original
+# blocklist: "modelable iff the store is only ever subscripted" also closes operator-mutation `out |= …`
+# and container-aliasing `box = [out]`, the two the soundness red-team had found still slipping.)
 
 def abstaining_verdict(case: Case) -> str:
     """The verdict WITH abstention: if the fragment is not modelable, HONEST-UNKNOWN by construction —

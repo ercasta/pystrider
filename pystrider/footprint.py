@@ -35,7 +35,7 @@ import textwrap
 from dataclasses import dataclass
 from functools import lru_cache
 
-__all__ = ["CodeFootprint", "footprint_of", "static_writes", "dynamic_writes"]
+__all__ = ["CodeFootprint", "footprint_of", "static_writes", "dynamic_writes", "modelable"]
 
 
 # --- STATIC synthesis: the write channels an AST assigns to -----------------------------------------
@@ -69,6 +69,49 @@ def static_writes(source: str) -> "frozenset[str]":
     return frozenset(writes)
 
 
+# --- ABSTENTION: when can this even be modelled? (know when you don't know) -------------------------
+
+def _subscript_base(node: ast.expr) -> ast.expr:
+    """Peel `store[a][b]…` down to its base expression (`store`)."""
+    while isinstance(node, ast.Subscript):
+        node = node.value
+    return node
+
+
+def modelable(source: str, *, store: str = "out") -> bool:
+    """Statically decide whether `footprint_of` can SOUNDLY derive this fragment's write footprint. The
+    static/dynamic oracles only capture writes made by **subscripting the store directly** (``store[k] =
+    …``). The moment the store is reached any other way, its writes escape that model and a derived
+    footprint may silently MISS one — so the honest answer is *unknown*, not a confident under-approx.
+
+    Concretely, the fragment is modelable **iff every reference to the store is the object of a
+    subscript** (``store[...]``). Any other reference is a store-escape and abstains:
+
+      * a method call on it            ``store.update(...)`` / ``store.setdefault(...)`` (bypasses ``__setitem__``)
+      * an operator-mutation           ``store |= {...}``                      (an aug-assign to the bare name)
+      * the store passed to a callee   ``h(store)``                            (writes happen out of view)
+      * the store aliased              ``d = store`` / ``box = [store]``        (writes through the alias are unseen)
+      * a chained subscript on it      ``store[a][b] = …``                     (writes through the inner object)
+
+    This is a **sound over-refusal**, an enumerated boundary (not a full alias analysis): it never blesses
+    a construct it cannot see through, and hands off — the membrane where the core says 'I don't know'."""
+    tree = ast.parse(textwrap.dedent(source))
+    # Name nodes that sit in a SAFE position: the immediate object of a subscript, `store[...]`.
+    safe: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript):
+            if isinstance(node.value, ast.Name):
+                safe.add(id(node.value))
+            else:                                            # a chained subscript — `store[a][b]` writes
+                base = _subscript_base(node.value)           # through the inner object, out of the model
+                if isinstance(base, ast.Name) and base.id == store:
+                    return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == store and id(node) not in safe:
+            return False                                     # a store reference that is not `store[...]`
+    return True
+
+
 # --- DYNAMIC synthesis: the channels the code actually writes when run ------------------------------
 
 class _RecordingStore(dict):
@@ -97,10 +140,20 @@ def dynamic_writes(source: str, *, store: str = "out", x: int = 5) -> "frozenset
 
 @dataclass(frozen=True)
 class CodeFootprint:
-    """A write footprint DERIVED from code: the static and dynamic write-sets, and the reconciliation
-    between them. ``writes`` is the sound footprint a check should consume."""
+    """A write footprint DERIVED from code: the static and dynamic write-sets, their reconciliation, and
+    — crucially — whether the code was **modelable** at all. ``writes`` is the derived footprint, sound to
+    consume **only when** ``not unknown``; when ``unknown`` the derivation may have missed a write, so a
+    check must REFUSE rather than trust it (the honest-unknown membrane)."""
     static: frozenset[str]
     dynamic: frozenset[str]
+    modelable: bool = True
+
+    @property
+    def unknown(self) -> bool:
+        """The store escaped the subscript model, so the derived ``writes`` may silently miss a write —
+        an honest 'I don't know this footprint'. A disjointness check must treat this as *refuse*, never
+        certify a composition on a footprint that could be an under-approximation."""
+        return not self.modelable
 
     @property
     def writes(self) -> "frozenset[str]":
@@ -132,7 +185,9 @@ class CodeFootprint:
 
 @lru_cache(maxsize=None)
 def footprint_of(source: str, *, store: str = "out", x: int = 5) -> CodeFootprint:
-    """Derive a fragment's write footprint from its CODE — statically and dynamically, cross-checked.
-    Cached on ``(source, store, x)`` (a fragment's code is immutable, so its footprint is a pure
-    function of it)."""
-    return CodeFootprint(static_writes(source), dynamic_writes(source, store=store, x=x))
+    """Derive a fragment's write footprint from its CODE — statically and dynamically, cross-checked, and
+    flagged ``unknown`` when the store escapes the analyzable model (``modelable`` is False). A caller MUST
+    check ``.unknown`` and refuse before trusting ``.writes``. Cached on ``(source, store, x)`` (a
+    fragment's code is immutable, so its footprint is a pure function of it)."""
+    return CodeFootprint(static_writes(source), dynamic_writes(source, store=store, x=x),
+                         modelable(source, store=store))

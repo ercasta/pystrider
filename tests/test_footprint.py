@@ -8,7 +8,7 @@ each oracle covering the other's blind spot; (5) a bare local is not a channel; 
 importable straight off the package (`pystrider.footprint_of`).
 """
 import pystrider
-from pystrider.footprint import footprint_of, static_writes, dynamic_writes, CodeFootprint
+from pystrider.footprint import footprint_of, static_writes, dynamic_writes, CodeFootprint, modelable
 
 
 def test_honest_fragment_oracles_agree():
@@ -44,3 +44,29 @@ def test_a_bare_local_is_not_a_channel():
 
 def test_importable_off_the_package():
     assert pystrider.footprint_of("out['a'] = 1").writes == frozenset({"out.a"})
+    assert pystrider.modelable("out['a'] = 1")
+
+
+def test_modelable_iff_the_store_is_only_subscripted():
+    # analyzable: the store is only ever reached as `out[...]`.
+    assert modelable("out['a'] = x")
+    assert modelable("out['a'] = 0\nout['a'] += x")
+    assert modelable("if x < 0:\n    out['a'] = 1\nelse:\n    out['b'] = 2")
+    assert modelable("out['a'] = out['b'] + 1")             # a read-modify-write is fine
+    # un-analyzable store-escapes — each abstains (the honest-unknown membrane):
+    assert not modelable("out.update({'a': 1})")            # method mutation (bypasses __setitem__)
+    assert not modelable("out.setdefault('a', 1)")          # method mutation
+    assert not modelable("out |= {'a': 1}")                 # operator-mutation on the bare name
+    assert not modelable("h(out)")                          # store passed to a callee
+    assert not modelable("d = out\nd['a'] = 1")             # aliased
+    assert not modelable("box = [out]\nbox[0]['a'] = 1")    # aliased through a container
+    assert not modelable("out['a']['b'] = 1")               # chained subscript (writes the inner object)
+
+
+def test_unknown_footprint_is_flagged_and_refuses_trust():
+    clean = footprint_of("out['scaled'] = x * 2")
+    assert clean.modelable and not clean.unknown           # a plain subscript write is trusted
+
+    opaque = footprint_of("out.update({'a': 1})")
+    assert opaque.unknown and not opaque.modelable          # the store escaped -> honest unknown
+    # the raw writes may be an under-approximation, which is exactly why `unknown` must gate trust.

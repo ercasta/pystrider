@@ -47,7 +47,7 @@ from ugm import ask_goal, load_machine_rules, write_rule, suppose, AttrGraph
 
 from grammapy.channels import Footprint, Channel
 
-from pystrider import footprint_of
+from pystrider import footprint_of, modelable
 from grammapy.combinators import Accumulate, Item, CompositionError
 
 
@@ -68,6 +68,13 @@ class Fragment:
         """The write channels DERIVED from `stmt` (static AST + dynamic run, cross-checked)."""
         return footprint_of(self.stmt).writes
 
+    @property
+    def unknown(self) -> bool:
+        """The fragment's footprint can NOT be soundly derived (its store escapes the subscript model),
+        so `writes` might miss a write. Decided statically (`modelable`), without executing the fragment —
+        the check REFUSES on this rather than certify a composition on an under-approximation."""
+        return not modelable(self.stmt)
+
 
 CATALOG: tuple[Fragment, ...] = (
     Fragment("scale",    provides="scaled",  stmt="out['scaled'] = x * 2"),
@@ -77,6 +84,11 @@ CATALOG: tuple[Fragment, ...] = (
     # `scale` is caught as a real collision (the declaration can no longer hide the clobber).
     Fragment("shift_bad", provides="shifted", stmt="out['scaled'] = x + 10"),
 )
+
+# an UN-MODELABLE provider (kept out of CATALOG so it doesn't perturb the recovery proposals): it writes
+# through `out.update(...)`, which bypasses the subscript model, so its footprint can't be soundly derived.
+# A composition using it must be REFUSED, never admitted on a footprint that might be missing a write.
+SHIFT_OPAQUE = Fragment("shift_opaque", provides="shifted", stmt="out.update({'shifted': x + 10})")
 
 
 # --- CNL: the pattern catalog + the recovery rule as rules over reified facts -----------------------
@@ -279,6 +291,15 @@ def run(label: str, required: tuple[str, ...], catalog: tuple[Fragment, ...],
     """compose -> check -> (recover -> re-check)* -> emit + verify, or a named Refusal."""
     comp = compose(required, catalog, prefer)
     out = Outcome(label, comp)
+    # REFUSE on unknown: a fragment whose footprint can't be soundly derived can't be certified disjoint.
+    # Never admit on a possible under-approximation — the honest-unknown membrane, decided before the check.
+    unknown = [f.name for f in comp.fragments if f.unknown]
+    if unknown:
+        out.refusal = (f"cannot derive a sound footprint for {unknown} — the store escapes the analyzable "
+                       f"model, so the disjointness check REFUSES rather than certify on a possible "
+                       f"under-approximation. Provide these features on plain subscript writes.")
+        out.steps.append(f"CHECK abstains: {unknown} unmodelable -> Refusal (never admit on unknown)")
+        return out
     for _ in range(fuel):
         errs = check(comp)
         if not errs:
@@ -329,6 +350,10 @@ def main() -> None:
     print("rule can propose nothing disjoint -> a NAMED refusal, never a clobbering program\n")
     thin = tuple(f for f in CATALOG if f.name != "shift_ok")
     _show(run("unrecoverable", required, thin, prefer={"shifted": "shift_bad"}))
+
+    print("PART 4 — an UN-MODELABLE fragment (shift_opaque writes via out.update): its footprint can't be")
+    print("soundly derived, so the check REFUSES rather than admit on a possible under-approximation\n")
+    _show(run("unmodelable", required, (CATALOG[0], SHIFT_OPAQUE)))
 
     print("The composer proposes, grammapy's frame rule + re-execution dispose. A rejected composition")
     print("is repaired by a RULE reading the reified conflict (validated hypothetically by SUPPOSE), or")

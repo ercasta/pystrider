@@ -183,12 +183,14 @@ The whole guarantee rests on the checker (derive a footprint + verify by executi
 is to attack it hardest. `experiments/soundness_redteam.py` (+ `tests/test_soundness_redteam.py`, 5) is an
 adversarial battery that tries to make the checker certify wrong code, and maps exactly where it is blind:
 
-- **Footprint oracle** — of 9 adversarial writes, plain writes are SOUND, and `update` / `setdefault` /
-  helper-mutation / direct-aliasing are **CAUGHT by abstention** (honest UNKNOWN). **Two classes still
-  SLIP**: operator-mutation (`out |= {…}`, which bypasses `__setitem__` and is not a method/alias) and
-  container-aliasing across an untaken branch (`box = [out]; if …: box[0]['a'] = …`). Both escape the two
-  oracles *and* the abstention detector. Fix: extend abstention to refuse operator-mutation and container
-  aliasing.
+- **Footprint oracle** — of 9 adversarial writes, plain writes are SOUND and every store-escape is now
+  **CAUGHT by abstention** (honest UNKNOWN): `update` / `setdefault` / helper-mutation / direct-aliasing,
+  *and* the two classes that once slipped — operator-mutation (`out |= {…}`) and container-aliasing across
+  an untaken branch (`box = [out]; if …: box[0]['a'] = …`). Those two were closed by **productizing and
+  strengthening** abstention into `pystrider.footprint.modelable` (now: *the store is modelable only if it
+  is only ever subscripted `out[...]`* — a sound over-refusal that also covers chained subscripts). So the
+  footprint oracle has **no remaining silent slip** in this battery; `footprint_of` carries the `unknown`
+  flag, and the compose check **refuses** on it rather than admit an under-approximation.
 - **Execution oracle** — verifying on one input is not verification (a falsy-but-valid input is silently
   dropped: `v or 'default'` "passes" at `v=5`, drops `v=0`), and a single run certifies a
   non-reproducible value (`random.random()`). Fixes: multi-input / property-based verification, and a

@@ -9,7 +9,7 @@ buggy program, if shipped, drops a field (so `verify` is doing real work, not ru
 (4) an unrepairable conflict becomes a named Refusal, never a clobbering program.
 """
 from experiments.compose_recover import (
-    CATALOG, Fragment, compose, check, recover, emit, verify, run,
+    CATALOG, Fragment, compose, check, recover, emit, verify, run, SHIFT_OPAQUE,
 )
 
 REQUIRED = ("scaled", "shifted")
@@ -55,6 +55,16 @@ def test_unrecoverable_conflict_becomes_a_named_refusal():
     assert not out.shipped_ok
     assert out.final is None
     assert "no disjoint provider" in out.refusal          # a named gap, not a crash or a bad program
+
+
+def test_unmodelable_fragment_is_refused_never_admitted():
+    # a fragment whose footprint can't be soundly derived (writes via out.update) must be REFUSED, not
+    # certified on a possible under-approximation — the productized honest-unknown membrane.
+    assert SHIFT_OPAQUE.unknown                                # flagged un-analyzable (statically)
+    out = run("unmodelable", REQUIRED, (CATALOG[0], SHIFT_OPAQUE))
+    assert not out.shipped_ok and out.final is None
+    assert "cannot derive a sound footprint" in out.refusal
+    assert any("abstains" in s for s in out.steps)            # refused before the check, never admitted
 
 
 def test_emitted_source_is_a_runnable_function():

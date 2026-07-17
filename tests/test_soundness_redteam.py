@@ -1,11 +1,11 @@
 """Pins for the soundness red-team (experiments/soundness_redteam.py).
 
 The credibility of the whole thesis is the checker's honesty, so the red-team maps exactly where it can
-be fooled. These pins hold that boundary so a regression (a new silent slip, or abstention no longer
-catching a known class) is caught: plain writes are SOUND; update/setdefault/helper/alias are CAUGHT by
-abstention; and exactly two footprint classes SLIP — operator-mutation (`|=`) and container-aliasing
-across an untaken branch — the honest, enumerated blind spots. The execution oracle's input-dependence
-blind spot is also pinned.
+be fooled. These pins hold that boundary so a regression is caught: plain writes are SOUND; and every
+footprint escape — update/setdefault/helper/alias AND (since abstention was productized + strengthened)
+operator-mutation (`|=`) and container-aliasing across an untaken branch — is CAUGHT by abstention, so the
+footprint oracle has NO remaining silent slip. The execution oracle's input-dependence blind spot (still
+open) is also pinned.
 """
 from experiments.soundness_redteam import CASES, classify
 
@@ -21,21 +21,23 @@ def test_plain_writes_are_sound():
     assert _verdict("tuple_targets") == "SOUND"
 
 
-def test_abstention_catches_the_known_unmodelable_classes():
-    for label in ("update_method", "setdefault_chain", "helper_mutate", "alias_direct"):
+def test_abstention_now_catches_every_footprint_escape():
+    # the strengthened `pystrider.footprint.modelable` catches the original four AND the two that once slipped.
+    for label in ("update_method", "setdefault_chain", "helper_mutate", "alias_direct",
+                  "ior_operator", "container_alias_untaken"):
         assert _verdict(label) == "CAUGHT(abstain)", label
 
 
-def test_exactly_two_footprint_classes_still_slip():
+def test_no_footprint_class_slips_anymore():
     slipped = {c.label for c in CASES if classify(c)[0] == "SLIPPED"}
-    assert slipped == {"ior_operator", "container_alias_untaken"}   # the enumerated blind spots
+    assert slipped == set()               # operator-mutation + container-aliasing are now closed
 
 
-def test_the_ior_slip_misses_the_write_silently():
+def test_the_ior_write_is_now_caught_not_admitted():
     c = next(c for c in CASES if c.label == "ior_operator")
     verdict, derived = classify(c)
-    assert verdict == "SLIPPED"
-    assert "out.a" not in derived                         # `out |= {...}` write is invisible to the footprint
+    assert verdict == "CAUGHT(abstain)"   # the raw oracles still can't see `out |= {...}` ...
+    assert "out.a" not in derived         # ... but abstention REFUSES rather than certify the under-approx
 
 
 def test_execution_oracle_input_dependence_is_real():

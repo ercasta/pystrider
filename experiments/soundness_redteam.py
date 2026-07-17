@@ -11,9 +11,11 @@ classified against ground truth:
     SOUND            the footprint included the real write
     SLIPPED          the footprint MISSED a real write with no abstention -> the checker was FOOLED
 
-The SLIPPED rows are the honest output: the exact classes the oracle is blind to, and therefore where
-abstention / multi-input verification / determinism checks must extend before the guarantee is real. This
-is the footprint scalability sweep taken adversarial, plus the execution oracle's own blind spots.
+The SLIPPED rows are the honest output. Since abstention was PRODUCTIZED and strengthened in
+`pystrider.footprint.modelable`, the footprint oracle now has **zero** SLIPPED in this battery — the two
+classes that once escaped (operator-mutation `|=`, container-aliasing across an untaken branch) are caught.
+The remaining named boundary is the EXECUTION oracle's own blind spots (input-dependence, non-determinism),
+where multi-input / property / determinism checks must extend before that half of the guarantee is real.
 
 Run it: `python -m experiments.soundness_redteam`
 """
@@ -86,9 +88,10 @@ def main() -> None:
         miss = f"  MISSED {sorted(set(c.truth) - derived)}" if v == "SLIPPED" else ""
         print(f"  {c.label:24} {str(sorted(c.truth)):22} {str(sorted(derived)):20} {v}{miss}")
     print(f"\n  {len(slipped)} of {len(CASES)} SLIPPED — the checker was FOOLED (missed a real write, no abstention): {slipped}")
-    print("  These are the honest blind spots: operator-mutation (`|=`) and aliasing-through-a-container across")
-    print("  an untaken branch escape BOTH oracles AND the abstention detector. The rest are CAUGHT (abstained)")
-    print("  or SOUND. Fix direction: extend `modelable` to refuse operator-mutation and container aliasing.\n")
+    print("  ZERO now slip: the two classes this red-team once caught escaping — operator-mutation (`|=`) and")
+    print("  container-aliasing across an untaken branch — are CAUGHT since abstention was PRODUCTIZED and")
+    print("  strengthened (`pystrider.footprint.modelable`: the store is modelable only if it is *only ever")
+    print("  subscripted*, which those two violate). Every footprint case is now SOUND or CAUGHT(abstain).\n")
 
     print("PART 2 — the EXECUTION oracle (verify by running), and ITS blind spots:\n")
 
@@ -107,11 +110,11 @@ def main() -> None:
     print(f"      run 1 -> {r1:.4f}   run 2 -> {r2:.4f}   (different — the 'verified' behavior is not stable)")
     print("      The execution oracle sees ONE run; determinism must be checked, not assumed.\n")
 
-    print("READING: yes, the checker CAN be fooled — in NAMED, bounded ways. The footprint oracle is blind to")
-    print("operator-mutation and container-aliasing-across-branches (fixable by extending abstention); the")
-    print("execution oracle is blind to input-dependence (fix: multi-input/property verify) and non-determinism")
-    print("(fix: a determinism check). None of these is a silent mystery — each is a precise gap with a known")
-    print("mitigation. That map is the credible claim: the guarantee holds up to THIS enumerated boundary.")
+    print("READING: the FOOTPRINT oracle now has NO silent slip in this battery — the once-open operator-mutation")
+    print("and container-aliasing classes were closed by productizing + strengthening abstention. The remaining")
+    print("named boundary is the EXECUTION oracle: input-dependence (fix: multi-input/property verify) and")
+    print("non-determinism (fix: a determinism check). None of these is a silent mystery — each is a precise gap")
+    print("with a known mitigation. That map is the credible claim: the guarantee holds up to THIS enumerated boundary.")
 
 
 if __name__ == "__main__":
