@@ -52,10 +52,22 @@ def _target_channel(t: ast.expr) -> "str | None":
     return None
 
 
+# Known container in-place MUTATORS — they write the whole container (no key), so their effect is the
+# coarse channel ``<store>.<items>`` (a list/set/deque has no key to name). READERS write nothing. Any
+# OTHER method is unknown — it could mutate in a way we don't model, so it abstains.
+_MUTATOR_METHODS = frozenset({
+    "append", "appendleft", "extend", "extendleft", "insert", "add", "update", "setdefault",
+    "pop", "popitem", "remove", "discard", "clear", "sort", "reverse", "rotate",
+    "intersection_update", "difference_update", "symmetric_difference_update",
+})
+_READER_METHODS = frozenset({"get", "keys", "values", "items", "copy", "count", "index", "fromkeys"})
+
+
 def static_writes(source: str) -> "frozenset[str]":
-    """Scan the AST for every channel written on ANY path (both arms of a branch), across all
-    assignment targets (including tuple/list unpacking and augmented assignment). Branch-complete; a
-    computed key stays unresolved as ``<store>.<computed>``."""
+    """Scan the AST for every channel written on ANY path (both arms of a branch): assignment targets
+    (including tuple/list unpacking and augmented assignment) AND recognized container MUTATOR methods
+    (``lst.append(x)`` / ``s.add(x)`` / ``d.update(…)`` -> the whole-container channel ``<store>.<items>``).
+    Branch-complete; a computed subscript key stays unresolved as ``<store>.<computed>``."""
     tree = ast.parse(textwrap.dedent(source))
     writes: set[str] = set()
     for node in ast.walk(tree):
@@ -66,7 +78,32 @@ def static_writes(source: str) -> "frozenset[str]":
                 ch = _target_channel(leaf)
                 if ch:
                     writes.add(ch)
+        writes.update(_method_write_channels(node))          # lst.append(x) / d.update({...}) / d.setdefault(k)
     return frozenset(writes)
+
+
+def _method_write_channels(node: ast.AST) -> "tuple[str, ...]":
+    """Channels a recognized container MUTATOR call writes. A dict method with LITERAL keys is named
+    exactly (``d.update({'a': 1})`` -> ``d.a``; ``d.setdefault('k', …)`` -> ``d.k``); everything else — a
+    list/set mutation (``lst.append`` / ``s.add``) or a non-literal dict update — is the coarse whole-
+    container channel ``<store>.<items>`` (no key to name)."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name) and node.func.attr in _MUTATOR_METHODS):
+        return ()
+    base, meth = node.func.value.id, node.func.attr
+    if meth == "setdefault" and node.args:
+        k = node.args[0]
+        return (f"{base}.{k.value}" if isinstance(k, ast.Constant) else f"{base}.<items>",)
+    if meth == "update":
+        chans: list[str] = []
+        for a in node.args:
+            if isinstance(a, ast.Dict) and all(isinstance(k, ast.Constant) for k in a.keys):
+                chans += [f"{base}.{k.value}" for k in a.keys]     # d.update({'a':1}) — literal keys, exact
+            else:
+                chans.append(f"{base}.<items>")                    # d.update(var) / set.update — whole container
+        chans += [f"{base}.{kw.arg}" if kw.arg else f"{base}.<items>" for kw in node.keywords]
+        return tuple(chans) if (node.args or node.keywords) else ()
+    return (f"{base}.<items>",)                                    # append / add / extend / insert / pop / …
 
 
 # --- ABSTENTION: when can this even be modelled? (know when you don't know) -------------------------
@@ -97,6 +134,9 @@ def _store_ref_is_safe(node: ast.Name, parent: "ast.AST | None") -> bool:
     WRITE (a method mutation, a callee, an alias, an operator-mutation)."""
     if isinstance(parent, ast.Subscript) and parent.value is node:
         return True                                          # store[...]          (the visible write/read)
+    if (isinstance(parent, ast.Attribute) and parent.value is node
+            and parent.attr in (_MUTATOR_METHODS | _READER_METHODS)):
+        return True                                          # store.append(...) / store.get(...)  (a KNOWN method)
     if isinstance(parent, ast.Assign) and node in parent.targets and _is_fresh_container(parent.value):
         return True                                          # store = {}          (a clean init, not an alias)
     if isinstance(parent, (ast.Return, ast.Yield, ast.YieldFrom)) and getattr(parent, "value", None) is node:
@@ -114,11 +154,13 @@ def modelable(source: str, *, store: str = "out") -> bool:
     (``store[k] = …``). If a write could reach the store any OTHER way — out of view of that model — a
     derived footprint may silently MISS it, so the honest answer is *unknown*, not a confident under-approx.
 
-    A reference to the store is SAFE when it is subscripted (`store[...]`), cleanly (re)bound to a fresh
-    container (`store = {}`), or merely READ (`return store`, `k in store`, `for k in store`). It is an
-    ESCAPE — and abstains — when it could carry an out-of-view write:
+    A reference to the store is SAFE when it is subscripted (`store[...]`), a KNOWN container method — a
+    MUTATOR (`store.append/.add/.extend/.update/.setdefault/.pop/…` -> the whole-container `<items>`
+    channel) or a READER (`store.get/.keys/.items/…` -> nothing) — cleanly (re)bound to a fresh container
+    (`store = {}`), or merely READ (`return store`, `k in store`, `for k in store`). It is an ESCAPE — and
+    abstains — when it could carry an out-of-view write:
 
-      * a method call on it            ``store.update(...)`` / ``store.setdefault(...)`` (bypasses ``__setitem__``)
+      * an UNKNOWN method on it        ``store.some_custom_method(...)``        (might mutate in a way we don't model)
       * an operator-mutation           ``store |= {...}``                      (an aug-assign to the bare name)
       * the store passed to a callee   ``h(store)``                            (writes happen out of view)
       * the store aliased              ``d = store`` / ``box = [store]``        (writes through the alias are unseen)
@@ -127,7 +169,12 @@ def modelable(source: str, *, store: str = "out") -> bool:
 
     This is a **sound over-refusal**, an enumerated boundary (not a full alias analysis): it never blesses
     a construct it cannot see through, and hands off — the membrane where the core says 'I don't know'. A
-    call argument is refused conservatively even for a pure read (`len(store)`): the callee is opaque."""
+    call argument is refused conservatively even for a pure read (`len(store)`): the callee is opaque.
+
+    BOUNDARY on the whole-container channel: a mutator write is the coarse ``<items>`` (a list/set has no
+    key to name). A consuming disjointness check must treat ``<items>`` / ``<computed>`` as store-WILDCARDS
+    (conflicting with any same-store write) for full soundness on a store mixed between keyed and
+    whole-container writes — a stated follow-on, not exercised by the subscript-only compose demo."""
     tree = ast.parse(textwrap.dedent(source))
     parent: "dict[int, ast.AST]" = {}
     for node in ast.walk(tree):

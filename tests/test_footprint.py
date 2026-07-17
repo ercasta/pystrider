@@ -47,26 +47,29 @@ def test_importable_off_the_package():
     assert pystrider.modelable("out['a'] = 1")
 
 
-def test_modelable_iff_the_store_is_only_subscripted():
-    # analyzable: the store is only ever reached as `out[...]`.
+def test_modelable_covers_subscripts_reads_and_known_methods():
+    # analyzable: subscripts, reads, and KNOWN container methods (mutators + readers).
     assert modelable("out['a'] = x")
     assert modelable("out['a'] = 0\nout['a'] += x")
     assert modelable("if x < 0:\n    out['a'] = 1\nelse:\n    out['b'] = 2")
     assert modelable("out['a'] = out['b'] + 1")             # a read-modify-write is fine
+    assert modelable("out.update({'a': 1})")               # a modeled dict mutator (literal keys -> out.a)
+    assert modelable("out.setdefault('a', 1)")             # modeled
+    assert modelable("lst = []\nlst.append(x)\nreturn lst")  # a modeled list mutator (-> lst.<items>)
+    assert modelable("out['a'] = 1\nreturn out.get('a')")  # a reader is a safe read
     # un-analyzable store-escapes — each abstains (the honest-unknown membrane):
-    assert not modelable("out.update({'a': 1})")            # method mutation (bypasses __setitem__)
-    assert not modelable("out.setdefault('a', 1)")          # method mutation
-    assert not modelable("out |= {'a': 1}")                 # operator-mutation on the bare name
-    assert not modelable("h(out)")                          # store passed to a callee
-    assert not modelable("d = out\nd['a'] = 1")             # aliased
-    assert not modelable("box = [out]\nbox[0]['a'] = 1")    # aliased through a container
-    assert not modelable("out['a']['b'] = 1")               # chained subscript (writes the inner object)
+    assert not modelable("out.custom_mutate(x)")           # an UNKNOWN method — might mutate out of the model
+    assert not modelable("out |= {'a': 1}")                # operator-mutation on the bare name
+    assert not modelable("h(out)")                         # store passed to a callee
+    assert not modelable("d = out\nd['a'] = 1")            # aliased
+    assert not modelable("box = [out]\nbox[0]['a'] = 1")   # aliased through a container
+    assert not modelable("out['a']['b'] = 1")              # chained subscript (writes the inner object)
 
 
 def test_unknown_footprint_is_flagged_and_refuses_trust():
     clean = footprint_of("out['scaled'] = x * 2")
     assert clean.modelable and not clean.unknown           # a plain subscript write is trusted
 
-    opaque = footprint_of("out.update({'a': 1})")
-    assert opaque.unknown and not opaque.modelable          # the store escaped -> honest unknown
+    opaque = footprint_of("d = out\nd['a'] = 1")           # the store written through an alias
+    assert opaque.unknown and not opaque.modelable         # -> honest unknown
     # the raw writes may be an under-approximation, which is exactly why `unknown` must gate trust.

@@ -21,10 +21,15 @@ def test_plain_writes_are_sound():
     assert _verdict("tuple_targets") == "SOUND"
 
 
-def test_abstention_now_catches_every_footprint_escape():
-    # the strengthened `pystrider.footprint.modelable` catches the original four AND the two that once slipped.
-    for label in ("update_method", "setdefault_chain", "helper_mutate", "alias_direct",
-                  "ior_operator", "container_alias_untaken"):
+def test_dict_methods_are_now_modeled_soundly():
+    # update/setdefault graduated from abstained to MODELED: their key-writes are derived exactly.
+    assert _verdict("update_method") == "SOUND"
+    assert _verdict("setdefault_chain") == "SOUND"
+
+
+def test_abstention_catches_the_genuinely_unmodelable_escapes():
+    # what remains out of the model — a callee, an alias, operator-mutation, container-aliasing — abstains.
+    for label in ("helper_mutate", "alias_direct", "ior_operator", "container_alias_untaken"):
         assert _verdict(label) == "CAUGHT(abstain)", label
 
 

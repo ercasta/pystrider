@@ -117,9 +117,10 @@ def main() -> None:
 
     print(f"\n  SCALABILITY VERDICT: {len(silent)} of {len(CASES)} constructs are UNSOUND-SILENT "
           f"(a missed write with NO signal): {silent}")
-    print("  These are common in real code (method mutation, aliasing/helpers across untaken branches).")
-    print("  As-is, the derivation does NOT scale safely past self-contained subscript fragments — it")
-    print("  can confidently return a footprint that misses real writes.\n")
+    print("  These are aliasing/helper writes across an UNTAKEN branch — genuinely out of the model. (The")
+    print("  dict methods `update`/`setdefault` that once appeared here are now MODELED as writes, so they")
+    print("  are derived exactly, not missed.) Without a signal, the derivation can confidently miss a real")
+    print("  write on these — which is exactly what abstention must refuse on.\n")
 
     print("PART 2 — the FIX: an `modelable()` detector abstains on the un-analyzable, so a silent miss")
     print("becomes an HONEST-UNKNOWN the check can refuse on. Scalability = knowing when you don't know.\n")

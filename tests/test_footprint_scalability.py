@@ -9,8 +9,9 @@ abstention no longer catching one) is caught. Scalability = derive-what-you-can 
 from experiments.footprint_scalability import CASES, classify, modelable, abstaining_verdict
 
 _BY_LABEL = {c.label: c for c in CASES}
-# the constructs that escape BOTH oracles with no uncertainty signal — the fatal class.
-SILENT = {"alias_untaken", "helper_untaken", "update_method", "setdefault"}
+# the constructs that escape BOTH oracles with no uncertainty signal — the fatal class. (update/setdefault
+# are no longer here: they are now MODELED as dict writes, so their footprint is derived exactly.)
+SILENT = {"alias_untaken", "helper_untaken"}
 
 
 def test_clean_subscript_fragments_are_sound():
@@ -19,8 +20,9 @@ def test_clean_subscript_fragments_are_sound():
         assert verdict in {"EXACT", "SOUND(over)"}, (label, verdict)
 
 
-def test_the_four_killer_constructs_are_silently_unsound_naively():
-    # the load-bearing finding: without abstention, these confidently miss real writes.
+def test_the_killer_constructs_are_silently_unsound_naively():
+    # the load-bearing finding: without abstention, these confidently miss real writes (aliasing/helper
+    # across an untaken branch — genuinely out of the model, unlike the now-modeled dict methods).
     for label in SILENT:
         verdict, missed, signalled = classify(_BY_LABEL[label])
         assert verdict == "UNSOUND-SILENT", (label, verdict)
@@ -33,11 +35,12 @@ def test_no_other_construct_is_silently_unsound():
 
 
 def test_modelable_flags_exactly_the_unanalyzable_constructs():
-    assert not modelable("out.update({'a': 1})")         # store method call
-    assert not modelable("out.setdefault('a', 1)")       # store method call
     assert not modelable("h(out)")                       # store passed to a callee
     assert not modelable("d = out\nd['a'] = 1")          # store aliased
+    assert not modelable("out.custom_mutate(x)")         # an UNKNOWN method
     assert modelable("out['a'] = x")                     # a plain subscript write is analyzable
+    assert modelable("out.update({'a': 1})")             # a modeled dict mutator
+    assert modelable("lst = []\nlst.append(x)")          # a modeled list mutator
     assert modelable("if x < 0:\n    out['a'] = 1\nelse:\n    out['b'] = 2")
 
 

@@ -39,18 +39,21 @@ def passes_it():
 def test_scan_classifies_each_accumulator():
     r = Result()
     scan_source(SAMPLE, r)
-    assert r.modelable == 1                               # only build_dict is pure-subscript
-    assert r.abstain == 3                                 # update (method), append (method), fill(d) (passed)
+    # build_dict (subscript), build_via_update (dict mutator), build_list (list mutator) are all modeled now;
+    # only passes_it (fill(d)) escapes (passed to a callee); build_comp is a comprehension, counted apart.
+    assert r.modelable == 3
+    assert r.abstain == 1
     assert r.accumulators == r.modelable + r.abstain      # no double-count
-    assert r.reasons["method"] == 2 and r.reasons["passed"] == 1
+    assert r.reasons["passed"] == 1
     assert r.comprehensions == 1                          # build_comp's dict-comp, counted separately
 
 
 def test_the_split_is_the_shipped_products_verdict():
     # the MODELABLE/ABSTAIN classification is exactly `pystrider.modelable`, not a probe re-implementation.
-    assert modelable("d = {}\nd['a'] = 1\nd['b'] = 2", store="d")        # build_dict -> modelable
-    assert not modelable("d = {}\nd.update(other)", store="d")           # update -> abstain
-    assert not modelable("acc = []\nacc.append(x)", store="acc")         # append -> abstain
+    assert modelable("d = {}\nd['a'] = 1\nd['b'] = 2", store="d")        # subscript -> modelable
+    assert modelable("d = {}\nd.update(other)", store="d")               # dict mutator -> modelable
+    assert modelable("acc = []\nacc.append(x)", store="acc")             # list mutator -> modelable
+    assert not modelable("d = {}\nfill(d)", store="d")                   # passed to a callee -> abstain
 
 
 def test_stdlib_sweep_is_consistent_and_abstains_more_than_it_models():

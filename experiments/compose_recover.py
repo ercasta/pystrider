@@ -86,9 +86,9 @@ CATALOG: tuple[Fragment, ...] = (
 )
 
 # an UN-MODELABLE provider (kept out of CATALOG so it doesn't perturb the recovery proposals): it writes
-# through `out.update(...)`, which bypasses the subscript model, so its footprint can't be soundly derived.
-# A composition using it must be REFUSED, never admitted on a footprint that might be missing a write.
-SHIFT_OPAQUE = Fragment("shift_opaque", provides="shifted", stmt="out.update({'shifted': x + 10})")
+# through an ALIAS of the store, so its footprint can't be soundly derived (the write happens via `d`, out
+# of the model). A composition using it must be REFUSED, never admitted on a footprint that might miss a write.
+SHIFT_OPAQUE = Fragment("shift_opaque", provides="shifted", stmt="d = out\nd['shifted'] = x + 10")
 
 
 # --- CNL: the pattern catalog + the recovery rule as rules over reified facts -----------------------

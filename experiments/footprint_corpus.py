@@ -34,7 +34,9 @@ import os
 from collections import Counter
 from dataclasses import dataclass, field
 
-from pystrider.footprint import modelable, _is_fresh_container
+from pystrider.footprint import modelable, _is_fresh_container, _MUTATOR_METHODS, _READER_METHODS
+
+_KNOWN_METHODS = _MUTATOR_METHODS | _READER_METHODS
 
 
 def _accumulator_names(func: ast.AST) -> "set[str]":
@@ -57,21 +59,23 @@ def _comprehension_names(func: ast.AST) -> "set[str]":
 
 
 def abstain_reason(func: ast.AST, name: str) -> str:
-    """Why `modelable(store=name)` refused — the primary store-escape, in priority order. Precise for
-    method/passed/op-mutate; anything else that escapes is aliased-or-chained."""
-    method = passed = op = False
+    """Why `modelable(store=name)` refused — the primary store-escape, in priority order. `unknown-method`
+    is a method NOT in the modeled mutator/reader sets (known methods are now safe, so they never explain an
+    abstention); precise for passed/op-mutate; anything else is aliased-or-chained."""
+    unknown_method = passed = op = False
     for n in ast.walk(func):
         if isinstance(n, ast.Call):
             f = n.func
-            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == name:
-                method = True
+            if (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == name
+                    and f.attr not in _KNOWN_METHODS):
+                unknown_method = True
             if (any(isinstance(a, ast.Name) and a.id == name for a in n.args)
                     or any(isinstance(k.value, ast.Name) and k.value.id == name for k in n.keywords)):
                 passed = True
         if isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id == name:
             op = True
-    if method:
-        return "method"
+    if unknown_method:
+        return "unknown-method"
     if passed:
         return "passed"
     if op:
@@ -155,13 +159,15 @@ def main() -> None:
     print(f"\n  built by a COMPREHENSION instead (a parallel construction the subscript model doesn't build "
           f"statement-by-statement): {r.comprehensions}")
 
-    print("\n  READING: the write-footprint core derives a SOUND footprint for the subscript-built slice and")
-    print(f"  ABSTAINS honestly on the rest — {100 * r.modelable / acc:.0f}% modelable, {100 * r.abstain / acc:.0f}% "
-          f"handed off, ZERO silent-unsound. Real code leans hard on method mutation (`.append`/`.update`)")
-    print("  and comprehensions, so the subscript model covers a MINORITY of container-building — and that is")
-    print("  the honest, scalable posture: cover what you can prove, refuse (visibly) on what you can't. This")
-    print("  is the write-side reclaim curve; growing coverage means teaching the core more constructs (a")
-    print("  method-mutation footprint rule, a comprehension rule), each an EXACT model, never a guess.")
+    passed = r.reasons.get("passed", 0)
+    print("\n  READING: the write-footprint core derives a SOUND footprint for the subscript- AND known-method-")
+    print(f"  built slice and ABSTAINS honestly on the rest — {100 * r.modelable / acc:.0f}% modelable, "
+          f"{100 * r.abstain / acc:.0f}% handed off, ZERO silent-unsound. Modeling container methods")
+    print(f"  (`.append`/`.add`/`.update`/…) roughly DOUBLED coverage; the dominant remaining escape is now")
+    print(f"  PASSED-to-a-callee ({100 * passed / acc:.0f}%), a genuine inter-procedural boundary — not a missing rule.")
+    print("  That is the honest, scalable posture: cover what you can prove, refuse (visibly) on what you can't.")
+    print("  This is the write-side reclaim curve; the next lever is inter-procedural (follow the store into the")
+    print("  callee), each step an EXACT model, never a guess.")
 
 
 if __name__ == "__main__":
