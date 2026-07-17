@@ -233,13 +233,54 @@ The make-or-break: did authoring CNL *reduce* the work, or just move it? `experi
 framework. The approach did not move the work — the CNL is the irreducible decisions, the rest is derived.
 The open economic question is the bundle library's **coverage**, not the platform's size.
 
+## 9. The vagueness limit — the last redoubt, and it falls on the leaves
+
+Real requirements are underspecified, and "read what they *really* meant" is an LLM's clearest pitch — so
+vagueness is the last place a model could be load-bearing. `experiments/membrane_vagueness.py`
+(+ `tests/test_membrane_vagueness.py`, 6) pushes it, grounded in the real `demos/playground/` engine (every
+claim brewed and driven, not asserted). The decisive move is a **scope line**: "underspecified" is in scope
+as the symbolic core's job *only* when it means **rule-expandable semantic chunking** — a compressed spec a
+known rule set unrolls to the concrete one (the spec-side of the "concept = compression" finding). The probe
+implements exactly that as **backward-chaining over the real CNL rules**, and the vagueness splits cleanly:
+
+- **The structure is rule-expandable — no model.** The vague chunk `requires_feature highlighted_discount`
+  ("show the discount loyal customers earn") unrolls, rule by rule, to `has_benefit ← grants_discount ←
+  {customer_tier, order_qualifies}`. The whole derivation is pinned by known rules; nothing is inferred.
+- **It bottoms out at LEAVES that are open decisions, not vagueness the core resolves.** No rule fills "is
+  *this* customer loyal?" or "is *this* sale final?" — these are facts about the world the author supplies.
+  The honest move is to **surface** them (abstain), not guess.
+- **A leaf has no truth to infer — proven by brewing.** For the `customer_tier` leaf, *both* authored values
+  (`premium`, `basic`) drive **green**, as genuinely **different apps**. So there is no "correct" value for
+  an engine — or a model — to recover; whatever an LLM "infers" is a guess dressed as knowledge. The
+  load-bearing operations, **decide** (author) and **check** (execution), are structurally where the model
+  is not. It may *propose a default* for a surfaced leaf, but that is a knob: confirmed, re-derived, driven.
+- **The anti-pattern is silent-default — the model sneaking in.** Guess a leaf (`premium`) when the world is
+  `basic`: both green, so the guessed app **ships, drives clean, and is wrong**, with no signal. This is the
+  intent-side twin of unsound-silent footprint derivation. The surfaced membrane refuses to emit while any
+  decision is open (`pin` returns `REFUSE` naming the open knobs), so the decision is made **on the record**,
+  never defaulted.
+- **Articulation-vagueness ("make the checkout trustworthy") is pre-CNL.** No rule and no knob names it. The
+  model's role is to propose a **decomposition** into articulable decisions — but two candidate decompositions
+  each brew valid apps, so the decomposition is itself a *proposal* (no unique truth), author-confirmed, and
+  once confirmed it collapses to the leaf case. The model turns unarticulated → articulated; never
+  under-decided → correctly-decided.
+- **The honest boundary — unknown-unknowns.** Surfacing only reaches *articulated* decisions: a concept no
+  rule and no knob names (`sales_tax`) is invisible — you don't know to ask. That residual is aided by any
+  completeness proposer (a model, a domain expert, a checklist), still gated by author-decision + check. The
+  guarantee holds up to **this enumerated boundary**, named not hidden — the soundness red-team's discipline.
+
+**Verdict:** the last redoubt falls the same way as the rest. CNL pins the rule-expandable part of a vague
+requirement outright; beneath it the open decisions are **surfaced, not resolved** — and there a model can
+only guess, which surface-and-check strictly dominates. The model **proposes**; the author **decides**;
+execution **checks**. It is nowhere load-bearing, up to the named unknown-unknown boundary.
+
 ## The picture, in one line per tier
 
 | Tier | What it is | Coverage of real loops | Needs a model? |
 |---|---|---|---|
 | **Base** | statements + derived footprint/effect + execution | 100% (everything is operable) | no |
 | **Concept (compression)** | named aspects with property certificates | ~52% with 3 rules, then plateaus; ~60% of it conditional | no (rules); optional name-proposal |
-| **Intent** | what the code *should* do (the spec) | CNL a technical user writes (business/UX/library rules) | no — LLM only *translates* free NL → CNL, optionally |
+| **Intent** | what the code *should* do (the spec) | CNL a technical user writes; vague chunks unroll by known rules (§9) to open decisions the core *surfaces* | no — model only *translates* free NL → CNL, *proposes* a default/decomposition, or *prompts* completeness — all gated by author-decision + execution |
 
 The symbolic core owns the base tier (which is all of it) and *compresses* the fraction that has a known
 concept, honestly labelling conditions and abstaining where a claim would over-reach. At the intent tier
