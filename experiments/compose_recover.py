@@ -49,6 +49,8 @@ import ugm as h
 from ugm import ask_goal, load_machine_rules, write_rule, suppose, AttrGraph
 
 from grammapy.channels import Footprint, Channel
+
+from pystrider import footprint_of
 from grammapy.combinators import Accumulate, Item, CompositionError
 
 
@@ -56,21 +58,27 @@ from grammapy.combinators import Accumulate, Item, CompositionError
 
 @dataclass(frozen=True)
 class Fragment:
-    """One assemblable pattern. `provides` is the spec feature it realizes; `writes` is the single
-    output channel it touches (its footprint); `stmt` emits the real Python statement that does it.
-    A fragment is DESCRIBED to the reasoning as facts — it is not a template selected whole."""
+    """One assemblable pattern. `provides` is the spec feature it realizes; `stmt` is the real Python
+    statement that does it. Its write footprint — the channels it touches — is DERIVED from `stmt` by
+    `pystrider.footprint_of` (the `writes` property), NOT declared: the check reasons over what the
+    code does, not a hand-written label (the productized footprint-synthesis join)."""
     name: str
     provides: str
-    writes: str
     stmt: str                       # e.g. "out['scaled'] = x * 2"
+
+    @property
+    def writes(self) -> "frozenset[str]":
+        """The write channels DERIVED from `stmt` (static AST + dynamic run, cross-checked)."""
+        return footprint_of(self.stmt).writes
 
 
 CATALOG: tuple[Fragment, ...] = (
-    Fragment("scale",    provides="scaled",  writes="out.scaled",  stmt="out['scaled'] = x * 2"),
-    Fragment("shift_ok", provides="shifted", writes="out.shifted", stmt="out['shifted'] = x + 10"),
-    # the copy-paste bug: a `shifted` provider that writes the WRONG channel (out.scaled), so composing
-    # it with `scale` makes two statements assign out['scaled'] — the second silently clobbers the first.
-    Fragment("shift_bad", provides="shifted", writes="out.scaled", stmt="out['scaled'] = x + 10"),
+    Fragment("scale",    provides="scaled",  stmt="out['scaled'] = x * 2"),
+    Fragment("shift_ok", provides="shifted", stmt="out['shifted'] = x + 10"),
+    # the copy-paste bug: a `shifted` provider whose CODE writes the wrong channel (out.scaled). Nobody
+    # declares this — footprint_of DERIVES `writes={out.scaled}` from the stmt, so composing it with
+    # `scale` is caught as a real collision (the declaration can no longer hide the clobber).
+    Fragment("shift_bad", provides="shifted", stmt="out['scaled'] = x + 10"),
 )
 
 
@@ -108,8 +116,8 @@ def _fact_graph(facts: list[tuple[str, str, str]]) -> "h.Graph":
 def _catalog_facts(catalog: tuple[Fragment, ...]) -> list[tuple[str, str, str]]:
     facts: list[tuple[str, str, str]] = []
     for f in catalog:
-        facts += [(f.name, "is_a", "fragment"), (f.name, "provides", f.provides),
-                  (f.name, "writes", f.writes)]
+        facts += [(f.name, "is_a", "fragment"), (f.name, "provides", f.provides)]
+        facts += [(f.name, "writes", ch) for ch in f.writes]     # one fact per DERIVED write channel
     return facts
 
 
@@ -152,7 +160,7 @@ def check(comp: Composition) -> list[CompositionError]:
     """Run grammapy's ACCUMULATE check over the composition's footprints. Returns [] if the writes are
     disjoint (composes), else the single `CompositionError` carrying the structured `WriteConflict`s.
     This is the real frame rule — the same CNL disjoint-writes module grammapy ships — not a re-derive."""
-    items = [Item(f.name, Footprint.of(writes=[Channel(f.writes)])) for f in comp.fragments]
+    items = [Item(f.name, Footprint.of(writes=[Channel(w) for w in f.writes])) for f in comp.fragments]
     try:
         Accumulate.check(items)
         return []
@@ -169,18 +177,19 @@ def _rule_graph(text: str) -> AttrGraph:
     return rg
 
 
-def _swap_is_clean(comp: Composition, bad: Fragment, alt: Fragment) -> bool:
-    """SUPPOSE the swap `bad -> alt`, then CHECK the formerly-blamed channel is no longer a conflict.
-    Entertain the repaired composition's write facts as assumptions, PREDICT the bad channel is a
+def _swap_is_clean(comp: Composition, bad: Fragment, alt: Fragment, channel: str) -> bool:
+    """SUPPOSE the swap `bad -> alt`, then CHECK the formerly-blamed `channel` is no longer a conflict.
+    Entertain the repaired composition's DERIVED write facts as assumptions, PREDICT that channel is a
     `write_conflict`; a REFUTED/INCONCLUSIVE verdict (the conflict can NOT be derived) means the swap
     is clean. `commit=False` — the hypothesis inks nothing (feedback #6/#12). Rule proposed, SUPPOSE
     disposes."""
     repaired = comp.replacing(bad, alt)
-    g = _fact_graph([(f.name, "writes", f.writes) for f in repaired.fragments])
+    facts = [(f.name, "writes", w) for f in repaired.fragments for w in f.writes]   # DERIVED footprints
+    g = _fact_graph(facts)
     rg = _rule_graph(_CONFLICT_RULE)
     # predict the (previously) conflicted channel is STILL a conflict; CONFIRMED would mean the swap
     # failed to fix it. Any non-confirmed verdict = the collision is gone.
-    res = suppose(g, [], [("write_conflict", bad.writes, "yes")], rules=rg, commit=False)
+    res = suppose(g, [], [("write_conflict", channel, "yes")], rules=rg, commit=False)
     return res.status != "confirmed"
 
 
@@ -199,6 +208,7 @@ def recover(comp: Composition, err: CompositionError, catalog: tuple[Fragment, .
     reified as `blamed`; the recovery RULE proposes every same-feature alternate; SUPPOSE disposes each
     until one checks conflict-free. The GAP-FILL shape (ugm procedures) at the fragment level."""
     blamed_name = err.conflicts[0].right                 # the later writer on the shared channel
+    blamed_channel = str(err.conflicts[0].channel)       # the channel they collided on (the check's own)
     bad = next(f for f in comp.fragments if f.name == blamed_name)
 
     # reify the conflict + the catalog, and let the recovery RULE PROPOSE the substitutes (every
@@ -212,7 +222,7 @@ def recover(comp: Composition, err: CompositionError, catalog: tuple[Fragment, .
     accepted: tuple[str, str] | None = None
     repaired: Composition | None = None
     for alt_name in proposals:
-        if _swap_is_clean(comp, bad, by_name[alt_name]):     # SUPPOSE disposes each proposal
+        if _swap_is_clean(comp, bad, by_name[alt_name], blamed_channel):   # SUPPOSE disposes each proposal
             accepted = (bad.name, alt_name)
             repaired = comp.replacing(bad, by_name[alt_name])
             break

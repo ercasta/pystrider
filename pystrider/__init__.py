@@ -17,6 +17,7 @@ from .operators import Operator, LIBRARY, retrieve
 from .session import Session, relabel_trace
 from .emit import Candidate as EmitCandidate, Selection as EmitSelection, select, realizing, verify_clean
 from .absorb import absorb, absorb_class, FactBank
+from .footprint import CodeFootprint, footprint_of, static_writes, dynamic_writes
 
 __all__ = [
     "Intake", "intake_function",
@@ -29,4 +30,5 @@ __all__ = [
     "Session", "relabel_trace",
     "EmitCandidate", "EmitSelection", "select", "realizing", "verify_clean",
     "absorb", "absorb_class", "FactBank",
+    "CodeFootprint", "footprint_of", "static_writes", "dynamic_writes",
 ]
