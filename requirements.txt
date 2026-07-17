@@ -1,7 +1,6 @@
 # Runtime dependency is declared in pyproject.toml (universal-graph-machine, installed via
 # `pip install -e ../ugm -e .`). This file pins the extra packages the EXPERIMENTS need.
 #
-#   textual — drives the emitted Textual apps (experiments/app_synthesis.py and the
-#             demos/playground checkout UI): each is verified by driving it headlessly through
-#             textual's App.run_test() Pilot.
+#   textual — drives the emitted Textual app (the demos/playground checkout UI): it is
+#             verified by driving it headlessly through textual's App.run_test() Pilot.
 textual>=8,<9

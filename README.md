@@ -153,15 +153,12 @@ also:
 - **Fixes them, and proves the fix** — retrieves candidate edits, materializes each as real Python, and
   accepts one only if re-analyzing the edited code shows it clean with no regression.
   → [deep dive: repair](docs/deep_dive.md#fixing-not-just-finding)
-- **Writes code from a spec** — the analysis loop run backwards: a terse spec expanded into real Python,
-  verified by re-execution; one added requirement flips the winning shape.
-  → [deep dive: synthesis](docs/deep_dive.md#a-third-axis-spec--code-synthesis)
 - **Explains a crash** — given only a traceback and no input, it _abduces_ the input that reproduces the
   exception (the minimal root cause), then hands it to the repair axis.
-  → [deep dive: diagnosis](docs/deep_dive.md#a-fourth-axis-crash--root-cause-diagnosis)
+  → [deep dive: diagnosis](docs/deep_dive.md#a-third-axis-crash--root-cause-diagnosis)
 - **Checks code against a business policy** — policy and code in one graph, joined by a bridge, with a
   machine-checkable proof of divergence and a verified spec-directed fix.
-  → [deep dive: conformance](docs/deep_dive.md#a-fifth-axis-does-the-code-implement-the-policy-conformance)
+  → [deep dive: conformance](docs/deep_dive.md#a-fourth-axis-does-the-code-implement-the-policy-conformance)
 - **Absorbs a real library as data** — reflects a live module's type surface into facts
   (`Widget.query_one returns_optional`), never running its code, unlocking library-shaped bug classes.
   → [deep dive: absorption](docs/deep_dive.md#absorbing-a-real-library-and-a-bug-class-it-unlocks)
@@ -169,8 +166,8 @@ also:
   loop catches a dropped condition in an authored policy (the KB-ingestion gate).
   → [deep dive: rulestrider](docs/deep_dive.md#checking-the-knowledge-itself-rulestrider)
 
-The full technical tour — five reasoning axes, the generation loop, the layout, every probe — lives in
-**[docs/deep_dive.md](docs/deep_dive.md)** (310 tests green).
+The full technical tour — the reasoning axes, the generation loop, the layout, every probe — lives in
+**[docs/deep_dive.md](docs/deep_dive.md)** (284 tests green).
 
 ## How does it work?
 
@@ -184,16 +181,16 @@ question — a backward query — answered by the _same_ engine.
 
 pystrider itself owns **no** engine code. It materializes graph structure from Python's `ast`, emits
 source, and runs things (the honest tool boundaries); everything in between — the analysis semantics,
-the composition algebra ([grammapy](docs/grammapy_convergence.md)), the cross-vocabulary bridges — is
+the composition algebra ([grammapy](docs/deep_dive.md#layout)), the cross-vocabulary bridges — is
 CNL rules over the public firmware. Nothing is trusted because a tool _claimed_ it; every conclusion is
 checked by re-running the reasoning, and every emitted app by _driving it_.
 
 ## A unique tool
 
 What makes it unusual is that **it is all one engine, run in many directions.** Reading code, fixing
-it, writing it, explaining a crash, checking it against a policy, and brewing a UI out of separate
-knowledge blocks are not six features bolted together — they are the same suppose-derive-choose-verify
-loop pointed different ways. That is why:
+it, explaining a crash, checking it against a policy, and brewing a UI out of separate knowledge blocks
+are not features bolted together — they are the same suppose-derive-choose-verify loop pointed different
+ways. That is why:
 
 - **Knowledge composes instead of tangling.** Business, UX, and library rules live in separate files in
   separate vocabularies, joined _only_ by explicit bridges. Swap the library block for a web toolkit and
@@ -212,17 +209,17 @@ loop pointed different ways. That is why:
 
 ```bash
 pip install -e ../ugm -e .    # the ugm sibling + this package (grammapy ships in-repo)
-pip install textual            # for the playground / generation probes (the driven Textual app)
+pip install textual            # for the playground (the driven Textual app)
 
 python demos/playground/playground.py          # THE PLAYGROUND — bring rules, bridge, brew a UI
 python demos/playground/playground.py --run     # launch the emitted app interactively
 
 python -m pystrider.demo                        # the packaged analysis/repair walkthrough
 python demos/run.py                             # five focused analysis/repair demos
-pytest -q                                       # the behaviour pins (310 green)
+pytest -q                                       # the behaviour pins (284 green)
 ```
 
-For everything else — the five reasoning axes, the generation loop in full, the layout of every module
+For everything else — the reasoning axes, the generation loop in full, the layout of every module
 and probe — see **[docs/deep_dive.md](docs/deep_dive.md)**. For the newer exploration — deriving a
 fragment's footprint from its source, recognizing code patterns by aspect, and where the symbolic core
 reaches vs. where it honestly abstains — see **[docs/understanding_findings.md](docs/understanding_findings.md)**.

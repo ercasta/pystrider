@@ -1,8 +1,0 @@
-# The realization rule bank — the §8 EMIT boundary's selection logic, authored as CNL data (the
-# mirror of operators.cnl / semantics.cnl). A candidate REALIZES a spec iff it provides every feature
-# the spec requires: realizes iff it MISSES nothing (stratified negation — misses via lacks via
-# not-provides). The spec's `requires` facts and each candidate's `provides` facts are supplied by the
-# emit tool as data (like intake facts feed the semantics); these rules are the shared, stable loop.
-?cand lacks ?feat when ?feat is_a feature and ?cand is_a candidate and not ?cand provides ?feat
-?cand misses ?spec when ?spec requires ?feat and ?cand lacks ?feat
-?cand realizes ?spec when ?cand is_a candidate and not ?cand misses ?spec

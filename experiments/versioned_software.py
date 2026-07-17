@@ -15,7 +15,7 @@ What that buys, none of which the template/in-place model can give:
     `replaced`, `reason`), so `why does the shipped program contain shift_ok?` is answerable.
   * TIME TRAVEL — every past build is RETAINED and still emittable; `current` can be moved BACK (undo)
     and forward (redo) with nothing deleted — the pointer move is the only operation.
-  * THE VERIFIED CODE CHANGE (roadmap Phase 3, `rederivation.py`) becomes a WALK over the build DAG:
+  * THE VERIFIED CODE CHANGE (a policy change → verified code change) becomes a WALK over the build DAG:
     the diff a policy change produces is `emit(v_before)` vs `emit(v_after)`, two nodes in the DAG.
 
 The trust move is unchanged: a build SHIPS only if it passes the design-time check (grammapy disjoint

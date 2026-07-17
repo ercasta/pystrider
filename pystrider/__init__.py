@@ -15,7 +15,6 @@ from .analysis import (
 from .transform import insert_none_guard, insert_none_guard_range
 from .operators import Operator, LIBRARY, retrieve
 from .session import Session, relabel_trace
-from .emit import Candidate as EmitCandidate, Selection as EmitSelection, select, realizing, verify_clean
 from .absorb import absorb, absorb_class, FactBank
 from .footprint import CodeFootprint, footprint_of, static_writes, dynamic_writes
 
@@ -28,7 +27,6 @@ __all__ = [
     "insert_none_guard", "insert_none_guard_range",
     "Operator", "LIBRARY", "retrieve",
     "Session", "relabel_trace",
-    "EmitCandidate", "EmitSelection", "select", "realizing", "verify_clean",
     "absorb", "absorb_class", "FactBank",
     "CodeFootprint", "footprint_of", "static_writes", "dynamic_writes",
 ]

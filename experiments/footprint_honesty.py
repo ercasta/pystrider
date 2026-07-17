@@ -155,7 +155,7 @@ def verify_composition(atoms: list[Atom]) -> CompositionVerdict:
 
 
 # --- the withdrawal-app button atoms, made executable (honest and dishonest variants) -----------
-# The real app's confirmation buttons (experiments/app_synthesis.py `_button_atom`): each writes its
+# Confirmation buttons modeled as composition atoms: each writes its
 # own widget slot `confirm.button.<id>`, and an AFFIRMATIVE button also binds the shared proceed action
 # `confirm.submit`. Here each is given a body that performs exactly those writes — an HONEST atom. The
 # dishonest `cancel` additionally binds `confirm.submit` at runtime WITHOUT declaring it: the collision

@@ -1,12 +1,10 @@
 """Feasibility probe — COMPOSE -> CHECK -> RECOVER as a rule-driven, SUPPOSE-scoped loop.
 
-This is the first slice of the "first-principle rules" direction (the move OFF template-based
-codegen). Every earlier synthesis probe (`spec_synthesis`, `controlflow_synthesis`, ...) SELECTED a
-whole pre-authored skeleton and emitted it. This one instead ASSEMBLES a program from small
-fragments, and — the new part — when the assembly is UNSOUND it does not crash or silently ship the
-bug: it reifies the conflict and lets a **recovery rule** derive the repair, validated hypothetically
-before it is adopted. Three things it leans on are only now possible in `../ugm` (see the
-`ugm-blockers-cleared` finding):
+This is the first slice of the "first-principle rules" direction. Rather than SELECTING a whole
+pre-authored skeleton and emitting it, this ASSEMBLES a program from small fragments, and — the new
+part — when the assembly is UNSOUND it does not crash or silently ship the bug: it reifies the conflict
+and lets a **recovery rule** derive the repair, validated hypothetically before it is adopted. Three
+things it leans on are only now possible in `../ugm` (see the `ugm-blockers-cleared` finding):
 
     describe (CNL pattern facts) ─▶ COMPOSE ─▶ CHECK ─┬─ clean ─▶ EMIT + VERIFY (run it)
        provides / writes            pick 1 per         │
@@ -26,8 +24,7 @@ The epistemic move is unchanged and is the whole point: the composer PROPOSES, t
 by grammapy's own `disjoint_writes` CNL rule, and the repaired program is trusted only because it is
 RUN and observed to be correct — never because the recovery rule says so.
 
-What is genuinely new here vs. `generator_frontend.py` (whose `repair` was a Python `if/else` that
-re-called `assemble`):
+What is genuinely new — a rule-driven recovery, not hand-written repair control flow:
 
   * the RECOVERY is a RULE over the reified conflict (`_RECOVERY_RULE`), not hand-written control flow
     — the GAP-FILL shape ugm's new `procedures` arc uses at the planning level, applied to fragments;
