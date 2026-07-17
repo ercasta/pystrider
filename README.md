@@ -5,6 +5,10 @@ bridge them, and brew a _working, verified_ UI.** No wizards, no hardcoded engin
 line is derived by reasoning on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine),
 and trusted because pystrider _runs_ what it built and watches it behave.
 
+**Live site & playgrounds → [ercasta.github.io/pystrider](https://ercasta.github.io/pystrider/)** — read the
+argument, and _run the engine in your browser_: edit CNL and watch the code **generate**; paste code and
+watch it **recognize** what each loop builds. No install, no server.
+
 ## The thesis
 
 Most software is not novel algorithms — it is **orchestration of known operations plus policy-shaped

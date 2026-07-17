@@ -35,8 +35,11 @@ theme:
     - navigation.instant
     - navigation.tracking
     - navigation.top
+    - navigation.sections
+    - navigation.indexes
     - navigation.footer
     - content.code.copy
+    - content.code.annotate
     - toc.follow
     - search.suggest
     - search.highlight
@@ -57,6 +60,7 @@ theme:
         name: Switch to light mode
   icon:
     repo: fontawesome/brands/github
+    logo: material/graph-outline
 
 markdown_extensions:
   - admonition
@@ -72,6 +76,12 @@ markdown_extensions:
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - toc:
       permalink: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ercasta/pystrider
+      name: pystrider on GitHub
 
 extra_css:
   - stylesheets/extra.css
