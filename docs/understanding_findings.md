@@ -20,7 +20,7 @@ probe under `experiments/` and pinned by tests under `tests/`.
 
 ## 0. The reframe that started it — the humble target
 
-The earlier arc (`docs/grammapy_convergence.md`, and the `footprint-synthesis` / composability work)
+The earlier arc (the `footprint-synthesis` / composability work)
 built a machine to **prove composability**: grammapy's combinators, footprints, disjoint-writes, Scope,
 soundness sweeps, abstention. Useful — but it is one heavyweight *checker*, and it captured the agenda.
 
@@ -309,6 +309,6 @@ convenience); round-trip aspects to the write side (recognize → reuse → reco
 vocabulary opportunistically where compression pays. grammapy stays an *optional* strong check for when a
 strong guarantee is wanted, not the spine.
 
-Related: `docs/codegen_understand.md` (the questions this answers), `docs/critique.md` (§8 composition,
-§5 unsurfaced-unknown), `docs/grammapy_convergence.md` (the composability arc this reframes as optional).
-Memory: `pattern-writer`, `footprint-synthesis`.
+Related: `docs/the_case.md` (the readable synthesis of the whole argument), `docs/codegen_understand.md`
+(the questions this answers), `docs/critique.md` (§8 composition, §5 unsurfaced-unknown). Memory:
+`pattern-writer`, `footprint-synthesis`.

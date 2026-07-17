@@ -1,0 +1,3 @@
+# Tooling for building the documentation site (docs/ -> MkDocs -> GitHub Pages).
+# Used by .github/workflows/docs.yml. Not a runtime dependency of the package.
+mkdocs-material>=9.5

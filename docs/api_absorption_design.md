@@ -22,9 +22,9 @@ Today pystrider hardcodes two kinds of knowledge inside `semantics.cnl` and `int
 
 Both are the SAME shortcoming: knowledge the rules need is either absent or frozen into Python, instead
 of living in the graph as **matchable facts** that generic rules consume. pystrider already follows the
-better pattern elsewhere — the repair operator library is data (`operators.cnl`), the synthesis
-realization bank is data (`emit.cnl`), "rules never mint; the tool pre-mints, rules select". The move
-is to apply that same discipline to the value domain and to library surface:
+better pattern elsewhere — the repair operator library is data (`operators.cnl`), and the semantics are
+authored CNL (`semantics.cnl`), not frozen into Python. The move is to apply that same discipline to the
+value domain and to library surface:
 
 > **Represent what-values-are and what-APIs-do as FACTS the existing generic rules reason over.**
 > Growing the value domain and absorbing a library's API are two instances of one mechanism.
@@ -91,9 +91,9 @@ Three sources, richest first — all pure introspection, no execution of library
 2. **`inspect` + `typing.get_type_hints`** on the live module — signatures, return annotations,
    class members — for libraries without separate stubs.
 3. **Hand-authored overrides** — a small CNL bank for the cases stubs get wrong or omit (the escape
-   hatch, mirroring `codegen_understand`'s "supply the fact in CNL when there is no fingerprint").
+   hatch: supply the fact in CNL directly when the surface cannot be reflected).
 
-The absorber is a `pystrider.absorb` tool (the reverse-intake boundary, like `emit.py`): `absorb(module)
+The absorber is a `pystrider.absorb` tool (a reverse-intake boundary): `absorb(module)
 -> list[(s,p,o)]`, cached per library version. It NEVER runs library code; it reads declared types.
 
 ---

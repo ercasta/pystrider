@@ -5,3 +5,10 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+
+# MkDocs local build output (the site is built in CI)
+site/
+
+# CI-generated site assets (built in the docs workflow)
+docs/wheels/
+docs/play/

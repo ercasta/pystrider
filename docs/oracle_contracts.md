@@ -3,9 +3,9 @@
 *Written 2026-07-14 (roadmap Phase 0 — harden the trust core; critique recommendation #6). The
 project's moral claim is **auditability**: "every step is a trusted derivation or a trusted check."
 That claim erodes the moment a verdict-producing surface passes something it does not actually
-establish — the generator front-end's safety-only Pilot shipping a dead app as "trustworthy"
-(2026-07-14) was exactly that erosion. This document is the standing answer to the Held Line
-(`roadmap.md` #2): **every verdict-producing surface ships with its contract stated — what a passing
+establish — a safety-only Pilot shipping a dead app as "trustworthy" (2026-07-14) was exactly that
+erosion. This document is the standing answer to the Held Line: **every verdict-producing surface ships
+with its contract stated — what a passing
 check proves, and what it silently does not.** It is a reference, kept in step with the oracles; when
 an oracle gains or loses a guarantee, its entry here changes in the same commit.*
 
@@ -26,9 +26,8 @@ existed only in `experiments/diagnosis.py`'s docstring, named nowhere in `docs/`
 |---|---|---|---|
 | **Analysis** (productized) | forward over the value space | *what happens if this input?* | `pystrider/analysis.py` |
 | **Diagnosis** (probe) | backward over the hypothesis space | *what must have been true for this crash?* | `experiments/diagnosis.py` |
-| **Synthesis** (probe) | backward over the code space | *what code satisfies this spec?* | `experiments/spec_synthesis.py` |
 | **Conformance** (probe) | differential over two worlds | *does this code implement this policy?* | `experiments/conformance_strider.py` |
-| **Generation / composition** (probe) | forward, spec → runnable app | *what app does this intent + KB derive?* | `experiments/app_synthesis.py`, `generator_frontend.py` |
+| **Generation / composition** | forward, KB → runnable app | *what app does this intent + KB derive?* | `demos/playground/brew.py` |
 
 Every axis closes over the **same** verdict surfaces below. The value of naming them together is that
 a green verdict means the same thing whichever axis produced it — and carries the same silent gaps.
@@ -38,8 +37,7 @@ a green verdict means the same thing whichever axis produced it — and carries 
 ## A. The forward analyzer — `analyze` / `analyze_all` (`pystrider/analysis.py`)
 
 The original oracle. Also the *disposer* the other axes lean on: diagnosis verifies an abduced cause
-by re-running it here; synthesis verifies emitted code by re-analysing it; repair keeps only edits this
-oracle re-certifies clean.
+by re-running it here; repair keeps only edits this oracle re-certifies clean.
 
 - **Verdict.** An `Outcome` (`raises attribute_error`, or `returns_none`) under a value hypothesis for
   one parameter — with a RECORD derivation — or "clean" (no outcome derivable).
@@ -47,7 +45,7 @@ oracle re-certifies clean.
   lattice, the operational semantics derive **no modelled effect**, and the derivation is inspectable.
 - **A pass does NOT prove (silently):**
   - **Correctness.** "Verified" here means *"no modelled effect under the swept hypotheses"*, never
-    "does the right thing." Synthesis's `verified True` inherits exactly this weaker meaning.
+    "does the right thing."
   - **Effects with no semantics rule.** Only `attribute_error` and `returns_none` are modelled; every
     other exception class is invisible. A `KeyError`, a `TypeError`, a division by zero passes silently.
   - **Values outside the abstract domain.** The domain is `none` / `object` / UNKNOWN. Nothing about
@@ -58,30 +56,30 @@ oracle re-certifies clean.
   missed (an honest bound, *not* a fixpoint); path refinement limited to direct `VAR is [not] None`
   tests (no compound `and`/`or`/`not`, no aliasing).
 
-## B. The Pilot drive oracle — `verify_by_pilot` (`experiments/app_synthesis.py`)
+## B. The Pilot drive oracle — `brew.verify` (`demos/playground/brew.py`)
 
-The strongest and, until Phase 0, the least characterized oracle. It runs the emitted Textual app
-headlessly and reads its event trace. It reports **two independent contracts**; a trustworthy app needs
-both. It is a **witness, not a sweep** — one canonical scenario, a single green trace.
+The strongest oracle. It runs the emitted Textual app headlessly through Textual's Pilot and reads its
+event trace. It reports **independent contracts**; a trustworthy app needs all of them. It is a
+**witness, not a sweep** — one canonical scenario, a single green trace.
 
 - **`ok` — the SAFETY contract.**
-  - *A pass proves:* on the driven path, the observed trace contains no `withdrawn` that is not preceded
-    by a `gate_shown` when the spec is irreversible (`¬irreversible ∨ ¬performed ∨ gated`). An aborted
-    run is safe: it did not perform.
+  - *A pass proves:* on the driven path, the observed trace contains no `completed` that is not preceded
+    by a `gate_shown` when the checkout is irreversible (`¬irreversible ∨ ¬completed ∨ gated`). A
+    reversible checkout must not gate.
   - *A pass does NOT prove:* that the app does anything at all (a dead app is vacuously safe — this is
-    the hole `live` closes); anything about inputs other than the single driven amount (`"42"`); any UX
-    property beyond gate-ordering (focus, styling, accessibility, error copy, validation completeness).
-- **`live` — the LIVENESS contract** *(added Phase 0)*.
-  - *A pass proves:* driving the **happy path** — pressing the affirmative/proceed button — the
-    withdrawal actually **completes** (`withdrawn` is reached). Measured on its own affirmative drive, so
-    it holds even when the caller drives an abort path (`confirm_choice="cancel"`).
-  - *A pass does NOT prove:* that the **abort** path aborts (that is a separate `confirm_choice="cancel"`
-    drive, e.g. `test_default_cancel_button_is_real_driving_it_aborts`); completion for any input other
-    than `"42"`; that intermediate states are correct — only that the terminal effect is reached.
-- **Bounded by:** a single canonical scenario driven by the generic `_drive` helper (type a valid
-  amount, press OK, resolve one gate). The oracle is an existence witness over one input, not a proof
-  over the input space. Widening it to a scenario **sweep** is the analogue of Phase 0's `repair_all`
-  sweep item and Phase 4's conformance sweep.
+    the hole `live` closes); anything about inputs other than the single driven scenario; any UX property
+    beyond gate-ordering (focus, styling, accessibility, error copy, validation completeness).
+- **`live` — the LIVENESS contract.**
+  - *A pass proves:* driving the **happy path** — pressing the affirmative/proceed button — the checkout
+    actually **completes** (`completed` is reached).
+  - *A pass does NOT prove:* completion for any scenario other than the driven one; that intermediate
+    states are correct — only that the terminal effect is reached.
+- **`shown` — the DISCOUNT-SHOWN contract.**
+  - *A pass proves:* the discount was displayed **iff** it was granted (no unshown benefit, no phantom
+    discount) on the driven trace.
+- **Bounded by:** a single canonical scenario (turn a knob, drive one checkout). The oracle is an
+  existence witness over one input, not a proof over the input space. Widening it to a scenario **sweep**
+  is the analogue of the conformance sweep.
 
 ## C. The grammapy design-time gates — Accumulate / Scope / Choice / Fold
 
@@ -116,15 +114,16 @@ The certifier for **C**'s trusted inputs: it drives an atom in an instrumented s
   untaken branch is invisible. Same bound as any concrete-exec witness (and the same bound as **B**).
 - **Bounded by:** the driven path(s). An execution witness, not an all-paths proof.
 
-## E. The reasoning / obligation gate — `required_capabilities` (`experiments/app_synthesis.py`)
+## E. The reasoning / obligation gate — `brew.reason` (`demos/playground/brew.py`)
 
-The KB-derived obligation, used as GATE 1 of the generator front-end.
+The KB-derived obligation: which features an app is required to provide.
 
-- **A pass proves.** The draft provides every capability the KB **derives** as obligatory (the
-  deontic/bridge fragments, resolved through the Fold) — e.g. an irreversible action's `confirmation`.
+- **A pass proves.** The composed app provides every feature the KB **derives** as obligatory (the
+  deontic/bridge rules) and that the library **supports** — e.g. an irreversible checkout's
+  `confirmation_step`.
 - **A pass does NOT prove (silently).** Obligations the KB does not encode. **Generation breadth equals
-  KB coverage**: an uncovered obligation is not a false pass, it is a *named gap* (refusal is a feature,
-  Held Line #3) — but only obligations the KB carries are checked here.
+  KB coverage**: an uncovered obligation is not a false pass, it is a *named gap* — but only obligations
+  the KB carries are checked here.
 - **Bounded by:** the KB. Grows exactly as the deontic/bridge fact banks grow.
 
 ## F. The conformance oracle — `conformance_strider` (`experiments/conformance_strider.py`)
@@ -141,15 +140,17 @@ The two-world differential: policy and code in one graph, joined by bridge facts
   construction (the sweep is generated from the spec), which is the property that makes this oracle
   *stronger* than **A** — its scenario space is enumerated, not supposed one at a time.
 
-## G. Verify-by-re-execution — synthesis / codegen (`experiments/spec_synthesis.py`, `codegen_understand.py`)
+## G. Verify-by-re-execution — composition (`experiments/compose_recover.py`)
 
-The synthesis-axis disposer: run the emitted function symbolically + concretely on a sentinel.
+The composition disposer: RUN the emitted program and check every required feature actually landed
+(a clobbering composition drops a field — caught here, by execution, not by claim).
 
-- **A pass proves.** The emitted function produces the specified outcome on the checked sentinel(s),
-  under both the symbolic analyzer (**A**) and concrete execution.
-- **A pass does NOT prove (silently).** Correctness beyond the checked sentinels; behaviour of non-pure
-  fragments (sandboxing the concrete-exec check for effects is still open — see `spike_findings.md`).
-- **Bounded by:** the sentinel set and the analyzer's own bounds (**A**).
+- **A pass proves.** The emitted program runs and produces every required feature as a distinct result
+  on the checked input(s) — a real clobber (two fragments writing one channel) is observed as a missing
+  field.
+- **A pass does NOT prove (silently).** Correctness beyond the checked input(s); behaviour of non-pure
+  fragments (sandboxing the concrete-exec check for effects is still open).
+- **Bounded by:** the input set exercised.
 
 ## H. The diagnosis oracle — abduced-cause verification (`experiments/diagnosis.py`)
 

@@ -28,7 +28,7 @@ when a channel NAME maps to an observable runtime effect. Here that mapping is c
 bodies write a store keyed by channel name. Grounding the *real* withdrawal app's button atoms the same
 way (mapping `confirm.submit` to an observable Textual effect) is precisely what typing pystrider's
 untyped bridges as grammapy channel contracts would buy — so this probe is the concrete evidence for that
-call, not a resolution of it (docs/grammapy_convergence.md, "bridges-vs-channels").
+call, not a resolution of it (the "bridges-vs-channels" question).
 
 Run it: `python -m experiments.footprint_honesty`
 """

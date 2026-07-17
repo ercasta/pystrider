@@ -1,7 +1,7 @@
 # pystrider — deep dive
 
 > This is the full technical tour. For the friendly front door — bring your rules, bridge them, brew a
-> working UI — see the [README](../README.md). Everything below is what powers that, in detail.
+> working UI — see the [README](https://github.com/ercasta/pystrider/blob/main/README.md). Everything below is what powers that, in detail.
 
 A **hypothesis-driven code analyzer, bug-fixer, and policy-conformance checker** built on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine) library.
 Instead of matching static bug patterns, it reasons about a Python function the way a person does:
@@ -15,7 +15,7 @@ reading code (analysis), fixing it (repair), explaining a crash (diagnosis), and
 business policy** (conformance). Nothing is trusted because a tool claimed it — everything is checked by
 re-running the reasoning.
 
-The reasoning also drives a full **generation loop** — the [playground](../demos/playground/) composes a
+The reasoning also drives a full **generation loop** — the [playground](https://github.com/ercasta/pystrider/tree/main/demos/playground/) composes a
 knowledge base into a *runnable, verified application* (**reason → compose → emit → drive**), where the
 **soundness of composition is itself CNL**: a second in-repo package (`grammapy`) supplies a
 composition algebra whose every check is a rule-module over the same graph, and the emitted app is
@@ -109,7 +109,7 @@ threads value through a per-`(program-point, variable)` cell lattice, so it read
 actually live at the return — and if you **swap the two assignments** (`data = raw` first), the
 outcome soundly disappears (no false positive).
 
-For the multi-function / inter-procedural version, see [`demos/03_session_interprocedural.py`](../demos/03_session_interprocedural.py).
+For the multi-function / inter-procedural version, see [`demos/03_session_interprocedural.py`](https://github.com/ercasta/pystrider/blob/main/demos/03_session_interprocedural.py).
 
 ## Fixing, not just finding
 
@@ -159,7 +159,7 @@ Analysis reads code; **diagnosis explains a crash**. Analysis runs the loop
 the other end: you have a **traceback** — `AttributeError`, one line — and *no* input, and you must
 work out *what must have been true* for that to happen. That is **abduction**, and it is the analysis
 loop run **backwards over the hypothesis space**. A probe
-([`experiments/diagnosis.py`](../experiments/diagnosis.py)) proves it:
+([`experiments/diagnosis.py`](https://github.com/ercasta/pystrider/blob/main/experiments/diagnosis.py)) proves it:
 
 ```python
 from experiments.diagnosis import Observation, diagnose, diagnose_and_fix
@@ -205,7 +205,7 @@ observed outcome under it and it never enters the candidate set (trust by the ch
 else). And because the abduced cause is a value hypothesis of exactly `repair_all`'s shape,
 **"understand the root cause" flows straight into "and fix it, verified by re-execution"** — the front
 half of a debugger wired to the productized repair axis as its back half, with no new machinery. Still
-a probe (see [`tests/test_diagnosis.py`](../tests/test_diagnosis.py)); run it:
+a probe (see [`tests/test_diagnosis.py`](https://github.com/ercasta/pystrider/blob/main/tests/test_diagnosis.py)); run it:
 `python -m experiments.diagnosis`.
 
 ## A fourth axis: does the code implement the policy? (conformance)
@@ -217,7 +217,7 @@ declarative **bridge**; scenarios are swept from the policy's own boundary const
 disagree, a **`diverges`** fact is derived — with a two-world proof and a spec-directed fix. This is the
 one thing neither `pyright`, nor CodeQL, nor a DMN validator, nor an LLM produces: *a checkable proof
 that a piece of code implements a piece of policy — and a verified minimal edit when it doesn't* (a
-probe: [`experiments/conformance_strider.py`](../experiments/conformance_strider.py)).
+probe: [`experiments/conformance_strider.py`](https://github.com/ercasta/pystrider/blob/main/experiments/conformance_strider.py)).
 
 ```python
 from experiments.conformance_strider import Model, check_and_repair
@@ -252,7 +252,7 @@ condition by construction. Run it: `python -m experiments.conformance_strider`.
 **The value domain that makes this possible — and where it points.** Conformance needs the code to
 reason about **constants and comparisons** (`amount > 100`), which the None-analysis domain
 (`{none, object}`) cannot express. A companion probe
-([`experiments/intake_growth.py`](../experiments/intake_growth.py)) grows exactly that: it intakes a real
+([`experiments/intake_growth.py`](https://github.com/ercasta/pystrider/blob/main/experiments/intake_growth.py)) grows exactly that: it intakes a real
 Python decision function, reifies its constants + comparisons as **data**, and derives its return value
 by reasoning — pinned against Python execution itself as the oracle. That is the first step of a larger
 idea ([`docs/api_absorption_design.md`](api_absorption_design.md)): move analysis *knowledge* out
@@ -271,13 +271,13 @@ on a real dependency: `absorb(textual.Widget)` yields 73 optional-returning meth
 `returns_optional` fact drives the *unchanged* None-deref effect. On the same facts a second
 library-shaped effect falls out — **`method_not_found`**: a method call whose receiver type (given, or
 inferred through an absorbed return) does not declare the method
-([`experiments/api_absorption.py`](../experiments/api_absorption.py), `pystrider/absorb.py`).
+([`experiments/api_absorption.py`](https://github.com/ercasta/pystrider/blob/main/experiments/api_absorption.py), `pystrider/absorb.py`).
 
 ### Checking the knowledge itself: rulestrider
 
 Because rules are just more graph structure, the same
 sweep-and-derive loop turns on a **rule bank** — the KB-ingestion QA gate that makes LLM-authored policy
-trustworthy. A probe ([`experiments/rulestrider.py`](../experiments/rulestrider.py)) plants a **dropped body
+trustworthy. A probe ([`experiments/rulestrider.py`](https://github.com/ercasta/pystrider/blob/main/experiments/rulestrider.py)) plants a **dropped body
 condition** in a CNL discount policy (the loyalty rule ships requiring only `big_spender`, not `premium
 AND big_spender`), sweeps an expected-outcome suite, and catches the resulting **over-firing** on the one
 scenario that isolates it — with the `why`-trace showing the rule firing with the dropped condition
@@ -296,8 +296,8 @@ scenario that isolates it — with the `why`-trace showing the rule firing with 
 | `pystrider/transform.py` | transformation mechanism — rewrites the AST to materialize an edit as real source |
 | `grammapy/` | the in-repo **composition algebra** — `Choice` / `Accumulate` / `Scope` / `Fold` + §12 `resolve`, each soundness check a CNL rule-module over the graph (`_cnl.py`); the "compose" half of the generation loop |
 | `pystrider/demo.py` | end-to-end packaged walkthrough (`python -m pystrider.demo`) |
-| `demos/playground/` | the **playground** — four swappable CNL blocks (business / UX / library / bridge) brewed into a runnable, Pilot-verified Textual checkout UI; edit a knob and the UI re-derives ([`README`](../demos/playground/README.md)) |
-| `demos/` | five focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](../demos/README.md) |
+| `demos/playground/` | the **playground** — four swappable CNL blocks (business / UX / library / bridge) brewed into a runnable, Pilot-verified Textual checkout UI; edit a knob and the UI re-derives ([`README`](https://github.com/ercasta/pystrider/blob/main/demos/playground/README.md)) |
+| `demos/` | five focused, runnable walkthroughs (`python demos/run.py`) — see [`demos/README.md`](https://github.com/ercasta/pystrider/blob/main/demos/README.md) |
 | `experiments/` | feasibility probes. **The humble writer (patterns as rules):** `pattern_compose.py` (compose patterns by intent, repair by intent-mismatch), `compose_recover.py` / `scope_recover.py` (compose → check → recover, gated by grammapy + re-execution), `footprint_synthesis.py` / `footprint_scalability.py` / `footprint_honesty.py` (derive a fragment's write-footprint from code + know when it can't). **Understanding real code:** `understand_robustness.py` / `understand_semantic.py` / `understand_curve.py` / `understand_partial.py` / `understand_partial_curve.py` / `base_tier.py` (recognize code by aspect, over the stdlib corpus). **Scale + limit-tests:** `interaction_scaling.py` / `retarget_family.py` (the win at scale), `soundness_redteam.py` / `economic_test.py` / `composability_coverage.py` / `membrane_vagueness.py` (the thesis pushed to its edges). **Other axes:** `diagnosis.py` (crash → root cause), `conformance_strider.py` (code⟷policy across a bridge), `versioned_recovery.py` / `versioned_software.py` (a program as a build DAG), `intake_growth.py`, `api_absorption.py` (**absorb** a real library + the `method_not_found` effect), `rulestrider.py` (anomaly-check a rule bank) |
 | `tests/` | behaviour pins (284 green) across 42 files — the productized loop (`test_spike.py`, `test_session.py`, `test_effects.py`, `test_repair.py`, `test_repair_verification.py`, `test_caveats.py`, …), the grammapy combinators (`test_resolution.py`, `test_scope.py`, `test_choice.py`, `test_fold.py`, `test_disjointness.py`), the humble-writer + understanding probes (`test_pattern_compose.py`, `test_footprint*.py`, `test_compose_recover.py`, `test_understand_*.py`, `test_base_tier.py`), the scale + limit-tests (`test_interaction_scaling.py`, `test_retarget_family.py`, `test_membrane_vagueness.py`, …), and the KB pipeline (`test_absorb.py`, `test_method_not_found.py`, `test_rulestrider.py`) |
 | `docs/` | the strategic **roadmap** (`roadmap.md`), the design (`code_reasoning_design.md`), the **understanding findings** (`understanding_findings.md` — the base/concept/intent tiers + limit-tests), the **oracle contracts** (`oracle_contracts.md` — what each verdict proves), the API-absorption direction (`api_absorption_design.md`) |

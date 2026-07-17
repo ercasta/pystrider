@@ -1,0 +1,84 @@
+name: Build & deploy the docs site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "requirements-docs.txt"
+      - "demos/playground/**"
+      - "pystrider/**"
+      - "grammapy/**"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+# Allow the workflow to publish to GitHub Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; don't cancel an in-progress publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pystrider
+        uses: actions/checkout@v4
+
+      # ugm is a separate public repo; the in-browser engine needs its wheel, built from source.
+      - name: Checkout ugm
+        uses: actions/checkout@v4
+        with:
+          repository: ercasta/Universal-Graph-Machine
+          path: ugm-src
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build & docs tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m pip install -r requirements-docs.txt
+
+      - name: Build the ugm + pystrider wheels (for the in-browser Pyodide engine)
+        run: |
+          mkdir -p docs/wheels
+          python -m build --wheel --outdir docs/wheels ./ugm-src
+          python -m build --wheel --outdir docs/wheels .
+          echo "Built wheels:"
+          ls -l docs/wheels
+          python -c "import json,glob,os; print(json.dumps([os.path.basename(w) for w in glob.glob('docs/wheels/*.whl')]))" > docs/wheels/manifest.json
+          cat docs/wheels/manifest.json
+
+      - name: Stage the browser Python sources
+        run: |
+          mkdir -p docs/play
+          cp demos/playground/brew.py demos/playground/web_api.py docs/play/
+
+      - name: Build the MkDocs site
+        run: mkdocs build --site-dir site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

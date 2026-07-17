@@ -1,0 +1,93 @@
+site_name: pystrider
+site_description: >
+  Trustworthy code generation and checking by a symbolic core plus execution — with a language model
+  nowhere in the trust path.
+site_url: https://ercasta.github.io/pystrider/
+repo_url: https://github.com/ercasta/pystrider
+repo_name: ercasta/pystrider
+copyright: >
+  Every line derived by reasoning, trusted by execution ·
+  <a href="https://github.com/ercasta/pystrider">View the project on GitHub</a>
+
+docs_dir: docs
+
+# Simple, deterministic paths (generate.html, wheels/, play/) so the live pages can reference the
+# Pyodide wheels and the .py sources with plain relative URLs.
+use_directory_urls: false
+
+# The dated historical logs live in docs/ for the repo's own record, but are not part of the
+# published site (which presents only the current generation of the system).
+exclude_docs: |
+  critique.md
+  spike_findings.md
+  implementation_plan.md
+  grammapy/
+
+# Built for their cross-references, but kept out of the top nav.
+not_in_nav: |
+  api_absorption_design.md
+  code_reasoning_design.md
+  codegen_understand.md
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - toc.follow
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/pystrider_play.js
+
+nav:
+  - Home: index.md
+  - The case: the_case.md
+  - Try it live:
+      - "Generate — CNL → code": generate.md
+      - "Understand — code → aspects": understand.md
+      - Playground (how it works): playground.md
+  - Deep dive: deep_dive.md
+  - Understanding findings: understanding_findings.md
+  - Reference:
+      - Roadmap: roadmap.md
+      - Oracle contracts: oracle_contracts.md

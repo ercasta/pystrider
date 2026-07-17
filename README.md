@@ -5,6 +5,22 @@ bridge them, and brew a _working, verified_ UI.** No wizards, no hardcoded engin
 line is derived by reasoning on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine),
 and trusted because pystrider _runs_ what it built and watches it behave.
 
+## The thesis
+
+Most software is not novel algorithms — it is **orchestration of known operations plus policy-shaped
+decisions**. For that class, this project makes a specific bet:
+
+> Trustworthy code can be **generated and checked by a symbolic core plus execution, with a language model
+> nowhere in the trust path.** A model's role reduces to optional, gated work at the edges — translate
+> English into CNL, propose a default for an open decision, prompt for completeness — while everything that
+> carries the guarantee is a rule-derivation or a run of the code itself.
+
+The claim is **scoped** (it is not "LLMs are useless for code," nor "any Python can be generated this way"),
+and it has been **pushed to its limits**: four adversarial limit-tests — soundness, economics, coverage, and
+the vagueness redoubt — and two scale demonstrations, with every boundary where it breaks **named, not
+hidden**. The symbolic core reaches where it can prove, and where it can't it **abstains visibly** rather
+than guessing. The full argument, with the evidence tier by tier, is in **[docs/the_case.md](docs/the_case.md)**.
+
 ## What can pystrider do? Well, many things.
 
 Here's the headline one. You have knowledge scattered across three worlds that normally never talk to
@@ -64,7 +80,7 @@ python demos/playground/playground.py          # reason -> compose -> emit -> DR
 ```
 
 pystrider loads the four blocks, reasons across them (grounding the spend-vs-threshold comparison,
-then asking `who admitted_for cart`), composes the derived features with [grammapy](docs/grammapy_convergence.md)'s
+then asking `who admitted_for cart`), composes the derived features with [grammapy](docs/deep_dive.md#layout)'s
 proven combinators, and **emits a real Textual app**:
 
 ```python

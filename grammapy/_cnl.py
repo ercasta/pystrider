@@ -3,7 +3,7 @@
 grammapy composes *deviations-from-default*, and each combinator carries a soundness check. Those
 checks are Datalog-shaped — joins, negation, transitive closure, distinctness — so they are authored
 as **CNL rule-modules over a ugm graph** rather than hand-written Python. This is the "collapse into
-CNL" the bridges-vs-channels analysis resolved to (docs/grammapy_convergence.md): the composition half
+CNL" the bridges-vs-channels analysis resolved to: the composition half
 reasons in the *same* engine as pystrider's analysis half, and the "type" of a channel is just more
 facts. grammapy depends on `ugm` — as intended since day one.
 

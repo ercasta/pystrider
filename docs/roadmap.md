@@ -35,7 +35,7 @@ KB-coverage identity is a strength, not a ceiling:
 - *Generating:* a succinct CNL spec + a domain KB derive the detailed spec (obligations fire,
   bridges admit realizations, defaults apply unless overridden, §12 resolves the cross-cutting
   decisions) and then the code — deterministically, with a proof bundle
-  (`app_synthesis` → `generator_frontend`, built in probe form).
+  (demonstrated by the playground: reason → compose → emit → drive).
 - *Checking:* a machine-checkable proof that a piece of code implements a piece of policy — and a
   verified minimal edit when it doesn't (`conformance_strider`, built).
 
@@ -59,7 +59,7 @@ LLM-fills-a-declared-hole mode (Phase 5) or a human plugs in.
    fills them; each fill is gated individually (footprint honesty by execution, drive oracle).
    — Phase 5.
 3. **Mode 3 — free drafting.** An LLM drafts the whole design; the gates dispose
-   (`generator_frontend`'s shape). — Phase 5.
+   (an untrusted proposer behind trusted disposers). — Phase 5.
 
 **Held lines (throughout, non-negotiable):**
 
@@ -81,10 +81,9 @@ LLM-fills-a-declared-hole mode (Phase 5) or a human plugs in.
 ## Phase 0 — Harden the trust core *(weeks; do first)*
 
 The entire pitch is "every step is a trusted derivation or a trusted check." The disposers must be
-beyond reproach before anything is built on them, and today they are not: the verification of the
-generator front-end found the Pilot oracle is safety-only (`ok = ¬irreversible ∨ ¬performed ∨
-gated`, `app_synthesis.py`), GATE 4 is currently unreachable-as-rejector, and Accumulate certifies
-the *drafted* button set while emission ships a *different* one.
+beyond reproach before anything is built on them. An early finding: a drive oracle that is safety-only
+(`ok = ¬irreversible ∨ ¬performed ∨ gated`) certifies a dead app as "trustworthy" unless liveness is a
+separate, stated contract.
 
 **Work:**
 - State each oracle's contract in `docs/` — which trace properties a passing drive proves, which
@@ -153,8 +152,8 @@ rulestrider here, as KB QA — not later, as a demo.
 building blocks — atoms, recipes, scaffolds — are Python objects with declared footprints, living
 in probe modules. Make them **shippable data**:
 - A KB representation for fragments: CNL facts naming each fragment, its `provides`, its declared
-  footprint, and its holes; bodies stored as AST/source. (`emit.cnl` already shows the shape for
-  realization rules; grammapy's footprint declarations are the soundness metadata.)
+  footprint, and its holes; bodies stored as AST/source. (grammapy's footprint declarations are the
+  soundness metadata; `pystrider.footprint_of` derives the footprint from the fragment's own code.)
 - **Spec intake in CNL**: retire the `Spec` dataclass as the public face — the conformance side
   already takes policy as CNL facts, and the generation spec must enter the same way, so "succinct
   spec" means a few CNL sentences, not a Python constructor call.
@@ -177,8 +176,8 @@ untouched); a spec written as CNL sentences drives the existing loop.
 ## Phase 3 — The generation wedge: mode 1, pure derivational spec→code
 
 The first wedge, and the direct continuation of what just landed: the grammapy convergence closed
-the loop reason → resolve → compose → emit → drive, and `app_synthesis` already demonstrates the
-two-stage expansion (succinct spec + KB → detailed spec → code). This phase turns that probe into
+the loop reason → compose → emit → drive, and the playground already demonstrates the two-stage
+expansion (a KB → derived features → a runnable, driven app). This phase turns that demo into
 the product. No LLM at runtime: expansion is derivation, emission is composition, and the output
 carries the proof bundle end to end. This ordering is deliberate — mode 1 is the *lowest-variance*
 generation mode, so it exercises the KB pipeline and the gates with no untrusted proposer in the
@@ -253,7 +252,7 @@ atom body or an expression the KB declares but does not supply. Each fill is gat
 footprint honesty by execution, then the composed drive. libcst becomes load-bearing here
 (round-tripping user-owned fragment bodies), as the convergence plan already names.
 
-**Mode 3 — free drafting.** The `generator_frontend` seam (`Generator = Callable[[Spec], Draft]`)
+**Mode 3 — free drafting.** A generator seam (`Generator = Callable[[Spec], Draft]`)
 with a real model drafting whole deviation specs; gates dispose; repair back-edge on rejection.
 The shipped artifact is **code plus its proof bundle**: derived obligations, composition
 admission, drive trace — the differentiator over raw LLM output, packaged as such.
