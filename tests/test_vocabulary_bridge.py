@@ -21,8 +21,10 @@ def test_the_same_pattern_answers_over_the_read_side_of_the_generated_code():
     # the round trip: spec -> minted structure -> real Python -> the SHIPPED analyzer -> same question.
     src = emit_source(lower_spec())
     r = read_back(src)
-    assert len(of_kind(r, "call")) == 2               # intake's own vocabulary, unmodified
-    assert len(greet_sites(r)) == 2                   # reached via BRIDGE_R
+    # three call nodes now: the two `greet(...)` calls plus the trailing bare `print(msg)`, which
+    # intake models since the `expr_stmt` coverage work. Its own vocabulary, unmodified by the bridge.
+    assert len(of_kind(r, "call")) == 3
+    assert len(greet_sites(r)) == 2                   # ...but only two are greet sites, via BRIDGE_R
 
 
 def test_one_rule_text_two_vocabularies_same_answer():
@@ -49,14 +51,22 @@ def test_the_pattern_itself_mentions_neither_vocabulary():
 
 
 def test_a_bridge_cannot_close_a_COVERAGE_gap():
-    # intake deliberately does not model a bare expression statement — it emits an audited
-    # `not_modelled` marker. No bridge can invent a call node that was never created.
-    src = emit_source(lower_spec(), trailing_bare_call=True)
-    assert "print(msg)" in src
+    # A bridge reconciles NAMING; it cannot invent a node the reader never created. Intake models
+    # assignments, returns, ifs, whiles and (since the expr_stmt work) bare calls — but NOT an
+    # aug-assign, which still surfaces as an audited `not_modelled` marker. No bridge reaches it.
+    src = "def f(x):\n    total = 0\n    total += x\n    return total"
     assert len(not_modelled_of(src)) == 1             # the gap is NAMED, not silent
     r = read_back(src)
-    # the two modelled calls bridge; the bare call contributes nothing, so the count is unchanged.
-    assert len(greet_sites(r)) == 2
+    assert greet_sites(r) == []                       # nothing to bridge: no call node exists
+
+    # the two kinds of gap, and why keeping them apart matters:
+    #   NAMING   -> a bridge fixes it     (the authors disagree on what to CALL a thing)
+    #   COVERAGE -> only the author can   (the authors disagree on what EXISTS)
+    # Closing the bare-call gap took an intake change (`expr_stmt`), not a bridge — which is exactly
+    # the prediction this test family made.
+    covered = read_back("def f(x):\n    y = greet(x)\n    print(y)\n    return y")
+    assert len(greet_sites(covered)) == 1             # the assigned call bridges
+    assert len(of_kind(covered, "call")) == 2         # ...and the BARE `print(y)` is now visible too
 
 
 def test_without_a_bridge_the_pattern_answers_nothing():

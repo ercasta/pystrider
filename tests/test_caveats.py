@@ -1,8 +1,10 @@
 """Pins for UNKNOWN-surfacing — "don't build on silence" (docs/critique.md weakness #5).
 
 Intake now emits a visible `not_modelled` marker for any statement kind it cannot thread (aug-assign,
-attribute/subscript store, tuple unpack, bare call, for/with, ...), instead of silently framing a
-stale value forward. `caveats()` surfaces them, and `repair_all`'s `clean` verdict is QUALIFIED by
+attribute/subscript store, tuple unpack, for/with, ...), instead of silently framing a stale value
+forward. NB a bare CALL statement (`log(x)`) used to be in that list and is now MODELLED as an
+`expr_stmt` — closing that coverage gap is what lets a structural rule see a generated program built
+out of bare calls (`docs/vocabulary_bridge.md`). `caveats()` surfaces them, and `repair_all`'s `clean` verdict is QUALIFIED by
 them — so "clean" means "checked and clear", not "nothing derived". A caveat is not an outcome (the
 code may be fine); it is an honest "the analysis did not prove this part".
 """
@@ -15,7 +17,7 @@ UNMODELLED_CASES = {
     "aug_assign":   "def f(x):\n    x += 1\n    return x",
     "attr_store":   "def f(x):\n    x.cache = 1\n    return x",
     "tuple_unpack": "def f(x):\n    a, b = x\n    return a",
-    "bare_call":    "def f(x):\n    log(x)\n    return x",
+    "for_loop":     "def f(x):\n    for i in x:\n        pass\n    return x",
 }
 
 
@@ -40,21 +42,21 @@ def test_modelled_function_has_no_caveats():
 def test_not_modelled_marker_is_inert_for_analysis():
     """The marker is *visible* but semantically inert: a real outcome elsewhere is still detected, and
     the caveat is reported ALONGSIDE it — the marker does not suppress or invent outcomes."""
-    src = "def f(x):\n    log(x)\n    return x.value"        # bare call (unmodelled) + a real deref
+    src = "def f(x):\n    x += 1\n    return x.value"        # aug-assign (unmodelled) + a real deref
     ik = intake_function(src)
     outcomes = analyze(ik, {"x": "none"})
     assert [o.label for o in outcomes] == ["x.value"]         # the real AttributeError still fires
-    assert [c.label for c in caveats(ik)] == ["log(x)"]       # and the silence is surfaced too
+    assert [c.label for c in caveats(ik)] == ["x += 1"]       # and the silence is surfaced too
 
 
 def test_repair_all_qualifies_clean_with_caveats():
     """The load-bearing fix: a function that is outcome-free but contains an unmodelled statement is
     reported as clean MODULO that statement — `fully_modelled` is False and the summary says so, so a
     'clean' verdict is never mistaken for a proof over the whole function."""
-    src = "def f(x):\n    setup(x)\n    return x"             # no outcome under x=object, but setup() is a gap
+    src = "def f(x):\n    x += 1\n    return x"                # no outcome under x=object, but += is a gap
     plan = repair_all(intake_function(src), {"x": "object"})
     assert plan.clean and not plan.fully_modelled
-    assert len(plan.caveats) == 1 and plan.caveats[0].label == "setup(x)"
+    assert len(plan.caveats) == 1 and plan.caveats[0].label == "x += 1"
     joined = "\n".join(plan.summary())
     assert "modulo 1 unmodelled statement" in joined
 

@@ -266,6 +266,22 @@ class _Walker:
             return self._if(node, state)
         if isinstance(node, ast.While):
             return self._while(node, state)
+        if isinstance(node, ast.Expr):
+            # An expression STATEMENT (`print(x)`, `log(x)`): it binds no name, so the program point
+            # does not advance and no cell is written — but the EXPRESSION is modelled, so its calls,
+            # attribute accesses and reads become ordinary nodes. Previously this fell through to
+            # `not_modelled`, which made a whole class of real program (anything built out of bare
+            # calls) invisible to every downstream question: a generated `print(greet(name))` produced
+            # zero `call` nodes, so no structural rule could see it at all. Modelling the expression is
+            # the vocabulary author's half of a COVERAGE gap that no bridge can close
+            # (`docs/vocabulary_bridge.md`).
+            eid = self.expr(node.value, state)
+            sid = self._scope(self._fresh("s"))
+            self._emit(sid, "is_a", "expr_stmt")
+            self._emit(sid, "evaluates", eid)
+            self.line_of[sid] = node.lineno
+            self.label_of[sid] = self._snippet(node)
+            return state                                          # binds nothing -> same program point
         # an unmodelled statement kind (aug-assign, attribute/subscript store, tuple unpack, bare
         # call, for/with, ...): we cannot thread its effect on state. Emit a VISIBLE `not_modelled`
         # marker so a downstream `clean`/`verified` verdict can say "clear MODULO this", instead of

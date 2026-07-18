@@ -54,6 +54,9 @@ def build(facts: "list[tuple[str, str, str]]", rules: str) -> AttrGraph:
 
     for s, p, o in facts:
         g.add_relation(node(s), p, node(o))
+    # `body_first` negates over the DERIVED `stmt_before`, so this bank NEEDS stratified scheduling —
+    # a NAC decided before its producer fires is permanently wrong on a monotone graph. `run_bank`
+    # stratifies by default since ugm feedback #18; before that this had to be scheduled by hand.
     h.run_bank(g, h.load_machine_rules(rules))
     return g
 
@@ -129,9 +132,14 @@ nesting_rules = (
     "?c1 stmt_before ?c2 when ?c1 for_step ?a and ?c2 for_step ?b and ?a before ?b"
 )
 
-# "first in THIS body" = no body-SIBLING precedes me. Both `not` clauses fold into ONE conjunctive NAC
-# (ugm's documented single-NAC limit), which is exactly the scoping this needs: a statement in ANOTHER
-# scope that happens to precede me must not disqualify me.
+# "first in THIS body" = no body-SIBLING precedes me. The two `not` clauses share the free `?x`, so
+# they form ONE conjunctive NAC — the existential this needs: a statement in ANOTHER scope that happens
+# to precede me must not disqualify me.
+#
+# (An earlier version of this comment called that "ugm's documented single-NAC limit". That was wrong,
+# and ugm feedback #16 corrected it: NAC atoms are partitioned into independent groups by their shared
+# NAC-local free variables, so BOTH forms are expressible — atoms sharing a free var are one joint
+# existential, atoms sharing none each block alone.)
 head_rules = nesting_rules + (
     "\n?c body_first ?l when ?l body_has ?c and not ?x stmt_before ?c and not ?l body_has ?x")
 

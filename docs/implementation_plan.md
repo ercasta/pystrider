@@ -190,6 +190,66 @@ Two mechanisms this forced, both worth keeping:
   it, `repair_shout` fired after `repair_greet` had already satisfied the spec and turned a PASSING build
   into a failing one (`hello_bob`→`HELLO_BOB`) — caught by running the happy path, not by a test.
 
+**SLICE 6 DONE (2026-07-18) — MULTI-STATEMENT + the judgement moved INTO THE SUBSTRATE.** Prompted by the
+user re-stating the constraint ("leverage the substrate, not logic in Python — the substrate is what makes
+everything composable"). Audit found the judgements were the Python holdouts: `check` compared
+`stdout == expected()` and `Build.refusal` picked its kind with an `if`. Both are now rules.
+`check` MINTS one `observation` per output line and forms NO opinion; `VERDICT` derives `unmet_at` and
+`satisfied`; `REFUSAL` derives `uncovered_intent` / `refused_uncovered` / `refused_unverified`; Python
+only reads which flag holds. **ATTRIBUTION** is the multi-statement payload: the default spec now has TWO
+lines, the second ALREADY CORRECT, and a recovery rule fires only on the statement whose own INDEX is
+unmet — so repairing line 1 provably does not rewrite line 2 (pinned structurally: only the unmet
+statement gains `arg_v2`). The UNMET condition is authored ONCE and reused by text composition in both
+recovery rules and the verdict, so there is one definition of "unmet" in the system.
+
+**TWO REAL BUGS FOUND, both now pinned:**
+- **`run_bank` does not stratify** (ugm feedback **#18**). A rule whose `not` ranges over a predicate the
+  SAME bank derives can be decided before that rule fires — and on a monotone graph the wrong answer is
+  PERMANENT. `satisfied` (negation over derived `unmet_at`) fired in the same pass and reported a
+  demonstrably wrong program as **OK**. Cure is `h.stratify` (exists, documented, just not automatic);
+  all our banks now run through `run_stratified`. **Standing rule: any bank with negation over a derived
+  fact must be stratified.** `experiments/ast_representation.py` had the same latent exposure
+  (`body_first` negates over derived `stmt_before`) and was fixed too.
+- **Provenance must be captured FORWARD for self-extinguishing rules** (ugm **#19**, a note not a bug). A
+  repair rule fires *because* a line is unmet and its own effect makes it met, so the demand chain can
+  never re-derive it and `why` collapses to `(given)`. `run_bank(..., provenance=True)` at firing time
+  gives a complete trace back to the original spec fact — with the conjunctive NAC rendered jointly
+  (`assumed not: … (together)`, the #16 explanation fix). **Any rule whose effect can falsify its own
+  body needs forward provenance.**
+
+Also corrected a stale comment in `ast_representation.py` that repeated the wrong "single-NAC limit"
+claim (#16 established NAC atoms partition into independent groups by shared NAC-local free vars).
+
+**SLICE 7 DONE (2026-07-18) — TWO ORACLES: the read half wired into the write half.** `build_procedure`
+18 pins, suite 342. The loop now also READS the code it wrote. `INSPECTION` = the BRIDGE
+(`?c invokes ?f when ?c is_a call and ?c calls_func ?f`) + a requirement rule
+(`?p structural_unmet ?f when ?p requires_call ?f and not ?c invokes ?f`); `SATISFIED` ANDs the two
+oracles **as a rule**, not a Python `and`. **The demonstration:** a program that prints the literal
+`'hello_bob'` satisfies the black-box output oracle (`prints_ok: True`) and is caught by the structural
+one (`structure_ok: False`) — right output, wrong reason. `pystrider.intake` parses the GENERATED source
+in its own vocabulary and the bridge lifts it into the neutral one the requirement is written against, so
+the two halves meet on one graph with **no shared predicate name** (pinned).
+
+**INTAKE COVERAGE GROWN — `expr_stmt`.** Wiring this exposed the concrete form of the integration risk:
+our generated programs are built out of BARE CALLS (`print(greet(name))`), which intake did not model —
+2 `not_modelled`, **0 call nodes**, so the structural oracle was blind. Per `vocabulary_bridge.md`'s own
+conclusion (a COVERAGE gap is the vocabulary author's job; no bridge can close it), `intake.stmt` now
+models `ast.Expr`: the expression is visited (its calls/attributes/reads become ordinary nodes) and the
+program point does not advance, since it binds nothing. This is the bridge doc's prediction being paid
+off in the direction it predicted. Pins re-pointed at gaps that are still real (aug-assign, for-loop);
+`test_a_bridge_cannot_close_a_COVERAGE_gap` now uses an aug-assign and additionally asserts the bare
+call IS visible.
+
+**ugm #18 FIXED — and it uncovered the opposite bug in `stratify` itself.** `run_bank` now stratifies by
+default (our ask). Getting there broke CNL recognition first, because `stratify` ranked rules by NEGATED
+dependencies ONLY — a positive PRODUCER could be scheduled after its positive CONSUMER. So the two
+forward entry points were unsound in opposite directions. `stratify` now builds the full dependency graph
+(+0 positive edges, +1 negated), with a deliberate fallback to the historical NAC-only ordering for banks
+containing a cycle through a negated edge (real ugm banks have them; newly rejecting them would be a
+regression dressed as rigour). Our `run_stratified` is now a thin wrapper; the hazard pin was re-pointed
+at `run_bank(..., stratified=False)`, which still shows the old behaviour and so proves the scheduling
+is what buys correctness.
+
 **Framing (user, 2026-07-18):** humans make mistakes and apply recovery rules. Aiming for PERFECT rules
 that generate any program is infeasible; a limited set of rules that can **navigate** — do something,
 check it, recover / course-correct — reaches a far larger share of the solution space. Build for the
