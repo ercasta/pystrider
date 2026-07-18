@@ -33,11 +33,13 @@ by ugm's real planner, with the navigate loop (do → check → recover) as the 
   read as a rule BODY to recognize and as a rule HEAD to construct. Two entries of DIFFERENT shape
   (`ITERATION`, a container of statements; `APPLICATION`, an expression with an operand), each driving
   the spine's construction AND its structural oracle. Its module docstring carries the authoring rules.
+- **`experiments/reach_curve.py`** (+5) — the coverage claim MEASURED over a 36-spec grid: predicted
+  reach vs actual reach, and zero silent-wrong. Run it: `python -m experiments.reach_curve`.
 - **`experiments/bidirectional_pattern.py`** (+8) — ONE authored pattern text that both RECOGNIZES an
   iteration in hand-written Python and WRITES one from an intent. The humble goal's load-bearing claim,
   isolated and perturbation-tested. Run it: `python -m experiments.bidirectional_pattern`.
 
-**Suite: 366 green** (`./.venv/Scripts/python.exe -m pytest -q`, ~5.5 min). Playground:
+**Suite: 371 green** (`./.venv/Scripts/python.exe -m pytest -q`, ~5.5 min). Playground:
 `python demos/playground/playground.py`. Site: `python -m mkdocs build`.
 
 ### What the spine currently proves
@@ -50,9 +52,20 @@ repair shapes — rewrite a payload, wrap an existing repair, ADD a statement �
 that actually produced a line so fixing line 1 provably does not rewrite line 2, ordered cheapest-first by
 staged `cost` knowledge, and composing to reach specs no single rule covers. Programs NEST: a rule mints a
 `for`, another nests statements in its body, and the unchanged recovery rules repair inside that body.
-Refusal is a first-class outcome (`uncovered` = missing
-knowledge, names what to author; `unverified` = insufficient knowledge), and a refused build ships
+
+**The construction comes from a shared PATTERN LIBRARY** (`pystrider/patterns.py`), not from rules local
+to the pipeline: the same description that lowering uses as a rule HEAD to build a construct, the
+structural oracle uses as a rule BODY to confirm — by READING the emitted source — that it is really
+there. That is the humble goal's central clause, made structural.
+
+Refusal is a first-class outcome with THREE kinds, because each sends you somewhere different:
+`uncovered` (missing knowledge — names the intent to author), `unverified` (insufficient knowledge — the
+world disagreed), and `unstructured` (the output was RIGHT and the code is wrong). A refused build ships
 NOTHING. `why` answers over generated code, citing the failed execution as the cause of the change.
+
+**And the reach is measured, not asserted** (`reach_curve.py`): over a 36-spec grid whose reachability is
+predicted IN ADVANCE from the rule set, 21/21 in-closure specs shipped, 15/15 out-of-closure refused by
+name, and ZERO shipped silently wrong (each shipped program re-executed by the probe, not trusted).
 
 ### STANDING LESSONS — hard-won, do not re-derive
 
@@ -65,8 +78,10 @@ NOTHING. `why` answers over generated code, citing the failed execution as the c
    of the head does nothing; it has to leave the rule). Verified: `n? … when ?x is_a thing and ?x tag ?y`
    mints one node PER TAG even though `?y` appears nowhere in the head. ugm's own
    `_find_skolem_witness` states it correctly — "identified by how it relates to the LHS match"; our
-   distillation had drifted. Filed as ugm **#21** (ask: report a mint head's key at load time — this
-   never errors and the symptom appears far from the cause).
+   distillation had drifted. Raised as ugm **#21** (is a mint head's key meant to be discoverable at
+   authoring time?). NB the first draft of #21 also claimed a body-only key variable is "almost always
+   accidental" — **retracted**: ugm have 24 correct uses of exactly that shape. The shape is normal and
+   merely invisible; do not treat it as a smell.
    - Ask **"one per WHAT?"** and make the body match exactly that. Everything else attaches in a second
      rule with the node LHS-bound, where it mints nothing.
    - Fan-out is often RIGHT (`ast_representation` E3 mints one call per step deliberately). The lesson
@@ -102,14 +117,25 @@ NOTHING. `why` answers over generated code, citing the failed execution as the c
    inferred from position until loops made position meaningless; emission and the run each already knew
    their half, so the honest fix was to record both and join them with one rule. Ask what the tool
    already knows before authoring a derivation.
+10. **When a consumer both WRITES structure and READS it back, mark the origin.** Both kinds of neutral
+    fact land on one graph, so a requirement checked without `from_code` is satisfied by the structure
+    the writer just minted — it verifies its own intention instead of the artifact, and passes. Standing
+    trap for any bidirectional vocabulary.
+11. **File findings to ugm as HYPOTHESES, not as facts** (their explicit request, 2026-07-18 — see the
+    `diagnose-as-hypothesis` memory). Keep the full analysis: four of our confident diagnoses were
+    INVERTED and each still found a real bug, so the analysis is load-bearing even when wrong. What
+    costs them time is a causal claim stated as settled, because they then start from our model instead
+    of testing it. Use the **#20 format** ("we may be holding it wrong… is this intended? are we missing
+    an authoring step?"). Root cause of the inversions: we reason from ONE of ugm's two engines
+    (`run_bank` forward vs `chain_sip` demand), which have a parity contract we cannot see from here.
 
 ### NEXT (recommended order)
 
-1. **Measure REACH** — the user's framing is that a limited rule set navigates a large solution space;
-   that is a coverage claim and we have never measured it. A curve over varied specs (how many build,
-   how many refuse, and which kind of refusal), mirroring what `understand_curve.py` did for the reading
-   half. Now unblocked by loops, but still wants a few more expansion rules first — with two expansion
-   rules the number says little.
+1. **Grow the grid's AXES, now that the harness exists.** `reach_curve.py` measures predicted-vs-actual
+   reach honestly, but its grid varies transforms/shape/length/structure over a rule set with two
+   expansion rules. The measurement gets interesting when the SPEC space is richer than the rule set in
+   ways we did not design — more expansion rules, and specs whose reachability is genuinely unobvious
+   in advance (today `_reachable` is easy to state, which is a sign the space is still small).
 2. **More nesting shapes.** `if` is the obvious next one, and it is a different problem from `for`: a
    branch means a statement can legitimately produce NO output on a given run, so "never observed to
    print what it wants" stops implying "wrong". Conditionals are where the current unmet condition will
@@ -124,14 +150,23 @@ NOTHING. `why` answers over generated code, citing the failed execution as the c
 - **`pystrider/footprint.py::_const_bindings` is a Python algorithm** (a constant-propagation pass) —
   the anti-pattern the correction names. It wants re-authoring as CNL rules over intake facts, or
   deleting with the soundness trail it serves.
-- `intake` still does not model: aug-assign, attribute/subscript store, tuple unpack, for/with. Each is
-  an audited `not_modelled` marker, and that list IS the coverage worklist (bare calls were closed this
-  session for exactly this reason).
+- `intake` still does not model: aug-assign, attribute/subscript store, tuple unpack, `with`, and a
+  `for` over a non-Name target. Each is an audited `not_modelled` marker, and that list IS the coverage
+  worklist. Two kinds GRADUATED off it, both because a pattern needed to see them and no bridge can
+  close a coverage gap: bare calls (`expr_stmt`) and `for` over a plain name (`for_loop`).
+- `judge_source` (judging a FOREIGN program) attributes output by position — the k-th printing statement
+  realizes the k-th step. Declared in its docstring and used nowhere in the build loop, but it means
+  that helper cannot judge a foreign program containing a loop.
+- `APPLICATION` matches an application to a NAMED value, so `f(g(x))` is not recognized. A coverage gap
+  in the PATTERN, not a bridge.
 
-The durable record is the **memory files** (`build-procedure-spine`, `vocabulary-bridges`,
-`ast-minting-unblocked`, `humble-goal-course-correction`, `pattern-writer`) and, for the superseded
-line, **[`the_case.md`](the_case.md)** / **[`deep_dive.md`](deep_dive.md)** / **[`roadmap.md`](roadmap.md)**.
-ugm feedback + their answers live in `../ugm/docs/feedback_from_pystrider.md` (we are at item #20).
+The durable record is the **memory files** (`build-procedure-spine`, `bidirectional-pattern`,
+`reach-measured`, `vocabulary-bridges`, `ast-minting-unblocked`, `humble-goal-course-correction`,
+`diagnose-as-hypothesis`, `pattern-writer`) and, for the superseded line,
+**[`the_case.md`](the_case.md)** / **[`deep_dive.md`](deep_dive.md)** / **[`roadmap.md`](roadmap.md)**.
+ugm feedback + their answers live in `../ugm/docs/feedback_from_pystrider.md` (we are at item **#21**,
+rewritten as a question after their note on how we file — see STANDING LESSON 11). **That file uses LF
+line endings; write it with `write_bytes`, not `write_text`, or you produce a 2000-line phantom diff.**
 
 ---
 
@@ -218,7 +253,9 @@ Two standing constraints that override the candidate list below:
 
 ## The 2026-07-18 arc — slice log (the record of how the spine was built)
 
-Ten slices, newest last. Read for *why* something is the way it is; the STANDING LESSONS at the top of
+Fifteen slices. **Ordering warning: 1–9 read oldest-first, then 10–15 read NEWEST-FIRST** (slice 15
+immediately after 9a, slice 10 last) — an artifact of each session prepending. Slices 10–15 are the
+second session: loops end-to-end, the pattern library, and the reach measurement. Read for *why* something is the way it is; the STANDING LESSONS at the top of
 this file are the distilled version, and each probe's module docstring carries its own argument. Several
 entries record a mistake and its correction — those are the valuable ones.
 
@@ -425,6 +462,34 @@ default build now runs **two** repairs instead of three.
 
 Known limit, pinned upstream: with no cost staged, every untried producer still commits — the bank has
 no basis for a tiebreak and a total-order `rank` is where one belongs.
+
+**SLICE 15 DONE (2026-07-18) — REACH MEASURED.** `experiments/reach_curve.py` + 5 pins, suite 371.
+The coverage claim ("a limited rule set navigates a large space") had never been measured; every slice
+had demonstrated it on specs chosen to demonstrate it.
+
+**The method matters more than the number.** A raw pass rate over a grid we designed would only report
+how many unreachable specs we chose to include. So each of the 36 cases is labelled reachable-or-not
+IN ADVANCE from the rule set alone (`_reachable`), making each run a prediction falsifiable in both
+directions. Result over the full grid:
+
+    inside the closure : 21/21 shipped
+    outside it         : 15/15 refused by name
+    SILENT WRONG       : 0
+
+Successes by repairs that CHANGED the program: 5 needed none, 8 one, 7 two, 1 three — so composition
+is doing real work, not decorating a lookup table. Repairs ATTEMPTED peaked at 3; the gap between
+attempted and applied IS the navigate cost, and it is paid on successes too (counting attempts as
+"composition" would have overstated the claim, which the first draft did).
+
+**Two findings worth keeping.** (1) The SHAPE axis costs no reach — every reachable transform stayed
+reachable inside a `for` body, repaired by the same rules, which is the empirical form of "the pattern
+did not need loop-aware repairs". (2) `shout_only` is the sharp case: `shout` EXISTS as a repair and
+still cannot uppercase a raw value, because it only ever wraps an already-greeted payload. **Reach is
+the closure of what the rules COMPOSE to, not the set of functions lying around** — the distinction
+that makes this a measurement rather than an inventory.
+
+Every shipped program is re-executed BY THE PROBE and checked against its spec independently of the
+loop's own verdict: a probe that measured success using the mechanism under test would measure nothing.
 
 **SLICE 14 DONE (2026-07-18) — A SECOND PATTERN, OF A DIFFERENT SHAPE.** 34 pins, suite 366. The
 library had one entry, so "library" was still a promise: `ITERATION` might simply have been fitted to
