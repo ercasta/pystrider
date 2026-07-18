@@ -22,7 +22,12 @@ code structure. This probe measures how far that goes.
 
 ## Findings
 
-### F1 — A skolem is a function of ALL its head-anchored endpoints (the trap)
+### F1 — A skolem is keyed on the WHOLE MATCH (the trap)
+
+> **CORRECTED 2026-07-18.** This finding originally said "a function of all its head-anchored
+> endpoints". That is wrong, and the error was load-bearing: a variable appearing ONLY in the body
+> multiplies the mint just as much, so "move it out of the head" is not a fix. Verified directly and
+> filed as ugm #21. See STANDING LESSON 2 in `implementation_plan.md`.
 
 `_find_skolem_witness` re-identifies a minted node by **every** defining relation its head asserts
 against the firing's bound arguments, intersected. So a head that both mints a parent and attaches a

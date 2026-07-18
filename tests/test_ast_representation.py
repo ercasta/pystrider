@@ -2,7 +2,8 @@
 
 These hold the facts a spec->AST->code pipeline will be built on, so a ugm change that moves any of
 them surfaces here rather than in a half-built pipeline: (1) skolem identity is a function of ALL
-head-anchored endpoints (the trap); (2) the mint-then-attach idiom yields one parent with N children;
+the whole MATCH, head or body (the trap); (2) the mint-then-attach idiom yields one parent with N
+children;
 (3) minted nodes are name-degenerate, so identity is the node id; (4) order is a derived relation;
 (5) nesting is the same attach idiom; (6) the sequence head is rule-expressible via a scoped NAC; and
 (7) revision under a monotone graph works by minting v2 and moving a `current` pointer.

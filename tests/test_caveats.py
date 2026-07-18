@@ -1,10 +1,13 @@
 """Pins for UNKNOWN-surfacing — "don't build on silence" (docs/critique.md weakness #5).
 
 Intake now emits a visible `not_modelled` marker for any statement kind it cannot thread (aug-assign,
-attribute/subscript store, tuple unpack, for/with, ...), instead of silently framing a stale value
-forward. NB a bare CALL statement (`log(x)`) used to be in that list and is now MODELLED as an
-`expr_stmt` — closing that coverage gap is what lets a structural rule see a generated program built
-out of bare calls (`docs/vocabulary_bridge.md`). `caveats()` surfaces them, and `repair_all`'s `clean` verdict is QUALIFIED by
+attribute/subscript store, tuple unpack, `with`, ...), instead of silently framing a stale value
+forward. NB two kinds have GRADUATED off this list, each for the same reason — a coverage gap no
+bridge can close (`docs/vocabulary_bridge.md`): a bare CALL statement (`log(x)`) is now an `expr_stmt`,
+which is what lets a structural rule see a generated program built out of bare calls; and a `for` over
+a plain name is now a `for_loop` (structure + unrolled state), which is what lets one authored pattern
+recognize an iteration and write one (`experiments/bidirectional_pattern.py`). A `for` over a
+non-Name target is still unmodelled, and is the case pinned below. `caveats()` surfaces them, and `repair_all`'s `clean` verdict is QUALIFIED by
 them — so "clean" means "checked and clear", not "nothing derived". A caveat is not an outcome (the
 code may be fine); it is an honest "the analysis did not prove this part".
 """
@@ -17,7 +20,8 @@ UNMODELLED_CASES = {
     "aug_assign":   "def f(x):\n    x += 1\n    return x",
     "attr_store":   "def f(x):\n    x.cache = 1\n    return x",
     "tuple_unpack": "def f(x):\n    a, b = x\n    return a",
-    "for_loop":     "def f(x):\n    for i in x:\n        pass\n    return x",
+    # a `for` whose target is not a plain name — the part of `for` intake still cannot thread.
+    "for_unpack":   "def f(x):\n    for a, b in x:\n        pass\n    return x",
 }
 
 

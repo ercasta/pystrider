@@ -8,8 +8,9 @@ import ugm as h
 
 from experiments.build_procedure import _rank_tool as bp_rank
 from experiments.build_procedure import (
-    CHEAT_SOURCE, INSPECTION, ORACLES, SATISFIED, SPEC, inspection_graph, judge_source,
-    CURRENT, RECOVERY, REFUSAL, REPAIRS, STEPS, VERDICT,
+    ATTRIBUTION, CHEAT_SOURCE, INSPECTION, ORACLES, SATISFIED, SPEC, inspection_graph, judge_source,
+    CURRENT, INPUTS_LOOP, RECOVERY, REFUSAL, REPAIRS, STALE, STEPS, VERDICT,
+    SPEC_LOOP, SPEC_LOOP_FLAT, INPUTS_LOOP_FLAT, LOWERING, oracle_report,
     SPEC_TWO_REPAIRS, SPEC_UNCOVERED, SPEC_UNREPAIRABLE,
     build, current_versions, many, of_kind, one, run_stratified, verdict,
 )
@@ -344,6 +345,192 @@ def test_the_current_projection_agrees_across_the_forward_and_demand_engines():
     assert h.ask_goal(g.copy(), "is p1 current arg_v2", rules) == ["yes"]
     assert h.ask_goal(g.copy(), "is p2 current arg_v1", rules) == ["yes"]
     assert h.ask_goal(g.copy(), "is p1 current arg_v1", rules) != ["yes"]   # superseded
+
+
+def _loop_parts(b):
+    """The loop, the statement inside its body, and the statement after it."""
+    g = b.workspace.g
+    loop = of_kind(g, "emit_for")[0]
+    inside = many(g, loop, "body_has")[0]
+    after = next(p for p in of_kind(g, "emit_print") if p != inside)
+    return g, loop, inside, after
+
+
+def test_a_loop_is_lowered_and_a_repair_fires_INSIDE_the_body():
+    # THE nesting pin. The pipeline emitted flat statement lists until now; here a rule mints a `for`,
+    # another nests a statement in its body, and the SAME `RECOVERY` rule that repairs a flat statement
+    # repairs the nested one. Nothing about the repair rules is loop-aware.
+    b = build(SPEC_LOOP, INPUTS_LOOP)
+    assert b.source.splitlines()[1:] == ["    for n in names:",
+                                         "        print(greet(n))",
+                                         "    print(title)"]
+    assert b.stdout == ["hello_ann", "hello_bob", "boss"]
+    assert b.ok and b.shipped == b.source
+
+    # ...and the statement AFTER the loop was left alone: only the nested one gained a version.
+    g, _, inside, after = _loop_parts(b)
+    assert {g.name(v) for v in many(g, inside, "version")} == {"arg_v1", "arg_v2"}
+    assert {g.name(v) for v in many(g, after, "version")} == {"arg_v1"}
+
+
+def test_one_statement_produces_MANY_output_lines_so_position_is_not_index():
+    # why loops needed the attribution rework: the body statement prints once per element, so the k-th
+    # statement is no longer the k-th output line and no rule over indices can say which one is wrong.
+    b = build(SPEC_LOOP, INPUTS_LOOP)
+    d = b.workspace.derived(ATTRIBUTION)
+    g, _, inside, after = _loop_parts(b)
+
+    def texts_for(stmt):
+        return {d.name(one(d, o, "text")) for o in of_kind(d, "observation")
+                if stmt in many(d, o, "from_stmt")}
+
+    # ONE statement, TWO output lines per run — and both are attributed to it.
+    assert {"hello_ann", "hello_bob"} <= texts_for(inside)
+    assert "boss" not in texts_for(inside)          # ...and it never claims the next statement's line
+    assert texts_for(after) == {"boss"}
+    assert len(b.stdout) > len(of_kind(g, "emit_print"))   # more output lines than statements
+
+
+def test_attribution_is_OBSERVED_from_the_run_not_computed_from_a_position():
+    # the join is between two things MECHANISM reported: where emission put each statement, and which
+    # line was executing when each output appeared. Both are facts on the graph; the correspondence is
+    # the one rule. Line identities are scoped per EMISSION, because a repair that ADDS a statement
+    # shifts every line below it — without that, an old observation attributes to whatever moved onto
+    # its line number.
+    b = build()                                       # the flat spec, whose `repair_audit` shifts lines
+    g = b.workspace.g
+    stamped = {g.name(n) for pr in of_kind(g, "emit_print") for n in many(g, pr, "source_line")}
+    assert stamped, "emission must record where it put each statement"
+    assert len({s.split("L")[0] for s in stamped}) > 1, "line identities must be scoped per emission"
+    assert all(many(g, o, "from_line") for o in of_kind(g, "observation"))
+    assert "from_line" in ATTRIBUTION and "source_line" in ATTRIBUTION
+
+
+def test_the_body_is_a_SCOPE_the_rules_delimit_not_the_emit_walk():
+    # `in_body` and `body_has` are derived, so the walker never decides what is nested or what the
+    # top-level sequence is — it follows an answer.
+    b = build(SPEC_LOOP, INPUTS_LOOP)
+    g, loop, inside, after = _loop_parts(b)
+    assert many(g, inside, "in_body") and not many(g, after, "in_body")
+    assert not many(g, loop, "in_body")               # the loop itself is top level
+    assert loop in [s for s in of_kind(g, "emit_for")]
+    assert after in many(g, loop, "stmt_before")      # the loop is sequenced like any other statement
+
+
+def test_a_repair_mints_ONE_node_however_many_EXPECTATIONS_are_unmet():
+    # STANDING LESSON 2, the half that is easy to get wrong: a minted node is keyed on the WHOLE
+    # MATCH, not on the head. The unmet condition binds `?st wants ?x`, and a looped statement wants
+    # one text PER ELEMENT — so a recovery rule minting straight off it minted one `ast_call` per
+    # unmet expectation. Nothing failed: the duplicates were structurally identical (the head names
+    # no `?x`), so the program was right while the graph carried two `arg_v2` values for one statement
+    # and `one()` chose between them arbitrarily. Projecting `?x` away into `stale` collapses it.
+    b = build(SPEC_LOOP, INPUTS_LOOP)
+    g, _, inside, _after = _loop_parts(b)
+    assert len(many(g, inside, "wants" and "arg_v2")) == 1        # one payload, not one per expectation
+    assert len(of_kind(g, "ast_call")) == 1
+    step = one(g, inside, "for_step")
+    assert len(many(g, step, "wants")) == 2                       # ...and it really was multiply unmet
+
+
+def test_staleness_attaches_to_the_PAYLOAD_so_it_cannot_leak_to_the_repair():
+    # why `stale` is keyed on the payload and not on the statement: the graph is monotone, so a
+    # statement-level flag would mean "was EVER unmet" and would still hold after a repair fixed the
+    # line — the next repair would then rewrite an already-correct payload. A payload version is its
+    # own node, so the repaired one simply never acquires the fact.
+    b = build()
+    g = b.workspace.g
+    # staleness is only meaningful over ATTRIBUTED observations — which is exactly how the recovery
+    # banks compose it. Asking `STALE` on its own sees no `from_stmt` and calls everything unmet.
+    d = b.workspace.derived(ATTRIBUTION + "\n" + STALE)
+    by_index = {g.name(one(g, pr, "at")): pr for pr in of_kind(g, "emit_print")}
+    repaired = by_index["i0"]
+    v1, v2 = one(d, repaired, "arg_v1"), one(d, repaired, "arg_v2")
+    stale = many(d, repaired, "stale")
+    assert v1 in stale                       # the original payload was seen unmet ...
+    assert v2 not in stale                   # ... and the repair that fixed it never is
+    assert many(d, by_index["i1"], "stale") == []      # the already-correct line, never stale
+
+
+def test_a_looped_intent_mints_ONE_step_despite_MANY_expectations():
+    # the E1 trap, met for real: a looped intent expects one text per element, and with `wants` in the
+    # mint head that minted one step PER EXPECTATION — the extra step was then silently dropped by the
+    # emit walk and reported as an unmet build. `wants` is attached by its own rule instead.
+    b = build(SPEC_LOOP, INPUTS_LOOP)
+    g = b.workspace.g
+    body_steps = [s for s in of_kind(g, "step")
+                  if g.name(one(g, s, "from_intent")) == "body_line"]
+    assert len(body_steps) == 1
+    assert {g.name(w) for w in many(g, body_steps[0], "wants")} == {"hello_ann", "hello_bob"}
+
+
+def test_the_SPINE_lowers_loops_with_the_SHARED_pattern():
+    # the wiring pin: this pipeline no longer owns a loop-lowering rule of its own. The text it uses
+    # as a rule HEAD to BUILD the loop is the same text the read half uses as a rule BODY to
+    # RECOGNIZE one — one library, two consumers.
+    from pystrider.patterns import ITERATION, ITERATION_TO_EMIT
+    assert ITERATION.replace("?x", "?l") in LOWERING      # the pattern, used as a construction
+    assert ITERATION_TO_EMIT in LOWERING                  # ...bridged into this pipeline's names
+    # and the pattern stays clear of this pipeline's vocabulary, so it can serve another one.
+    for word in ("emit_print", "emit_for", "for_step", "at ", "stmt_before"):
+        assert word not in ITERATION
+    b = build(SPEC_LOOP, INPUTS_LOOP)
+    assert b.ok and of_kind(b.workspace.g, "emit_for")    # ...and it really built the loop
+
+
+def test_a_requirement_in_the_PATTERN_vocabulary_is_verified_by_READING_the_code():
+    # the payoff. The requirement (`requires_iteration_over names`) is authored in the pattern's
+    # neutral vocabulary, satisfied by the write half, and CONFIRMED by the read half parsing the
+    # emitted source — so what is checked is the artifact, not our intention to emit it.
+    b = build(SPEC_LOOP, INPUTS_LOOP)
+    assert oracle_report(b.workspace) == {"prints_ok": True, "structure_ok": True, "satisfied": True}
+
+
+def test_right_output_with_the_WRONG_SHAPE_is_refused_and_named_honestly():
+    # the same requirement over a spec that never asks for a loop: stdout is exactly what was wanted,
+    # so the output oracle is fully satisfied — and the build is still refused, because the required
+    # STRUCTURE is absent. This is the second oracle earning its keep on shape rather than on calls.
+    b = build(SPEC_LOOP_FLAT, INPUTS_LOOP_FLAT)
+    assert b.stdout == ["hello_ann", "hello_bob"]         # the world agreed with every expectation
+    assert oracle_report(b.workspace)["prints_ok"] is True
+    assert oracle_report(b.workspace)["structure_ok"] is False
+    assert b.shipped is None
+
+    # ...and the refusal names the RIGHT cause. Reporting "the world disagreed" here (with identical
+    # wanted/got lists, which is what it did before this kind existed) is a false explanation of a
+    # true refusal — it sends you to fix the output, which is already correct.
+    assert b.refusal.kind == "unstructured"
+    assert b.refusal.missing == ("names",)
+    assert "output was RIGHT" in str(b.refusal)
+
+
+WRONG_ARG_SOURCE = ("def report(name, title):\n    audit()\n"
+                    "    print(greet(title))\n    print(title)")
+
+
+def test_a_SECOND_pattern_of_a_different_shape_drives_both_halves():
+    # The library's generality test. An iteration is a CONTAINER of statements; an application is an
+    # EXPRESSION with an operand. If the construction only fitted containers, `ITERATION` would have
+    # been tailored to its consumers rather than general.
+    from pystrider.patterns import APPLICATION, APPLICATION_TO_EMIT
+    assert APPLICATION.replace("?x", "?n") in RECOVERY        # used as a rule HEAD, to build...
+    assert APPLICATION_TO_EMIT in RECOVERY
+    assert APPLICATION in INSPECTION                          # ...and as a rule BODY, to recognize
+    for word in ("ast_call", "call_node", "emit_print", "calls_func", "is_a call"):
+        assert word not in APPLICATION                        # neither side's vocabulary leaks in
+
+    b = build()                                               # and the repair it drives still works
+    assert "print(greet(name))" in b.source and b.ok
+
+
+def test_asking_WHAT_A_CALL_IS_APPLIED_TO_catches_what_counting_calls_cannot():
+    # the second pattern earning its place: `requires_call greet` can only say the function is
+    # mentioned; the application pattern says what it is applied to. Same program, two verdicts.
+    call_only = [f for f in SPEC if f[1] not in ("requires_application_of", "applied_to")]
+    assert judge_source(call_only, WRONG_ARG_SOURCE)["structure_ok"] is True   # greet IS called...
+    assert judge_source(SPEC, WRONG_ARG_SOURCE)["structure_ok"] is False       # ...on the wrong value
+
+    # the honestly-built program satisfies both readings.
+    assert judge_source(SPEC, build().source)["structure_ok"] is True
 
 
 def test_the_generated_line_is_explainable_back_to_the_observed_run():

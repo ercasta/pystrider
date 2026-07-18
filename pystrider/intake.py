@@ -105,6 +105,11 @@ class _Walker:
         self.attr_base_var: dict[str, str] = {}
         self.returns: list[str] = []              # every return-statement id (candidate returns-None sites)
         self.not_modelled: list[str] = []         # ids of statements intake could not model (visible gaps)
+        self.statements: list[str] = []           # every statement id, in creation order — what lets a
+                                                  # compound statement link its DIRECT children
+        self._structured: set[str] = set()        # compound statements whose STRUCTURE is already
+                                                  # emitted (see `_for`: structure is per-source,
+                                                  # state is per-unrolling)
         self.return_var: dict[str, str] = {}      # return id -> the source Name it returns (if a bare var)
         self.call_target: dict[str, str] = {}     # call id -> callee SOURCE name (free-function calls)
         self.call_args: dict[str, list[str]] = {}  # call id -> positional argument expr ids
@@ -244,6 +249,7 @@ class _Walker:
             # the target's cell at `to` takes that value, every other var is framed forward.
             to = self._fresh_state()
             sid = self._scope(self._fresh("s"))
+            self.statements.append(sid)
             self._emit(sid, "is_a", "assign")
             self._emit(sid, "assigns", self._var(node.targets[0].id))
             self._emit(sid, "from_expr", self.expr(node.value, state))
@@ -254,6 +260,7 @@ class _Walker:
             return to                                             # advance the program point
         if isinstance(node, ast.Return) and node.value is not None:
             sid = self._scope(self._fresh("s"))
+            self.statements.append(sid)
             self._emit(sid, "is_a", "return")
             self._emit(sid, "returns", self.expr(node.value, state))   # reads at `state` (terminal)
             self.returns.append(sid)                                   # a candidate returns-None site
@@ -266,6 +273,8 @@ class _Walker:
             return self._if(node, state)
         if isinstance(node, ast.While):
             return self._while(node, state)
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            return self._for(node, state)
         if isinstance(node, ast.Expr):
             # An expression STATEMENT (`print(x)`, `log(x)`): it binds no name, so the program point
             # does not advance and no cell is written — but the EXPRESSION is modelled, so its calls,
@@ -277,17 +286,19 @@ class _Walker:
             # (`docs/vocabulary_bridge.md`).
             eid = self.expr(node.value, state)
             sid = self._scope(self._fresh("s"))
+            self.statements.append(sid)
             self._emit(sid, "is_a", "expr_stmt")
             self._emit(sid, "evaluates", eid)
             self.line_of[sid] = node.lineno
             self.label_of[sid] = self._snippet(node)
             return state                                          # binds nothing -> same program point
-        # an unmodelled statement kind (aug-assign, attribute/subscript store, tuple unpack, bare
-        # call, for/with, ...): we cannot thread its effect on state. Emit a VISIBLE `not_modelled`
+        # an unmodelled statement kind (aug-assign, attribute/subscript store, tuple unpack, `with`,
+        # a `for` over a non-Name target, ...): we cannot thread its effect on state. Emit a VISIBLE `not_modelled`
         # marker so a downstream `clean`/`verified` verdict can say "clear MODULO this", instead of
         # silently framing a stale value forward and reporting confidently-clean (critique #5). The
         # state is returned unchanged (we still don't model the effect) — but the gap is now audited.
         sid = self._scope(self._fresh("s"))
+        self.statements.append(sid)
         self._emit(sid, "is_a", "not_modelled")
         self.line_of[sid] = getattr(node, "lineno", 0)
         self.label_of[sid] = self._snippet(node)
@@ -343,6 +354,81 @@ class _Walker:
         self._edge(then_exit, merge)                              # join: both paths flow to the merge
         self._edge(else_exit, merge)
         return merge
+
+    def _block_ids(self, stmts: list[ast.stmt], state: str) -> tuple[str, list[str]]:
+        """`block`, but also reporting the DIRECT child statement of each entry — the first id the
+        statement created, since a compound statement emits its own id before descending. Nested
+        statements are therefore attributed to their own parent, not to this one."""
+        ids: list[str] = []
+        for s in stmts:
+            mark = len(self.statements)
+            state = self.stmt(s, state)
+            if len(self.statements) > mark:
+                ids.append(self.statements[mark])
+        return state, ids
+
+    def _for(self, node: ast.For, state: str) -> str:
+        """A `for` loop — modelled in BOTH registers, because two different questions are asked of it.
+
+        STRUCTURE (what it is): `is_a for_loop`, the sequence it `iterates`, the variable it `binds`,
+        and a `loop_body` link per direct child. This is what a pattern needs in order to recognize an
+        iteration in hand-written code — and it is deliberately the same shape the generation half
+        MINTS (`emit_for` / `iter_over` / `binds` / `body_has`), so a bridge can reconcile the two
+        namings without either side inventing structure the other lacks.
+
+        STATE (what it does): unrolled to `loop_unroll` iterations exactly as `_while` is, with the
+        loop variable bound at each body entry from an element we do not model — an `unknown_expr`,
+        because knowing a sequence says nothing about its elements. Honest bound, not a fixpoint.
+
+        **Structure is per-SOURCE, state is per-UNROLLING** — the distinction the two registers force.
+        A loop nested inside another is walked once per outer iteration, so a naive walker mints a
+        second `for_loop` node for the same source statement and "how many loops does this function
+        have?" answers wrongly. The structural node is therefore identified by source position and
+        emitted once; only the CFG (states, the element binding, the body's threading) repeats. For the
+        same reason `loop_body` links the FIRST walk's statement ids: the later ones are CFG copies of
+        the same source statement, not distinct code."""
+        fid = self._scope(f"{self.ns}for@{node.lineno}")
+        first = fid not in self._structured
+        if first:
+            self._structured.add(fid)
+            self.statements.append(fid)
+            self._emit(fid, "is_a", "for_loop")
+            self._emit(fid, "binds", self._var(node.target.id))
+            self.line_of[fid] = node.lineno
+            self.label_of[fid] = f"for {node.target.id} in {self._snippet(node.iter)}"
+        iterated = self.expr(node.iter, state)         # a real read at this program point, every pass
+        if first:
+            self._emit(fid, "iterates", iterated)
+
+        post = self._fresh_state()
+        head, linked = state, False
+        for _ in range(max(0, self.loop_unroll)):
+            body_entry = self._fresh_state()
+            self._edge(head, body_entry)                         # take the body once more ...
+            self._edge(head, post)                               # ... or exit here (0..k iterations)
+            bound = self._fresh_state()                          # the loop variable takes an element
+            element = self._in_state(self._scope(self._fresh("u")), body_entry)
+            self._emit(element, "is_a", "unknown_expr")           # an element we cannot know
+            self.label_of[element] = f"<element of {self._snippet(node.iter)}>"
+            bid = self._scope(self._fresh("s"))
+            self.statements.append(bid)
+            self._emit(bid, "is_a", "assign")
+            self._emit(bid, "assigns", self._var(node.target.id))
+            self._emit(bid, "from_expr", element)
+            self._emit(bid, "from_state", body_entry)
+            self._emit(bid, "to_state", bound)
+            self.line_of[bid] = node.lineno
+            self.label_of[bid] = f"{node.target.id} = <element>"
+            body_exit, ids = self._block_ids(node.body, bound)
+            if first and not linked:                             # structure from the first pass only
+                for child in ids:
+                    self._emit(fid, "loop_body", child)
+                linked = True
+            nxt = self._fresh_state()
+            self._edge(body_exit, nxt)                           # back-edge to the next unrolled head
+            head = nxt
+        self._edge(head, post)                                   # fuel exhausted at depth k: exit
+        return post
 
     def _while(self, node: ast.While, state: str) -> str:
         """A `while` loop, **unrolled** to `self.loop_unroll` iterations — the pre-materialized

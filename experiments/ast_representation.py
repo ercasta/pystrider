@@ -10,8 +10,9 @@ ordered, nested, revisable program?
 Six experiments, each a fact bank + a rule bank + what came out. The verdicts are pinned in
 `tests/test_ast_representation.py`; the write-up is `docs/ast_representation_findings.md`.
 
-  E1  the TRAP     — a skolem is a function of ALL its head-anchored endpoints, so minting a parent
-                     and attaching a per-element child in ONE head splits the parent per element.
+  E1  the TRAP     — a skolem is keyed on the WHOLE MATCH (not on the head), so minting a parent and
+                     matching a per-element fact in ONE rule splits the parent per element. NB a
+                     body-only variable multiplies it too — STANDING LESSON 2 / ugm #21.
   E2  the IDIOM    — mint the parent in one rule (anchored on invariants only), ATTACH children in a
                      second rule where the parent is LHS-BOUND. One parent, N children.
   E3  ORDER        — sequence is a DERIVED RELATION (`stmt_before`), not a list primitive.
@@ -186,7 +187,8 @@ def run() -> None:
     g = build(ARGS_FACTS, trap_rules)
     calls = minted_of_kind(g, "ast_call")
     print(f"   ast_call nodes: {len(calls)} -> args {[[g.name(a) for a in many(g, c, 'has_arg')] for c in calls]}")
-    print("   a skolem is a function of ALL its head-anchored endpoints, so one call per ARG.\n")
+    print("   a skolem is keyed on the WHOLE MATCH — one call per ARG. A variable appearing only in")
+    print("   the BODY multiplies the mint just the same (ugm #21).\n")
 
     print("E2 — THE IDIOM: mint on invariants, attach with the parent LHS-BOUND")
     g = build(ARGS_FACTS, idiom_rules)

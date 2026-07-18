@@ -27,9 +27,17 @@ this is. The tool cannot lie about the verdict because it never forms one.
 
 **ATTRIBUTION — the thing multi-statement programs need.** With more than one statement, "the output is
 wrong" is not actionable: a repair must know WHICH statement to rewrite, or fixing line 1 rewrites
-line 2 as well. That attribution is a rule: an expectation is unmet at an INDEX, an `emit_print` sits at
-an index, and a recovery rule fires only on the statement whose own index is unmet. The default spec has
-a correct second line precisely so a mis-attributed repair would be caught.
+line 2 as well. The default spec has a correct second line precisely so a mis-attributed repair would be
+caught.
+
+Attribution used to be by INDEX — the k-th statement produces the k-th output line. **Loops break that**,
+and that is the whole reason they are interesting here: one statement inside a `for` body produces one
+output line PER ITERATION, so "position in the program" and "index in the output" stop coinciding and no
+rule over indices can say which statement is wrong. The honest fix is not to compute the mapping but to
+OBSERVE it: `emit` records where it put each statement (`source_line`), the run reports which line was
+executing when each output appeared (`from_line`), and one rule joins them (`ATTRIBUTION`). Attribution
+becomes a fact the world reported rather than an inference — which is the same move `check` already makes
+for the output itself, applied one level down.
 
 **Repairs COMPOSE, which is how a small rule set reaches a large space.** Two recovery rules (`greet`,
 `shout`), neither aware of the other. A spec expecting `HELLO_BOB` is unreachable by either alone: the
@@ -49,9 +57,9 @@ Run it: `python -m experiments.build_procedure`
 from __future__ import annotations
 
 import ast
-import contextlib
 import io
 import pathlib
+import sys
 from dataclasses import dataclass, field
 
 import ugm as h
@@ -59,13 +67,17 @@ from ugm import AttrGraph
 from ugm.dispatch import call_arg
 
 from pystrider.intake import intake_function
+from pystrider.patterns import (
+    APPLICATION, APPLICATION_FROM_INTAKE, APPLICATION_TO_EMIT, ITERATION,
+    ITERATION_FROM_INTAKE, ITERATION_TO_EMIT, RECOGNIZE_APPLICATION, RECOGNIZE_ITERATION,
+)
 
 _CORPUS = pathlib.Path(h.__file__).resolve().parent.parent / "corpus"
 
 __all__ = [
-    "SPEC", "SPEC_UNCOVERED", "SPEC_UNREPAIRABLE", "SPEC_TWO_REPAIRS",
+    "SPEC", "SPEC_UNCOVERED", "SPEC_UNREPAIRABLE", "SPEC_TWO_REPAIRS", "SPEC_LOOP", "SPEC_LOOP_FLAT", "INPUTS_LOOP_FLAT",
     "EXPANSION", "LOWERING", "RECOVERY", "RECOVERY_SHOUT", "CURRENT", "VERDICT", "REFUSAL",
-    "REPAIRS", "STEPS", "RUNTIME_LIBRARY", "INPUTS",
+    "REPAIRS", "STALE", "JUDGE", "STEPS", "RUNTIME_LIBRARY", "INPUTS", "INPUTS_LOOP", "ATTRIBUTION", "STATEMENT",
     "Build", "Refusal", "Workspace", "build", "current_versions", "verdict", "oracle_report",
     "inspection_graph", "INSPECTION", "SATISFIED", "ORACLES",
     "emit_source", "of_kind", "one", "many", "run_stratified", "judge_source", "CHEAT_SOURCE",
@@ -97,6 +109,10 @@ SPEC: "list[tuple[str, str, str]]" = [
     # all, so only the structural oracle can ever see whether it is there.
     ("report", "requires_call", "greet"),
     ("report", "requires_call", "audit"), ("audit", "is_a", "policy_call"),
+    # ...and a STRONGER structural requirement, in the second pattern's vocabulary: not merely that
+    # `greet` is called, but what it is APPLIED TO. `print(greet(title))` satisfies `requires_call`
+    # and fails this.
+    ("report", "requires_application_of", "greet"), ("greet", "applied_to", "name"),
 ]
 
 # --- the two ways a limited rule set legitimately fails ---------------------------------------------
@@ -127,64 +143,214 @@ SPEC_TWO_REPAIRS: "list[tuple[str, str, str]]" = [
     ("loud_line", "expects", "HELLO_BOB"),
 ]
 
+# --- NESTING: an intent that ITERATES, with another intent inside it --------------------------------
+# One statement, MANY output lines. `each_name` binds `n` over the input list; `body_line` lives INSIDE
+# it and expects one text per element. Nothing about the loop is special to the repair rules — the
+# statement inside the body is repaired by the same `RECOVERY` rule that repairs a flat one, because
+# attribution is observed rather than computed from a position.
+#
+# `title_line` sits AFTER the loop and is already correct: the same guard as in `SPEC`, now against a
+# repair that reaches out of the loop body it belongs to.
+INPUTS_LOOP = {"names": ["ann", "bob"], "title": "boss"}
+
+SPEC_LOOP: "list[tuple[str, str, str]]" = [
+    ("report", "is_a", "procedure"),
+    ("each_name", "is_a", "intent"), ("each_name", "of", "report"),
+    ("each_name", "iterates", "names"), ("each_name", "binds", "n"), ("each_name", "at", "i0"),
+    ("body_line", "is_a", "intent"), ("body_line", "of", "report"),
+    ("body_line", "inside", "each_name"),
+    ("body_line", "outputs", "n"), ("body_line", "at", "b0"),
+    ("body_line", "expects", "hello_ann"), ("body_line", "expects", "hello_bob"),
+    ("title_line", "is_a", "intent"), ("title_line", "of", "report"),
+    ("title_line", "outputs", "title"), ("title_line", "at", "i1"),
+    ("title_line", "expects", "boss"),
+    ("i0", "before", "i1"),
+    # a requirement in the PATTERN's vocabulary, verified by READING the emitted code. Printing the
+    # right three lines without a loop satisfies stdout entirely; only this catches it.
+    ("report", "requires_iteration_over", "names"),
+]
+
+
+# The SAME requirement, over a spec that never asks for a loop: two ordinary output intents that
+# produce byte-identical stdout. Everything the output oracle can see is right, and the build is still
+# refused — because the requirement is about the SHAPE of the code, and only reading it can tell.
+INPUTS_LOOP_FLAT = {"first": "ann", "second": "bob"}
+
+SPEC_LOOP_FLAT: "list[tuple[str, str, str]]" = [
+    ("report", "is_a", "procedure"),
+    ("a_line", "is_a", "intent"), ("a_line", "of", "report"),
+    ("a_line", "outputs", "first"), ("a_line", "at", "i0"), ("a_line", "expects", "hello_ann"),
+    ("b_line", "is_a", "intent"), ("b_line", "of", "report"),
+    ("b_line", "outputs", "second"), ("b_line", "at", "i1"), ("b_line", "expects", "hello_bob"),
+    ("i0", "before", "i1"),
+    ("report", "requires_iteration_over", "names"),
+]
+
 
 # --- expansion: refine the succinct spec (rules) -----------------------------------------------------
 # An intent that OUTPUTS something becomes a step. `from_intent` keeps the link back, which is what lets
 # a rule later notice an intent that produced no step at all.
 
-EXPANSION = ("st? is_a step and st? of_procedure ?p and st? from_intent ?n and st? outputs ?v "
-             "and st? at ?i and st? wants ?x "
-             "when ?n is_a intent and ?n of ?p and ?n outputs ?v and ?n at ?i and ?n expects ?x")
+EXPANSION = (
+    # MINT ON INVARIANTS, ATTACH SEPARATELY. `wants` is attached by its own rule with the step
+    # LHS-bound, because a skolem is a function of everything anchored in its head: with `st? wants ?x`
+    # in the mint head, an intent expecting TWO texts (which is what a looped intent does — one per
+    # element) minted TWO steps, and the second was silently dropped by the emit walk.
+    "st? is_a step and st? of_procedure ?p and st? from_intent ?n and st? outputs ?v and st? at ?i "
+    "when ?n is_a intent and ?n of ?p and ?n outputs ?v and ?n at ?i\n"
+    "?st wants ?x when ?st is_a step and ?st from_intent ?n and ?n expects ?x\n"
+    # An intent that ITERATES becomes a step too. It declares no `wants` — a loop prints nothing by
+    # itself, so it can never be the unmet statement; only what is inside it can be.
+    # `is_a loop_step` is the INVARIANT the lowering mint keys on. Without it the mint would have to
+    # key on `?ls loops_over ?v`, and a body-only variable multiplies a skolem just as a head one does
+    # (STANDING LESSON 2) — it happens to be single-valued here, which is exactly the kind of luck
+    # that stops being luck later.
+    "ls? is_a step and ls? is_a loop_step and ls? of_procedure ?p and ls? from_intent ?n "
+    "and ls? loops_over ?v and ls? at ?i and ls? binds ?b "
+    "when ?n is_a intent and ?n of ?p and ?n iterates ?v and ?n at ?i and ?n binds ?b")
 
 
 # --- lowering: mint the AST (rules) ------------------------------------------------------------------
 # Mint-then-attach: mint anchored on invariants, attach with the parent LHS-bound. v1 is deliberately
 # naive — it prints the raw value. That gap is not a bug to avoid; it is what the loop exists to notice.
+#
+# NESTING is the same attach idiom one level down (`experiments/ast_representation.py` E4): the loop is
+# minted from the looping step, and `body_has` links it to the statements whose own intent declares it is
+# `inside` the loop's intent. `in_body` is derived so the emit walk knows which statements are NOT part
+# of the top-level sequence — a question the rules answer, not the walker.
+
+STATEMENT = ("?x is_a statement when ?x is_a emit_print\n"
+             "?x is_a statement when ?x is_a emit_call\n"
+             "?x is_a statement when ?x is_a emit_for")
 
 LOWERING = (
-    "pr? is_a emit_print and pr? for_step ?st and pr? at ?i when ?st is_a step and ?st at ?i\n"
+    STATEMENT + "\n"
+    "pr? is_a emit_print and pr? for_step ?st and pr? at ?i "
+    "when ?st is_a step and ?st at ?i and ?st outputs ?v\n"
     "?pr arg_v1 ?v and ?pr version arg_v1 "
     "when ?pr is_a emit_print and ?pr for_step ?st and ?st outputs ?v\n"
-    "?a stmt_before ?b when ?a is_a emit_print and ?b is_a emit_print "
+    # THE LOOP IS LOWERED BY THE SHARED PATTERN (`pystrider.patterns`), not by a rule local to this
+    # pipeline. Three steps, and only the middle one is the pattern:
+    #   1. MINT the node on invariants alone — never with the pattern as a head, since a skolem is
+    #      keyed on the whole match and the pattern mentions the per-element `?body`.
+    #   2. ATTACH the pattern with the node LHS-bound. This text is IDENTICAL to the one the read half
+    #      uses as a question; the only difference is the subject variable.
+    #   3. BRIDGE the neutral structure into this pipeline's emit vocabulary.
+    # `at` is attached separately and deliberately: WHERE a loop sits is this pipeline's business, not
+    # part of what makes an iteration an iteration.
+    "lp? is_a loop_node and lp? for_step ?ls when ?ls is_a loop_step\n"
+    + ITERATION.replace("?x", "?l") +
+    " when ?l is_a loop_node and ?l for_step ?ls and ?ls loops_over ?seq and ?ls binds ?v "
+    "and ?ls from_intent ?outer and ?body is_a step and ?body from_intent ?inner "
+    "and ?inner inside ?outer\n"
+    "?st lowers_to ?pr when ?pr is_a emit_print and ?pr for_step ?st\n"
+    + ITERATION_TO_EMIT + "\n"
+    "?l at ?i when ?l is_a emit_for and ?l for_step ?st and ?st at ?i\n"
+    "?pr in_body yes when ?lp body_has ?pr\n"
+    # ordering is over STATEMENTS of any kind, so a loop takes its place in the sequence like anything
+    # else. Statements in different scopes are simply never given `before` facts relating them.
+    "?a stmt_before ?b when ?a is_a statement and ?b is_a statement "
     "and ?a at ?i and ?b at ?j and ?i before ?j"
 )
 
 
-# --- the UNMET condition, authored ONCE and reused by composition ------------------------------------
-# "this statement's line is not (yet) right": the step at the statement's index wants some text, and NO
-# observation at that index shows it. The `not` clauses share the free `?o`, so they form ONE
-# conjunctive NAC — the existential the condition needs.
+# --- ATTRIBUTION: which STATEMENT produced which output line, as an OBSERVED fact --------------------
+# The join that makes a repair inside a loop body possible. `emit` records where it put each statement
+# and the run records which line was executing when each output line appeared; both are mechanism
+# reporting what it did, and the correspondence between them is a rule.
 #
-# Observations ACCUMULATE across runs (monotone), and that is correct here: the question is whether the
-# world has EVER shown the wanted line at that index, so a repair stops firing the moment a run produces
-# it. Reused verbatim in both recovery rules and (in `?st` form) in the verdict, so there is exactly one
-# definition of "unmet" in the system.
-_UNMET_FOR_STMT = ("?pr at ?i and ?st is_a step and ?st at ?i and ?st wants ?x "
-                   "and not ?o is_a observation and not ?o at ?i and not ?o text ?x")
+# The alternative — deriving it from position — is what the flat pipeline did, and it is exactly what a
+# loop invalidates: one statement, N output lines, so there is no index arithmetic that recovers the
+# mapping. Observing it works the same for both, which is why the recovery rules did not have to change.
+#
+# Line identities are per-EMIT (`r2L4`), because a repair that ADDS a statement shifts every line below
+# it. Without that, an old observation would attribute to whatever moved onto its line number.
+
+ATTRIBUTION = "?o from_stmt ?pr when ?o from_line ?n and ?pr source_line ?n"
+
+# --- the UNMET condition, authored ONCE and reused by composition ------------------------------------
+# "this statement's line is not (yet) right": the step this statement realizes wants some text, and NO
+# observation ATTRIBUTED TO THIS STATEMENT shows it. The `not` clauses share the free `?o`, so they form
+# ONE conjunctive NAC — the existential the condition needs.
+#
+# Observations ACCUMULATE across runs (monotone), and that is correct here: the question is whether this
+# statement has EVER been seen to produce the wanted line, so a repair stops firing the moment a run
+# produces it. Reused verbatim in both recovery rules and (in `?st` form) in the verdict, so there is
+# exactly one definition of "unmet" in the system.
+_UNMET_FOR_STMT = ("?pr for_step ?st and ?st is_a step and ?st wants ?x "
+                   "and not ?o from_stmt ?pr and not ?o text ?x")
+
+# --- STALE: the unmet condition COLLAPSED onto the payload, so a mint cannot multiply ---------------
+# A minted node is keyed on the WHOLE MATCH, not on the head (STANDING LESSON 2). `_UNMET_FOR_STMT`
+# binds `?st wants ?x`, and a looped statement wants one text PER ELEMENT — so a recovery rule minting
+# directly against it minted one `ast_call` per unmet expectation. The duplicates were structurally
+# identical (the head names no `?x`), so the emitted program was right and the graph was wrong: one
+# statement carried two `arg_v2` values and `one()` picked between them arbitrarily.
+#
+# The cure is to project `?x` away BEFORE minting. `?pr stale ?v` is one fact per (statement, payload)
+# however many expectations witness it, so a mint gated on it is keyed on (pr, v) alone.
+#
+# Staleness attaches to the PAYLOAD, not to the statement, and that is the load-bearing choice: a fact
+# on a monotone graph can never be retracted, so a statement-level `unmet` flag would mean "was EVER
+# unmet" and would still hold after a repair fixed the line — `repair_shout` would then rewrite an
+# already-correct payload, which is precisely the attribution property this file exists to guarantee.
+# A payload version is its own node, so "this payload was seen unmet" is permanently TRUE and never
+# leaks to its successor: the repaired payload simply never acquires the fact.
+STALE = ("?pr stale ?v when ?pr is_a emit_print and ?pr arg_v1 ?v and " + _UNMET_FOR_STMT + "\n"
+         "?pr stale ?v when ?pr is_a emit_print and ?pr arg_v2 ?v and " + _UNMET_FOR_STMT)
 
 
 # --- recovery: RULES that repair, driven by the OBSERVED mismatch, ATTRIBUTED by index ---------------
 # Each fires only on a statement whose OWN index is unmet — so a correct sibling line is left alone.
 
-RECOVERY = ("gc? is_a ast_call and gc? callee greet and gc? argument ?v "
-            "and ?pr arg_v2 gc? and ?pr version arg_v2 "
-            "when ?pr is_a emit_print and ?pr arg_v1 ?v and " + _UNMET_FOR_STMT)
+# JUDGE, THEN ACT — never in one pass. A bank that both forms a judgement and mints against it lets
+# the new thing be judged by evidence that PREDATES it: run as one bank, `stale` fired on the payload
+# `gc?` had just minted, in the same fixpoint, before that payload had ever been emitted or run. The
+# fact is permanent, so the repaired payload was marked "seen unmet" having never been seen at all —
+# and `repair_shout` would then rewrite a line `repair_greet` had already fixed. (Only the planner's
+# actuator guard was hiding it.) So the judgement pass runs first, over what has actually been
+# observed, and the minting pass is gated on its result.
+JUDGE = ATTRIBUTION + "\n" + STALE
+
+def _repair_by_application(callee: str, slot: str, prev: str) -> str:
+    """A payload repair, built out of the SHARED `APPLICATION` pattern.
+
+    Three steps, the same shape the loop lowering uses: MINT on invariants (never with the pattern as a
+    head), ATTACH the pattern with the node LHS-bound, BRIDGE into this pipeline's emit vocabulary. The
+    middle line is library text — the same description the structural oracle uses as a QUESTION to
+    confirm, by reading the emitted source, that the application is really there.
+
+    `?n callee_is ?fn` is stamped by the mint so the attach rule has the function to bind; the node's
+    SLOT (`?pr arg_v2 ?n`) is what distinguishes this repair's call from another repair's on the same
+    statement, which matters once repairs compose and one statement carries several."""
+    return (f"c? is_a call_node and c? callee_is {callee} "
+            f"and ?pr {slot} c? and ?pr version {slot} "
+            f"when ?pr is_a emit_print and ?pr {prev} ?v and ?pr stale ?v\n"
+            + APPLICATION.replace("?x", "?n") +
+            f" when ?n is_a call_node and ?n callee_is ?fn "
+            f"and ?pr {slot} ?n and ?pr {prev} ?arg\n"
+            + APPLICATION_TO_EMIT)
+
+
+RECOVERY = _repair_by_application("greet", "arg_v2", "arg_v1")
 
 # The second recovery rule wraps the CURRENT payload (v2's minted call), i.e. it repairs a repair — the
 # anchor it mints against is itself a minted node. Neither rule knows the other exists.
-RECOVERY_SHOUT = ("sc? is_a ast_call and sc? callee shout and sc? argument ?inner "
-                  "and ?pr arg_v3 sc? and ?pr version arg_v3 "
-                  "when ?pr is_a emit_print and ?pr arg_v2 ?inner and " + _UNMET_FOR_STMT)
+RECOVERY_SHOUT = _repair_by_application("shout", "arg_v3", "arg_v2")
 
 
 # --- the VERDICT: whether the spec is satisfied, decided by rules over observations ------------------
 # `check` forms no opinion; these rules do. `unmet_at` is the same condition as above in step form, and
 # a procedure is satisfied when none of its steps is unmet.
 
-VERDICT = ("?st unmet_at ?i when ?st is_a step and ?st at ?i and ?st wants ?x "
-           "and not ?o is_a observation and not ?o at ?i and not ?o text ?x\n"
+VERDICT = (ATTRIBUTION + "\n"
+           "?st unmet yes when ?st is_a step and ?st wants ?x and ?pr for_step ?st "
+           "and not ?o from_stmt ?pr and not ?o text ?x\n"
+           # a step that wants something and got NO statement at all is unmet too — otherwise a spec
+           # that lowered to nothing would pass for want of anything to attribute against.
+           "?st unmet yes when ?st is_a step and ?st wants ?x and not ?pr for_step ?st\n"
            "?p prints_ok yes when ?p is_a procedure "
-           "and not ?st unmet_at ?i and not ?st of_procedure ?p")
+           "and not ?st unmet yes and not ?st of_procedure ?p")
 
 # --- the SECOND oracle: ask questions about the CODE, not just its output ----------------------------
 # Watching stdout is a black-box check, and a black-box check can be satisfied by a program that is
@@ -197,7 +363,23 @@ VERDICT = ("?st unmet_at ?i when ?st is_a step and ?st at ?i and ?st wants ?x "
 # This is the read half and the write half of the project meeting on one graph: rules that recognize
 # hand-written code recognize GENERATED code, with no shared predicate name between the two vocabularies.
 INSPECTION = ("?c invokes ?f when ?c is_a call and ?c calls_func ?f\n"            # the BRIDGE
-              "?p structural_unmet ?f when ?p requires_call ?f and not ?c invokes ?f")
+              "?p structural_unmet ?f when ?p requires_call ?f and not ?c invokes ?f\n"
+              # A requirement authored in the PATTERN's vocabulary, checked against the CODE. The same
+              # `ITERATION` text that lowering used as a rule HEAD to build the loop is used here as a
+              # rule BODY to confirm one is really there — reached through the read bridge, so what is
+              # confirmed is the emitted artifact and not our intention to emit it (`from_code`).
+              # An output-watching oracle cannot see this: a program that prints the right lines
+              # without iterating satisfies stdout completely.
+              + ITERATION_FROM_INTAKE + "\n" + RECOGNIZE_ITERATION + "\n"
+              "?p structural_unmet ?s when ?p requires_iteration_over ?s "
+              "and not ?x from_code yes and not ?x is_a iteration and not ?x repeats_over ?s\n"
+              # The SECOND pattern, asked as a question. `requires_call` can only say the function is
+              # mentioned somewhere; this says WHAT IT IS APPLIED TO. A program that calls `greet` on
+              # the wrong variable satisfies the first and fails this one — the almost-right program
+              # that neither watching stdout for one input nor counting calls can catch.
+              + APPLICATION_FROM_INTAKE + "\n" + RECOGNIZE_APPLICATION + "\n"
+              "?p structural_unmet ?f when ?p requires_application_of ?f and ?f applied_to ?a "
+              "and not ?c from_code yes and not ?c applies ?f and not ?c to ?a")
 
 # the two oracles combined — an AND authored as a rule, not as a Python `and`.
 SATISFIED = "?p satisfied yes when ?p prints_ok yes and not ?p structural_unmet ?f"
@@ -213,7 +395,14 @@ REFUSAL = (VERDICT + "\n"
            "?p refused_uncovered yes when ?p is_a procedure and ?n is_a intent and ?n of ?p "
            "and ?n uncovered_intent yes\n"
            "?p refused_unverified yes when ?p is_a procedure and ?st of_procedure ?p "
-           "and ?st unmet_at ?i")
+           "and ?st unmet yes\n"
+           # A THIRD kind, forced by the pattern-vocabulary requirement: the program ran, the world
+           # AGREED with every expectation, and the code is still wrong — the required structure is
+           # absent. Without this the refusal reported "the world disagreed" and printed identical
+           # wanted/got lists, which is a false explanation of a true refusal. A refusal that names the
+           # wrong cause is barely better than no refusal: it sends you to fix the wrong thing.
+           + INSPECTION + "\n"
+           "?p refused_unstructured yes when ?p is_a procedure and ?p structural_unmet ?f")
 
 
 # --- recovery driven by the STRUCTURAL oracle: add a missing policy call ------------------------------
@@ -228,12 +417,18 @@ REFUSAL = (VERDICT + "\n"
 # It places the statement by linking it before whichever statement currently has no predecessor (the
 # sequence head), which keeps the emit walk a simple linked list. `?f is_a policy_call` scopes it: a
 # required call that belongs inside a payload (`greet`) is NOT satisfied by bolting on a bare call.
+#
+# The sequence head is scoped to the TOP LEVEL (`not ?lp body_has ?pr`): a statement inside a loop body
+# also has no predecessor, and a policy call for the procedure belongs before the procedure's first
+# statement, not inside somebody's loop.
 RECOVERY_AUDIT = (
+    STATEMENT + "\n"
     "au? is_a emit_call and au? callee ?f and au? for_proc ?p "
     "when ?p is_a procedure and ?p requires_call ?f and ?f is_a policy_call "
     "and not ?c is_a call and not ?c calls_func ?f\n"
     "?au stmt_before ?pr when ?au is_a emit_call and ?pr is_a emit_print and ?pr at ?i "
-    "and not ?q is_a emit_print and not ?q stmt_before ?pr")
+    "and not ?q is_a statement and not ?q stmt_before ?pr "
+    "and not ?lp body_has ?pr")
 
 
 # --- the version lattice + the `current` projection --------------------------------------------------
@@ -302,11 +497,14 @@ def holds(g: AttrGraph, subject: str, pred: str, obj: str) -> bool:
 class Workspace:
     """The artifact plane, kept separate from the planner's control plane."""
     spec: "list[tuple[str, str, str]]" = field(default_factory=lambda: list(SPEC))
+    inputs: dict = field(default_factory=lambda: dict(INPUTS))
     g: AttrGraph = field(default_factory=AttrGraph)
     ids: dict = field(default_factory=dict)
     source: str = ""
     stdout: "list[str]" = field(default_factory=list)
     log: "list[str]" = field(default_factory=list)
+    emits: int = 0                   # bumps per emission; scopes line identities to ONE version of the
+                                     # program, so a statement that moves does not inherit stale output.
 
     def node(self, name: str) -> str:
         if name not in self.ids:
@@ -329,9 +527,9 @@ class Workspace:
         return scratch
 
     def wanted(self) -> "list[str]":
-        return [self.g.name(one(self.g, n, "expects"))
-                for n in of_kind(self.g, "intent")
-                if one(self.g, n, "expects") is not None]
+        # every expectation, not one per intent — a looped intent declares one per element.
+        return [self.g.name(x) for n in of_kind(self.g, "intent")
+                for x in many(self.g, n, "expects")]
 
 
 def observe_code(ws: Workspace) -> None:
@@ -388,72 +586,142 @@ def _expr(ws: Workspace, node: str) -> ast.expr:
                     args=[_expr(ws, one(ws.g, node, "argument"))], keywords=[])
 
 
-def _ordered_statements(ws: Workspace) -> "list[str]":
-    """Statements in the order the rules derived (`stmt_before`); the walk decides nothing. Both
-    statement kinds participate — a printed line and a bare policy call are equally statements."""
-    stmts = of_kind(ws.g, "emit_print") + of_kind(ws.g, "emit_call")
-    succ = {s: [t for t in many(ws.g, s, "stmt_before") if t in stmts] for s in stmts}
+def _sequence(ws: Workspace, members: "list[str]") -> "list[str]":
+    """`members` in the order the rules derived (`stmt_before`); the walk decides nothing. Linking is
+    followed only WITHIN the given scope, so a body is ordered on its own terms."""
+    succ = {s: [t for t in many(ws.g, s, "stmt_before") if t in members] for s in members}
     targets = {t for v in succ.values() for t in v}
-    cur, seq = next((s for s in stmts if s not in targets), None), []
+    cur, seq = next((s for s in members if s not in targets), None), []
     while cur is not None:
         seq.append(cur)
         cur = next(iter(succ.get(cur, [])), None)
     return seq
 
 
-def _statement_ast(ws: Workspace, st: str, current: "dict[str, str]") -> ast.stmt:
-    """One statement, rendered. An `emit_call` is a bare policy call (`audit()`); an `emit_print` prints
-    the payload its CURRENT version selects."""
-    if st in of_kind(ws.g, "emit_call"):
-        return ast.Expr(ast.Call(func=ast.Name(id=ws.g.name(one(ws.g, st, "callee")), ctx=ast.Load()),
+def _ordered_statements(ws: Workspace) -> "list[str]":
+    """The TOP-LEVEL sequence. Which statements are top level is a rule's answer (`in_body`), not a
+    property the walker works out — a statement inside a loop body is sequenced by its own scope."""
+    stmts = (of_kind(ws.g, "emit_print") + of_kind(ws.g, "emit_call") + of_kind(ws.g, "emit_for"))
+    return _sequence(ws, [s for s in stmts if not many(ws.g, s, "in_body")])
+
+
+def _statement_ast(ws: Workspace, st: str, current: "dict[str, str]",
+                   where: "dict[int, str]") -> ast.stmt:
+    """One statement, rendered, recording which AST node it became in `where` (keyed by `id`, so the
+    line each statement lands on can be read back after unparse). An `emit_call` is a bare policy call
+    (`audit()`); an `emit_for` is a loop over its `body_has` children, themselves sequenced by rules;
+    an `emit_print` prints the payload its CURRENT version selects."""
+    if st in of_kind(ws.g, "emit_for"):
+        kids = _sequence(ws, many(ws.g, st, "body_has"))
+        node: ast.stmt = ast.For(
+            target=ast.Name(id=ws.g.name(one(ws.g, st, "binds")), ctx=ast.Store()),
+            iter=ast.Name(id=ws.g.name(one(ws.g, st, "iter_over")), ctx=ast.Load()),
+            body=[_statement_ast(ws, k, current, where) for k in kids] or [ast.Pass()],
+            orelse=[])
+    elif st in of_kind(ws.g, "emit_call"):
+        node = ast.Expr(ast.Call(func=ast.Name(id=ws.g.name(one(ws.g, st, "callee")), ctx=ast.Load()),
                                  args=[], keywords=[]))
-    return ast.Expr(ast.Call(func=ast.Name(id="print", ctx=ast.Load()),
-                             args=[_expr(ws, one(ws.g, st, current[st]))], keywords=[]))
+    else:
+        node = ast.Expr(ast.Call(func=ast.Name(id="print", ctx=ast.Load()),
+                                 args=[_expr(ws, one(ws.g, st, current[st]))], keywords=[]))
+    where[id(node)] = st
+    return node
+
+
+def _record_lines(ws: Workspace, mine: "list[ast.stmt]", theirs: "list[ast.stmt]",
+                  where: "dict[int, str]") -> None:
+    """Record WHERE each statement landed in the emitted text, by walking the tree we built alongside a
+    re-parse of the text it unparsed to. Pure bookkeeping: emission reporting what it did, which is what
+    lets the run's `from_line` observations be attributed to a statement rather than to a position."""
+    tag = f"r{ws.emits - 1}"                           # the emission just completed
+    for a, b in zip(mine, theirs):
+        st = where.get(id(a))
+        if st is not None:
+            ws.g.add_relation(st, "source_line", ws.node(f"{tag}L{b.lineno}"))
+        if isinstance(a, ast.For):
+            _record_lines(ws, a.body, b.body, where)
 
 
 def emit_source(ws: Workspace) -> str:
     """Walk the minted structure through the current-version projection and unparse. The last mile."""
     current = current_versions(ws)
-    body = [_statement_ast(ws, st, current) for st in _ordered_statements(ws)]
+    where: "dict[int, str]" = {}
+    body = [_statement_ast(ws, st, current, where) for st in _ordered_statements(ws)]
     fn = ast.FunctionDef(
         name="report",
-        args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=p) for p in INPUTS],
+        args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=p) for p in ws.inputs],
                            kwonlyargs=[], kw_defaults=[], defaults=[]),
         body=body or [ast.Pass()], decorator_list=[], returns=None, type_params=[])
-    return ast.unparse(ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[])))
+    source = ast.unparse(ast.fix_missing_locations(ast.Module(body=[fn], type_ignores=[])))
+    ws.emits += 1
+    _record_lines(ws, fn.body, ast.parse(source).body[0].body, where)
+    return source
 
 
 def _run_and_observe(ws: Workspace) -> "list[str]":
-    """RUN the generated code and MINT one observation per output line. The tool's whole job: put what
-    the world did onto the graph. It forms NO verdict — rules do that."""
+    """RUN the generated code and MINT one observation per output line, WITH the line of the program
+    that produced it. The tool's whole job: put what the world did onto the graph. It forms NO verdict —
+    rules do that.
+
+    The `print` the generated code sees is ours, and it notes its caller's line number. That is the
+    honest way to learn which statement produced which output when a loop makes one statement produce
+    many: ask the run, rather than deriving it from a position that no longer means anything. The
+    library is exec'd separately so line numbers are the GENERATED source's own."""
     env: dict = {}
-    buf = io.StringIO()
+    seen: "list[tuple[int, str]]" = []
+
+    def observing_print(*args, **kwargs):
+        line = sys._getframe(1).f_lineno         # WHERE in the generated source this output came from
+        buf = io.StringIO()
+        kwargs.pop("file", None)
+        print(*args, file=buf, **kwargs)
+        for text in buf.getvalue().splitlines() or [""]:
+            seen.append((line, text))
+
     try:
-        exec(compile(RUNTIME_LIBRARY + ws.source, "<generated>", "exec"), env)
-        with contextlib.redirect_stdout(buf):
-            env["report"](*INPUTS.values())
-        lines = buf.getvalue().splitlines()
+        exec(compile(RUNTIME_LIBRARY, "<library>", "exec"), env)
+        exec(compile(ws.source, "<generated>", "exec"), env)
+        env["print"] = observing_print
+        env["report"](*ws.inputs.values())
     except Exception as exc:
-        lines = [f"<error: {type(exc).__name__}>"]
-    for k, line in enumerate(lines):
+        seen.append((0, f"<error: {type(exc).__name__}>"))
+
+    tag = f"r{ws.emits - 1}"                            # the emission this run exercised
+    for k, (line, text) in enumerate(seen):
         obs = ws.g.add_node("obs")                      # a fresh node per observation (never interned)
         ws.g.add_relation(obs, "is_a", ws.node("observation"))
         ws.g.add_relation(obs, "at", ws.node(f"i{k}"))
-        ws.g.add_relation(obs, "text", ws.node(line))
+        ws.g.add_relation(obs, "text", ws.node(text))
+        ws.g.add_relation(obs, "from_line", ws.node(f"{tag}L{line}"))
     observe_code(ws)                                    # ...and READ the code, for the second oracle
-    return lines
+    return [text for _, text in seen]
 
 
 def judge_source(spec: "list[tuple[str, str, str]]", source: str) -> "dict[str, bool]":
     """Judge an ARBITRARY program against a spec, reporting each oracle separately.
 
     Used to show what the black-box oracle alone would accept. The loop never produces the cheating
-    program below — the point is that if it ever did, watching stdout would not notice."""
+    program below — the point is that if it ever did, watching stdout would not notice.
+
+    A program we did not emit has no emission record, so its output cannot be attributed the way the
+    build loop attributes its own. Here — and ONLY here — the k-th PRINTING statement is taken to
+    realize the k-th step (a policy call prints nothing, so it is not a candidate). That is a declared
+    assumption about a foreign flat program, not a mechanism the build loop relies on."""
+    def prints(node) -> bool:
+        return (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name) and node.value.func.id == "print")
+
     ws = Workspace(spec=list(spec))
     for s_, p_, o_ in ws.spec + LATTICE:
         ws.fact(s_, p_, o_)
     ws.rules(EXPANSION)
+    ws.rules(LOWERING)
     ws.source = source
+    ws.emits += 1
+    tag = f"r{ws.emits - 1}"
+    printing = [n for n in ast.parse(source).body[0].body if prints(n)]
+    for st, node in zip(_ordered_statements(ws), printing):
+        ws.g.add_relation(st, "source_line", ws.node(f"{tag}L{node.lineno}"))
     _run_and_observe(ws)
     return oracle_report(ws)
 
@@ -528,7 +796,8 @@ def _perform(ws: Workspace, step: str) -> "set[str]":
         return {"output_ok"} if ok else set()
     if step in REPAIRS:
         before = ws.source
-        ws.rules(REPAIRS[step])                      # the RULE decides the fix, and WHERE it applies
+        ws.rules(JUDGE)                              # JUDGE first, over what has actually been observed
+        ws.rules(REPAIRS[step])                      # ...then the RULE decides the fix, and WHERE
         ws.source = emit_source(ws)
         ws.stdout = _run_and_observe(ws)
         ok = verdict(ws)
@@ -662,6 +931,10 @@ class Refusal:
         if self.kind == "uncovered":
             return (f"REFUSED (uncovered): no rule covers {list(self.missing)} — nothing was lowered. "
                     f"Tried: {list(self.tried)}. To fix, author an expansion rule for it.")
+        if self.kind == "unstructured":
+            return (f"REFUSED (unstructured): the program ran and the output was RIGHT "
+                    f"({list(self.got)}), but reading the code shows {list(self.missing)} missing. "
+                    f"Tried: {list(self.tried)}.")
         return (f"REFUSED (unverified): the program ran and the world disagreed — wanted "
                 f"{list(self.wanted)}, got {list(self.got)}. No available recovery rule closes this. "
                 f"Tried: {list(self.tried)}.")
@@ -698,6 +971,12 @@ class Build:
             missing = tuple(sorted(d.name(n) for n in of_kind(d, "intent")
                                    if holds(d, d.name(n), "uncovered_intent", "yes")))
             return Refusal("uncovered", tuple(self.order), missing=missing)
+        if not holds(d, "report", "refused_unverified", "yes") \
+                and holds(d, "report", "refused_unstructured", "yes"):
+            # the output is right and the CODE is not — name that, rather than blaming the world.
+            gaps = tuple(sorted(d.name(f) for f in many(d, d.nodes_named("report")[0],
+                                                        "structural_unmet")))
+            return Refusal("unstructured", tuple(self.order), missing=gaps, got=tuple(self.stdout))
         return Refusal("unverified", tuple(self.order),
                        got=tuple(self.stdout), wanted=tuple(self.workspace.wanted()))
 
@@ -707,7 +986,8 @@ class Build:
         return self.workspace.source if self.ok else None
 
 
-def build(spec: "list[tuple[str, str, str]] | None" = None) -> Build:
+def build(spec: "list[tuple[str, str, str]] | None" = None,
+          inputs: "dict | None" = None) -> Build:
     """Author `to build : …` and `run build`, letting ugm's planner drive the steps and (when the check
     fails by execution) replan onto an alternative producer."""
     rules = h.load_machine_rules("\n".join(
@@ -718,7 +998,9 @@ def build(spec: "list[tuple[str, str, str]] | None" = None) -> Build:
         _stage(g, step)
     h.ingest(g, [], "to build : expand then lower then emit then check")
 
-    ws, order = Workspace(spec=list(spec if spec is not None else SPEC)), []
+    ws = Workspace(spec=list(spec if spec is not None else SPEC),
+                   inputs=dict(inputs if inputs is not None else INPUTS))
+    order: "list[str]" = []
     h.ingest(g, rules, "run build", tools={"act": _act_tool(ws, order), "rank": _rank_tool()})
     return Build(order, ws)
 
@@ -788,6 +1070,47 @@ def run() -> None:
     for line in c.workspace.log[2:]:
         print(f"   {line}")
     print(f"\n   final: {c.source.splitlines()[-1].strip()}   ok={c.ok}")
+
+    print("\n" + "=" * 78)
+    print("LOOPS — nesting, and why attribution had to become an OBSERVATION")
+    print("=" * 78)
+    d = build(SPEC_LOOP, INPUTS_LOOP)
+    for line in d.workspace.log:
+        print(f"   {line}")
+    print("\n   final program:")
+    for line in d.source.splitlines():
+        print(f"      {line}")
+    print(f"\n   verified by running it: {d.stdout} -> {d.ok}")
+    print("\n   ONE statement produced TWO output lines, so 'the k-th statement prints the k-th line'")
+    print("   stopped being true — the assumption the flat pipeline attributed repairs with. The fix is")
+    print("   not a cleverer index: emission records WHERE it put each statement, the run records which")
+    print("   line was executing when each output appeared, and one rule joins them. Attribution became")
+    print("   something the world reported rather than something we inferred — and the recovery rules")
+    print("   did not change at all, which is the test of whether that was the right seam.")
+    dg, dloop = d.workspace.g, of_kind(d.workspace.g, "emit_for")[0]
+    inside = many(dg, dloop, "body_has")[0]
+    print(f"\n   the repaired statement is INSIDE the body (body_has -> {dg.name(inside)}, versions "
+          f"{sorted(dg.name(v) for v in many(dg, inside, 'version'))}), and `print(title)` after the")
+    print("   loop kept its v1 — a repair in a nested scope stays in that scope.")
+
+    print("\n" + "=" * 78)
+    print("ONE PATTERN LIBRARY — the loop is lowered by the SAME text that recognizes one")
+    print("=" * 78)
+    print("   `pystrider.patterns` holds the description, in neither side's vocabulary:")
+    print(f"      {ITERATION}")
+    print("   Lowering uses it as a rule HEAD to BUILD the loop above. The spec's requirement")
+    print("   `report requires_iteration_over names` is checked with the same text as a rule BODY,")
+    print("   over facts read back out of the EMITTED SOURCE — so what is confirmed is the artifact,")
+    print("   not our intention to emit it.\n")
+    flat = build(SPEC_LOOP_FLAT, INPUTS_LOOP_FLAT)
+    print("   Here is a spec that never asks for a loop, whose output is EXACTLY right:")
+    for line in flat.source.splitlines():
+        print(f"      {line}")
+    print(f"\n      ran it -> {flat.stdout}   (every expectation met: "
+          f"{oracle_report(flat.workspace)['prints_ok']})")
+    print(f"      {flat.refusal}")
+    print(f"      shipped: {flat.shipped!r}")
+    print("\n   Right output, wrong SHAPE — and the refusal says so instead of blaming the world.")
 
     print("\n" + "=" * 78)
     print("THE HONEST BOUNDARY — when the rules cannot get there, REFUSE by name")

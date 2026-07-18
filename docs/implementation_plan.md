@@ -1,18 +1,148 @@
 # pystrider — implementation plan (continuation)
 
-A cold-start guide for the next session. Read this, then `docs/spike_findings.md` (what's proven)
-and `docs/code_reasoning_design.md` (the design + open questions). Everything below the spike is
-built and green; this plan is what's next. The *strategic* layer — which product this becomes and
-in what phase order — is `docs/roadmap.md` (2026-07-14); this file stays tactical.
+A cold-start guide for the next session.
+
+**Read the "Current state — START HERE (2026-07-18)" section immediately below, then the COURSE
+CORRECTION.** Those two are the whole briefing. This file has accreted several superseded lines
+(the grammapy convergence, the 2026-07-12 spike, the 2026-07-17 soundness trail); each is marked,
+and none of them is the current direction. Older reading — `docs/spike_findings.md`,
+`docs/code_reasoning_design.md`, `docs/roadmap.md` — describes the earlier generations and should be
+read as history, not as the plan.
 
 ---
 
-## Current state — START HERE (2026-07-17)
+## Current state — START HERE (2026-07-18)
 
-The durable record is the **memory files** (`footprint-synthesis`, `pattern-writer`, `docs-site`) and the
-current docs: **[`the_case.md`](the_case.md)** (the whole argument), **[`understanding_findings.md`](understanding_findings.md)**
-(the findings), **[`deep_dive.md`](deep_dive.md)** (the tour), **[`roadmap.md`](roadmap.md)** (strategy).
-Everything below the next heading is the *historical* grammapy-convergence line, superseded.
+**Read this section and the COURSE CORRECTION below before anything else in this file.** Everything
+under "Historical" and "Where we are (2026-07-12)" is a superseded line, kept as an archive; the
+2026-07-17 footprint/soundness material is superseded too (see the correction — that trail was a
+rabbit hole the user stopped).
+
+**The active work is the BUILD SPINE:** a succinct spec becomes running Python through steps sequenced
+by ugm's real planner, with the navigate loop (do → check → recover) as the organizing principle.
+
+- **`experiments/build_procedure.py`** (+ `tests/test_build_procedure.py`, 34 pins) — the centrepiece.
+  `to build : expand then lower then emit then check`, driven by `corpus/procedure.cnl` +
+  `planning*.cnl`. Run it: `python -m experiments.build_procedure` (the walkthrough prints the whole
+  argument).
+- **`experiments/ast_representation.py`** (+7) / **[`docs/ast_representation_findings.md`](ast_representation_findings.md)**
+  — how ordered/nested/revisable AST lives in triples. The design rules everything else obeys.
+- **`experiments/vocabulary_bridge.py`** (+7) / **[`docs/vocabulary_bridge.md`](vocabulary_bridge.md)**
+  — vocabularies reconcile by BRIDGES, never convergence; bridges fix naming, never coverage.
+- **`pystrider/patterns.py`** — THE PATTERN LIBRARY. Structural descriptions in a neutral vocabulary,
+  read as a rule BODY to recognize and as a rule HEAD to construct. Two entries of DIFFERENT shape
+  (`ITERATION`, a container of statements; `APPLICATION`, an expression with an operand), each driving
+  the spine's construction AND its structural oracle. Its module docstring carries the authoring rules.
+- **`experiments/bidirectional_pattern.py`** (+8) — ONE authored pattern text that both RECOGNIZES an
+  iteration in hand-written Python and WRITES one from an intent. The humble goal's load-bearing claim,
+  isolated and perturbation-tested. Run it: `python -m experiments.bidirectional_pattern`.
+
+**Suite: 366 green** (`./.venv/Scripts/python.exe -m pytest -q`, ~5.5 min). Playground:
+`python demos/playground/playground.py`. Site: `python -m mkdocs build`.
+
+### What the spine currently proves
+
+Every judgement is a rule over the substrate; Python is mechanism only. `check` RUNS the program and
+MINTS one observation per output line, forming no opinion — `VERDICT`/`INSPECTION`/`SATISFIED`/`REFUSAL`
+rules derive whether it is satisfied, WHICH line is wrong, and what kind of failure it is. Two
+independent oracles (watch the output; READ the code via `intake` + a bridge), ANDed by a rule. Three
+repair shapes — rewrite a payload, wrap an existing repair, ADD a statement — ATTRIBUTED to the statement
+that actually produced a line so fixing line 1 provably does not rewrite line 2, ordered cheapest-first by
+staged `cost` knowledge, and composing to reach specs no single rule covers. Programs NEST: a rule mints a
+`for`, another nests statements in its body, and the unchanged recovery rules repair inside that body.
+Refusal is a first-class outcome (`uncovered` = missing
+knowledge, names what to author; `unverified` = insufficient knowledge), and a refused build ships
+NOTHING. `why` answers over generated code, citing the failed execution as the cause of the change.
+
+### STANDING LESSONS — hard-won, do not re-derive
+
+1. **The substrate is NAMELESS.** Minted nodes share their head's literal name; identity is the node id
+   (or a structural `ByDesc`). Keying on a name silently collapsed 3 statements into 1. Never design
+   against this — never ask for fabricated per-node names.
+2. **A rule body DECLARES cardinality: one minted node per distinct match of the WHOLE BODY.** Not per
+   head variable — this lesson previously said "a function of its head-anchored endpoints" and that is
+   **wrong**, which matters because it endorses a fix that does not work (moving the offending term out
+   of the head does nothing; it has to leave the rule). Verified: `n? … when ?x is_a thing and ?x tag ?y`
+   mints one node PER TAG even though `?y` appears nowhere in the head. ugm's own
+   `_find_skolem_witness` states it correctly — "identified by how it relates to the LHS match"; our
+   distillation had drifted. Filed as ugm **#21** (ask: report a mint head's key at load time — this
+   never errors and the symptom appears far from the cause).
+   - Ask **"one per WHAT?"** and make the body match exactly that. Everything else attaches in a second
+     rule with the node LHS-bound, where it mints nothing.
+   - Fan-out is often RIGHT (`ast_representation` E3 mints one call per step deliberately). The lesson
+     is not "avoid fan-out", it is "the body is the arity declaration".
+   - **Collapse an existential into a derived fact BEFORE minting on it.** A shared condition that binds
+     `?x` multiplies every mint composed with it; projecting `?x` away (`STALE`) gives one fact per
+     subject however many witnesses there are.
+   - **Attach a collapsed judgement to the thing it is ABOUT, not to its owner.** On a monotone graph a
+     statement-level "unmet" flag means "was EVER unmet" and never clears; keyed on the PAYLOAD VERSION
+     (its own node) it is permanently true of that payload and never leaks to its repair.
+3. **JUDGE and ACT in separate passes.** A bank that forms a judgement and mints against it in one
+   fixpoint lets the new thing be judged by evidence that PREDATES it: `stale` fired on the payload the
+   same pass had just minted, before it was ever emitted or run, marking a repaired payload "seen unmet"
+   having never been seen. The fact is permanent. Run the judgement bank first, over what has actually
+   been observed, then the minting bank gated on its result.
+4. **A "latest/current" pointer must be ASKED, never stored.** The graph is monotone, so a materialized
+   `current` cannot move and the node ends up with two. Derive it read-only (`?pr current ?v when ?pr
+   version ?v and not ?pr version ?w and not ?w supersedes ?v`), scoped per-node.
+5. **Any bank with negation over a DERIVED fact must be scheduled.** `run_bank` stratifies by default
+   since ugm #18 — but this once reported a demonstrably wrong program as OK, permanently, because the
+   graph is monotone. Check a negating rule on BOTH engines (forward `run_bank` AND demand `ask_goal`):
+   ugm #16 was a real bug where they disagreed.
+6. **Self-extinguishing rules need FORWARD provenance.** A repair fires because a line is unmet and its
+   effect makes it met, so the demand chain can never re-derive it and `why` gives `(given)`. Use
+   `run_bank(..., provenance=True)` when the bank BUILDS the program.
+7. **`cheaper_than` is the planner's ONLY narrowing criterion**, and the rank tool must impose a TOTAL
+   order (ties broken deterministically — the §8 calculator's job). Without it every untried producer
+   commits and ALL of them run.
+8. **A passing run is not evidence a mechanism is doing the work.** A dead rank tool looked alive
+   because its output coincided with existing behaviour; only INVERTING the costs settled it. Perturb
+   the input whenever claiming something is load-bearing.
+9. **Prefer an OBSERVED fact to a derived one when mechanism already knows the answer.** Attribution was
+   inferred from position until loops made position meaningless; emission and the run each already knew
+   their half, so the honest fix was to record both and join them with one rule. Ask what the tool
+   already knows before authoring a derivation.
+
+### NEXT (recommended order)
+
+1. **Measure REACH** — the user's framing is that a limited rule set navigates a large solution space;
+   that is a coverage claim and we have never measured it. A curve over varied specs (how many build,
+   how many refuse, and which kind of refusal), mirroring what `understand_curve.py` did for the reading
+   half. Now unblocked by loops, but still wants a few more expansion rules first — with two expansion
+   rules the number says little.
+2. **More nesting shapes.** `if` is the obvious next one, and it is a different problem from `for`: a
+   branch means a statement can legitimately produce NO output on a given run, so "never observed to
+   print what it wants" stops implying "wrong". Conditionals are where the current unmet condition will
+   need to learn about reachability.
+3. Cheap follow-ons: retire `run_stratified` (now a thin wrapper; `run_bank` stratifies by default);
+   loosen the remaining literal `order`/source assertions in `test_build_procedure.py` to the properties
+   they mean (the tiebreak pin was just given this treatment); a findings doc for the spine, since the
+   slice log below is the only write-up.
+
+### Known debt
+
+- **`pystrider/footprint.py::_const_bindings` is a Python algorithm** (a constant-propagation pass) —
+  the anti-pattern the correction names. It wants re-authoring as CNL rules over intake facts, or
+  deleting with the soundness trail it serves.
+- `intake` still does not model: aug-assign, attribute/subscript store, tuple unpack, for/with. Each is
+  an audited `not_modelled` marker, and that list IS the coverage worklist (bare calls were closed this
+  session for exactly this reason).
+
+The durable record is the **memory files** (`build-procedure-spine`, `vocabulary-bridges`,
+`ast-minting-unblocked`, `humble-goal-course-correction`, `pattern-writer`) and, for the superseded
+line, **[`the_case.md`](the_case.md)** / **[`deep_dive.md`](deep_dive.md)** / **[`roadmap.md`](roadmap.md)**.
+ugm feedback + their answers live in `../ugm/docs/feedback_from_pystrider.md` (we are at item #20).
+
+---
+
+### Archive — the 2026-07-17 line (SUPERSEDED, skip on a cold start)
+
+Everything from here to the COURSE CORRECTION describes the soundness/footprint trail the user stopped
+on 2026-07-18 ("we are again going down the rabbit hole of the theorem-prover family of tools"). It is
+factually accurate about what was built and still green in the suite, but it is NOT the current
+direction, and its "Next steps" list is superseded by the NEXT section above. Kept for the repo-state
+description (what exists, what was deleted) and because the wildcard/soundness work is still shipping
+code.
 
 **The thesis is made, demonstrated, documented, and shipped.** "Trustworthy code from a symbolic core +
 execution, with a language model nowhere in the trust path" — for the orchestration-and-decision class of
@@ -83,6 +213,14 @@ Two standing constraints that override the candidate list below:
    step cannot be expressed today, the move is to **write custom firmware, or ask the ugm team for new CNL
    forms** — not to write the algorithm in Python. Audit existing code against this; `_const_bindings`
    (above) is a fresh violation, and the symbolic-execution work is the main thing to resurrect.
+
+---
+
+## The 2026-07-18 arc — slice log (the record of how the spine was built)
+
+Ten slices, newest last. Read for *why* something is the way it is; the STANDING LESSONS at the top of
+this file are the distilled version, and each probe's module docstring carries its own argument. Several
+entries record a mistake and its correction — those are the valuable ones.
 
 **SLICE 1 DONE (2026-07-18) — the AST-representation probe.** De-risked the representation before
 building any pipeline: `experiments/ast_representation.py` + `tests/test_ast_representation.py` (7 pins)
@@ -288,6 +426,146 @@ default build now runs **two** repairs instead of three.
 Known limit, pinned upstream: with no cost staged, every untried producer still commits — the bank has
 no basis for a tiebreak and a total-order `rank` is where one belongs.
 
+**SLICE 14 DONE (2026-07-18) — A SECOND PATTERN, OF A DIFFERENT SHAPE.** 34 pins, suite 366. The
+library had one entry, so "library" was still a promise: `ITERATION` might simply have been fitted to
+its two consumers. `APPLICATION` (`?x applies ?fn and ?x to ?arg`) is deliberately a different KIND of
+thing — an iteration is a container of statements, an application is an expression with an operand —
+and it went in without changing the library's construction: mint on invariants, ATTACH the pattern with
+the node LHS-bound, BRIDGE to the consumer's vocabulary. The spine's two payload repairs are now
+generated from it by one helper (`_repair_by_application`), where before each hand-minted its own
+`ast_call`.
+
+**It also bought a capability, which is the better argument than symmetry.** `requires_call greet` can
+only say the function is mentioned somewhere; the application pattern asks WHAT IT IS APPLIED TO. The
+same program — `print(greet(title))`, greet called on the wrong variable — passes the first reading and
+fails the second (pinned both ways). That is the almost-right program that neither watching stdout for
+one input nor counting calls can catch.
+
+Honest limit, recorded in the pattern: it recognizes an application to a NAMED value, so `f(g(x))` is
+not matched (the argument expression reads nothing). That is a coverage gap in the PATTERN, not in a
+bridge, and no bridge can close it.
+
+**SLICE 13 DONE (2026-07-18) — THE PATTERN LIBRARY WIRED INTO THE SPINE.** 32 pins, suite 364. Slice 11
+proved one description can drive both halves; this makes it the architecture rather than a demo.
+
+**`pystrider/patterns.py` is now a real module**, not constants in a probe — promoted the moment a
+SECOND consumer appeared, since a "library" with one consumer proves nothing. `build_procedure`'s
+LOWERING no longer owns a loop rule: it mints a `loop_node` on invariants, ATTACHES `ITERATION` as a
+rule HEAD, and bridges the neutral structure into its own emit vocabulary with `ITERATION_TO_EMIT`.
+`at` is attached separately and deliberately — WHERE a loop sits is the pipeline's business, not part
+of what makes an iteration an iteration. EXPANSION gained `is_a loop_step` purely to give the mint an
+INVARIANT to key on (lesson 2: keying on `?ls loops_over ?v` happens to be single-valued today, which
+is the kind of luck that stops being luck).
+
+**THE PAYOFF — a requirement authored in the pattern's vocabulary and verified by READING the code.**
+`report requires_iteration_over names` is satisfied by the write half and confirmed by the read half
+parsing the EMITTED SOURCE. This needed `ITERATION_FROM_INTAKE` to stamp `from_code`: a consumer that
+both writes structure and reads it back holds neutral facts of both origins on one graph, so without
+it the check would have been satisfied by the loop the writer had just minted — verifying its own
+intention instead of the artifact. Demonstrated by `SPEC_LOOP_FLAT`: a spec that never asks for a loop,
+whose output is EXACTLY right (`prints_ok: True`), refused because the required shape is absent.
+
+**A THIRD REFUSAL KIND, forced by the above — `unstructured`.** The flat build first refused with "the
+program ran and the world disagreed" and printed IDENTICAL wanted/got lists. The world had agreed; the
+code was wrong. A refusal that names the wrong cause is barely better than no refusal — it sends you to
+fix the output, which is already correct. `refused_unstructured` is derived from `structural_unmet` and
+reports "the output was RIGHT … but reading the code shows X missing". Found by reading the walkthrough
+output, not by a test.
+
+**SLICE 12 DONE (2026-07-18) — STANDING LESSON 2 WAS WRONG, and it was costing us bugs.** 29 pins,
+suite 361. Prompted by the user asking to discuss the lesson before building on it — the right call.
+
+**The lesson misstated the substrate.** It said a skolem is "a function of ALL its head-anchored
+endpoints". Verified false: `n? … when ?x is_a thing and ?x tag ?y` mints one node PER TAG with `?y`
+nowhere in the head. The skolem is keyed on the WHOLE MATCH. ugm's own `_find_skolem_witness` says this
+correctly ("identified by how it relates to the LHS match") — our distillation had drifted, and the
+error endorsed a fix that does not work (moving the term out of the head changes nothing). Rewritten as
+lesson 2, corrected in `ast_representation.py` / its findings doc / its test docstring, and filed as
+**ugm #21** — a *diagnostic* ask (report a mint head's key at load time), since this never errors and
+the symptom surfaces far from the cause.
+
+**It was live in green pinned code.** The loop build minted TWO identical `ast_call` nodes and gave one
+statement two `arg_v2` values, because the shared unmet condition binds `?st wants ?x` and a looped
+statement wants one text per element. Nothing failed — the head names no `?x`, so the duplicates were
+interchangeable and `one()` picked between equals. Cured by projecting `?x` away first (`STALE`: one
+fact per (statement, payload) however many expectations witness it).
+
+**Which uncovered a second, worse bug — and a new standing lesson.** `stale` was materialized in the
+SAME bank pass that minted the payload, i.e. before that payload had ever been emitted or run: a
+repaired payload was permanently marked "seen unmet" having never been seen at all, so `repair_shout`
+would rewrite a line `repair_greet` had just fixed. Only the planner's actuator guard was hiding it, and
+no test would have caught it. Two things fix it, both now lessons: staleness attaches to the PAYLOAD
+VERSION (its own node) rather than to the statement, so a monotone fact cannot leak from a payload to
+its repair; and **JUDGE and ACT run in separate passes** (new lesson 3) — `ws.rules(JUDGE)` over what
+has actually been observed, then the minting bank gated on its result.
+
+Pinned: `test_a_repair_mints_ONE_node_however_many_EXPECTATIONS_are_unmet`,
+`test_staleness_attaches_to_the_PAYLOAD_so_it_cannot_leak_to_the_repair`. METHOD NOTE: the second bug
+was found only because the first pin was written to assert a *graph* property rather than an output —
+the program was correct throughout.
+
+**SLICE 11 DONE (2026-07-18) — ONE PATTERN, BOTH DIRECTIONS (the humble goal's load-bearing claim).**
+`experiments/bidirectional_pattern.py` + 8 pins, suite 359. Prompted by an audit against the COURSE
+CORRECTION: of its five clauses, "a library of patterns expressed AS RULES so the same library serves
+both writing and understanding" was the one we had asserted in prose and not built — the two halves met
+at exactly ONE predicate (the `INSPECTION` bridge) and shared no pattern.
+
+**The construction.** A pattern is a structural description authored once in the neutral vocabulary —
+`?x repeats_over ?seq and ?x element ?v and ?x each_does ?body`. That is a conjunction of triples,
+which is what ugm accepts on EITHER side of a rule: read as a rule BODY it recognizes, read as a rule
+HEAD it constructs. Each half reaches its own world through a bridge (`for_loop`/`iterates`/`loop_body`
+from intake; `emit_for`/`iter_over`/`body_has` to the emitter), and neither vocabulary appears in the
+pattern (pinned). The mint is split in two — the loop node is minted on invariants, the description
+attached with the loop LHS-bound — because the description as a mint head would mint one loop per body
+statement (STANDING LESSON 2 again, the second time in one day).
+
+**Pinned:** recognizes an iteration in hand-written Python; writes one from an intent that runs; ROUND
+TRIP (the pattern recognizes the code it wrote); and **PERTURBATION** — renaming one word in the shared
+description takes BOTH halves dark, which is the only evidence that distinguishes one library from two
+that happen to agree. (The first perturbation attempted, adding an unbound `?x tagged_by ?t`, was
+REJECTED by ugm as an RHS-only head variable — the substrate refusing an ill-founded head, which is
+itself worth knowing.)
+
+**INTAKE COVERAGE GROWN — `for`.** The read half was blind to every iteration (`for` was an audited
+`not_modelled`), and no bridge can close a coverage gap. `intake._for` now models it in BOTH registers,
+and the distinction they force is worth keeping: **structure is per-SOURCE, state is per-UNROLLING.**
+Structural facts (`for_loop`/`iterates`/`binds`/`loop_body`) are emitted once, keyed on source position;
+the CFG (states, the element binding from an `unknown_expr`, the body threading) repeats per unrolled
+iteration exactly as `_while` does. Without that split a nested loop minted a second `for_loop` node for
+the same source statement and "how many loops does this function have?" answered 3 for 2 (caught by a
+pin, not by the walkthrough). `loop_body` links DIRECT children only. `for` accordingly graduated off
+the `not_modelled` list in `test_caveats.py`; a `for` over a non-Name target is still unmodelled and is
+now the case pinned there.
+
+**SLICE 10 DONE (2026-07-18) — LOOPS END-TO-END, and attribution became an OBSERVATION.**
+`build_procedure` 27 pins, suite 351. Plan item #1: the pipeline had only ever emitted FLAT statement
+lists. `SPEC_LOOP` declares an intent that ITERATES with another intent `inside` it; expansion mints a
+looping step, lowering mints an `emit_for` and nests the body statement (`body_has`, `in_body` — the
+`ast_representation` E4 idiom, now in the real pipeline), and the emit walk sequences each scope on its
+own terms. **The unchanged `RECOVERY` rule repairs the statement inside the body**, and `print(title)`
+after the loop keeps its v1: a repair in a nested scope stays in that scope.
+
+**THE REAL FINDING — position stopped being index, so attribution had to be OBSERVED.** One statement in
+a loop body produces one output line per iteration, so "the k-th statement prints the k-th line" — the
+assumption every repair was attributed with — is simply false, and no index arithmetic recovers the
+mapping. The fix was not a cleverer derivation: `emit` records WHERE it put each statement
+(`source_line`), the run records which line was executing when each output appeared (`from_line`, via a
+`print` that reads its caller's frame), and ONE rule joins them (`ATTRIBUTION`). Attribution is now a fact
+the world reported, the same move `check` already made for the output itself. Evidence it was the right
+seam: **the recovery rules did not change**, and the flat specs behave identically. Line identities are
+scoped per EMISSION (`r2L4`) because `repair_audit` ADDS a statement and shifts every line below it —
+without that an old observation attributes to whatever moved onto its line number.
+
+**THE E1 TRAP, MET FOR REAL.** `st? … and st? wants ?x` had `wants` in the MINT HEAD, so an intent with
+TWO expectations (exactly what a looped intent has — one per element) minted TWO steps; the emit walk
+silently dropped the second and the build reported an unmet spec for a program that was correct. Fixed by
+the documented idiom: mint on invariants, attach `wants` in its own rule with the step LHS-bound. STANDING
+LESSON 2 is not theoretical — it bites the moment arity stops being one.
+
+Also: `judge_source` (judging a FOREIGN program) has no emission record to attribute with, so it declares
+its assumption explicitly — the k-th PRINTING statement realizes the k-th step — kept out of the build
+loop entirely.
+
 **SLICE 9a (2026-07-18, superseded by 9b) — `rank` made real; the intended benefit did NOT materialize.** Suite 345, 21 pins. `_rank_noop` (a Python stub that only stamped `ranked`) is gone: costs are
 now staged as knowledge (`?o cost ?c`, from `Step.cost`) and a real `rank` tool derives `cheaper_than`,
 which is exactly the §8 comparison-as-calculator boundary `planning.cnl` documents.
@@ -318,7 +596,8 @@ that diff, by likely relevance: `experiments/controlflow_synthesis.py`, `codegen
 plus `pystrider/emit.py`+`emit.cnl` (all recoverable via `git show 2fb0121^:<path>`). CONFIRM WITH THE
 USER which of these is the intended target before porting — the list is inferred, not stated.
 
-**Next steps (candidates from the pre-correction plan — re-read them through the two constraints above):**
+**Next steps (SUPERSEDED — the pre-correction candidate list; the live list is NEXT at the top of this
+file. Kept only to show what was on the table before the course correction):**
 
 1. **Inter-procedural footprint — LOCAL-helper leg DONE (2026-07-17).** Following the store into a
    local/sibling callee is built; the remaining reach of the 49% "passed" slice is METHODS (`self.m(acc)`
