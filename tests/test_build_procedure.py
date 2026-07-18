@@ -6,6 +6,7 @@ loop course-corrects rather than needing to have been right first time.
 """
 import ugm as h
 
+from experiments.build_procedure import _rank_tool as bp_rank
 from experiments.build_procedure import (
     CHEAT_SOURCE, INSPECTION, ORACLES, SATISFIED, SPEC, inspection_graph, judge_source,
     CURRENT, RECOVERY, REFUSAL, REPAIRS, STEPS, VERDICT,
@@ -44,7 +45,7 @@ def test_a_repair_is_ATTRIBUTED_to_the_statement_that_is_actually_wrong():
     # and break line 2. Attribution is by index, in the rule.
     b = build()
     body = [ln.strip() for ln in b.source.splitlines()[1:]]
-    assert body == ["print(greet(name))", "print(title)"]     # line 2 untouched
+    assert body == ["audit()", "print(greet(name))", "print(title)"]   # line 2 untouched
     assert b.stdout == ["hello_bob", "boss"] and b.ok
 
     # and structurally: only the unmet statement gained a new version.
@@ -148,6 +149,105 @@ def test_the_structural_oracle_reads_the_code_through_the_BRIDGE():
     assert "calls_func" not in SATISFIED          # the requirement never mentions intake's names
 
 
+def test_a_structural_repair_fires_on_something_the_output_oracle_CANNOT_SEE():
+    # The third repair shape: driven by READING the code, not by watching it run. `audit()` prints
+    # nothing, so stdout is byte-identical before and after — no output-based loop could ever find it.
+    b = build()
+    log = "\n".join(b.workspace.log)
+
+    # the telling moment: after the payload repair the output is ALREADY final, and the build is
+    # still not satisfied, because the policy call is missing.
+    assert "re-ran it -> ['hello_bob', 'boss'] => STILL WRONG" in log
+    assert "repair_audit" in b.order
+
+    body = [ln.strip() for ln in b.source.splitlines()[1:]]
+    assert body == ["audit()", "print(greet(name))", "print(title)"]
+    assert b.stdout == ["hello_bob", "boss"]      # ...the same output the previous step produced
+    assert b.ok
+
+
+def test_the_structural_repair_MINTS_A_STATEMENT_rather_than_revising_one():
+    # the other repairs add a VERSION to an existing statement; this one adds a statement, and places
+    # it by linking before whichever statement had no predecessor.
+    b = build()
+    g = b.workspace.g
+    calls = of_kind(g, "emit_call")
+    assert len(calls) == 1
+    assert g.name(one(g, calls[0], "callee")) == "audit"
+    heads = [s for s in calls if not any(calls[0] in many(g, o, "stmt_before")
+                                         for o in of_kind(g, "emit_print"))]
+    assert heads                                   # nothing precedes the policy call
+    # and it is scoped: `greet` is required too, but is NOT a policy_call, so no bare `greet()` appears.
+    assert "greet()" not in b.source
+
+
+def test_declared_COSTS_order_the_recovery():
+    """"Try the smallest edit first", authored purely as staged `cost` knowledge (ugm #20).
+
+    This pin previously asserted the OPPOSITE — that ranking did not reach replan-selected
+    alternatives. It was true when written and is now fixed upstream: `corpus/procedure.cnl` emits the
+    rank call for the untried producers of an unmet effect and blocks each one that has a cheaper
+    untried rival, so the cheapest is committed. (The symptom was also worse than we had measured:
+    with no `cheaper_than` facts, `dominated`/`best` — the banks' ONLY narrowing criterion — had
+    nothing to work with, so replan was not picking in staging order, it was picking EVERY untried
+    producer at once.)
+
+    Tested by INVERTING the declared costs and watching the CHOICE invert. That is the only honest way
+    to test this: the default costs agree with staging order, so a passing default run is no evidence
+    at all — which is exactly how the dead version of this tool looked alive.
+    """
+    import experiments.build_procedure as bp
+
+    def repairs_under(costs):
+        original = bp.STEPS
+        try:
+            bp.STEPS = tuple(bp.Step(s.name, s.adds, s.needs, cost=costs.get(s.name, s.cost))
+                             for s in original)
+            b = bp.build()
+            return [o for o in b.order if o.startswith("repair")], b.ok
+        finally:
+            bp.STEPS = original
+
+    cheap_greet, ok1 = repairs_under({"repair_greet": 1, "repair_audit": 2, "repair_shout": 3})
+    cheap_audit, ok2 = repairs_under({"repair_audit": 1, "repair_greet": 2, "repair_shout": 3})
+    assert cheap_greet[0] == "repair_greet"      # the declared-cheapest is committed first...
+    assert cheap_audit[0] == "repair_audit"      # ...and inverting the costs inverts the choice
+    assert ok1 and ok2                           # both orders still reach a verified program
+
+    # the shipped costs encode "how much of the existing program does this edit disturb".
+    assert {s.name: s.cost for s in STEPS if s.name in REPAIRS} == {
+        "repair_greet": 1, "repair_audit": 2, "repair_shout": 3}
+
+
+def test_the_rank_calculator_imposes_a_TOTAL_order():
+    # ugm #20: a forward round collects all its matches before any fires, so two ops the calculator
+    # leaves incomparable BOTH commit. Breaking ties is the calculator's job, not the bank's — so
+    # equal-cost operators must still compare.
+    #
+    # What matters is that a tie yields EXACTLY ONE direction: zero directions and both rivals commit
+    # (the #20 bug), both directions and the order is contradictory. WHICH one wins is arbitrary — the
+    # costs say they are equally good, so there is nothing to be right about — and is deliberately NOT
+    # pinned, so the tiebreak can change without a test failing for no reason.
+    g, ids = h.AttrGraph(), {}
+
+    def node(n):
+        if n not in ids:
+            ids[n] = g.add_node(n)
+        return ids[n]
+
+    for s, p, o in [("alpha", "cost", "c2"), ("beta", "cost", "c2")]:   # a TIE
+        g.add_relation(node(s), p, node(o))
+
+    from ugm.dispatch import call_arg as _ca
+    handler = bp_rank()
+    call = g.add_node("<call>")
+    g.add_relation(call, "arg", ids["alpha"])
+    handler(g, call)
+    pairs = {(g.name(n), g.name(t))
+             for n in g.nodes() for r, t in g.relations_from(n) if g.has_key(r, "cheaper_than")}
+    assert (("alpha", "beta") in pairs) != (("beta", "alpha") in pairs)
+
+
 def test_a_verified_build_ships_and_a_refused_one_does_not():
     ok = build()
     assert ok.refusal is None and ok.shipped == ok.source
@@ -183,7 +283,12 @@ def test_two_repairs_COMPOSE_when_one_is_not_enough():
     # `HELLO_BOB` is unreachable by either recovery rule alone; the LOOP composes them, checked by
     # execution at each hop. This is the spec that was REFUSED before the second rule existed.
     b = build(SPEC_TWO_REPAIRS)
-    assert b.order[-2:] == ["repair_greet", "repair_shout"]
+    # cost order is greet(1) -> audit(2) -> shout(3). `audit` is tried in between and does not apply
+    # (this spec declares no policy call), which is what a cascade through cheaper alternatives looks
+    # like: the loop spends a turn finding out, then moves on.
+    tried = [o for o in b.order if o.startswith("repair")]
+    assert tried == ["repair_greet", "repair_audit", "repair_shout"]
+    assert tried.index("repair_greet") < tried.index("repair_shout")   # greet's repair is wrapped
     assert b.source.splitlines()[-1].strip() == "print(shout(greet(name)))"
     assert b.stdout == ["HELLO_BOB"] and b.ok and b.refusal is None
     pr = of_kind(b.workspace.g, "emit_print")[0]
@@ -193,11 +298,17 @@ def test_two_repairs_COMPOSE_when_one_is_not_enough():
 
 
 def test_a_repair_does_not_run_once_the_goal_already_holds():
-    # the actuator guard: after `repair_greet` satisfies the spec, `repair_shout` must NOT fire and
-    # shout an already-correct greeting, turning a passing build into a failing one.
-    b = build()
-    assert "repair_shout" not in b.order
-    assert b.ok
+    # the actuator guard: once the goal is met, a later alternative producer must NOT fire and shout an
+    # already-correct greeting, turning a passing build into a failing one.
+    #
+    # Uses a spec WITHOUT the policy requirement, so `repair_greet` alone satisfies everything — which
+    # is exactly the situation the guard exists for. (Under the full SPEC the goal is still unmet after
+    # `repair_greet`, because `audit` is missing, so the later repairs legitimately do get a turn.)
+    spec = [f for f in SPEC if f[2] not in ("audit", "policy_call")]
+    b = build(spec)
+    assert b.order == ["expand", "lower", "emit", "check", "repair_greet"]
+    assert "repair_shout" not in b.order and "repair_audit" not in b.order
+    assert b.stdout == ["hello_bob", "boss"] and b.ok
 
 
 def test_a_repair_declares_the_progress_it_makes_and_what_it_depends_on():

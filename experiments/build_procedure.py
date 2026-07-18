@@ -69,6 +69,7 @@ __all__ = [
     "Build", "Refusal", "Workspace", "build", "current_versions", "verdict", "oracle_report",
     "inspection_graph", "INSPECTION", "SATISFIED", "ORACLES",
     "emit_source", "of_kind", "one", "many", "run_stratified", "judge_source", "CHEAT_SOURCE",
+    "RECOVERY_AUDIT", "observe_code",
 ]
 
 
@@ -91,8 +92,11 @@ SPEC: "list[tuple[str, str, str]]" = [
     ("title_line", "outputs", "title"), ("title_line", "at", "i1"),
     ("title_line", "expects", "boss"),               # already correct -> must be LEFT ALONE
     ("i0", "before", "i1"),
-    # a STRUCTURAL requirement, judged by reading the code rather than watching its output
+    # STRUCTURAL requirements, judged by reading the code rather than watching its output.
+    # `greet` is satisfied by repairing a payload; `audit` is a POLICY call that changes no output at
+    # all, so only the structural oracle can ever see whether it is there.
     ("report", "requires_call", "greet"),
+    ("report", "requires_call", "audit"), ("audit", "is_a", "policy_call"),
 ]
 
 # --- the two ways a limited rule set legitimately fails ---------------------------------------------
@@ -212,6 +216,26 @@ REFUSAL = (VERDICT + "\n"
            "and ?st unmet_at ?i")
 
 
+# --- recovery driven by the STRUCTURAL oracle: add a missing policy call ------------------------------
+# The other repairs rewrite a statement's payload because its OUTPUT was wrong. This one fires because
+# the CODE is wrong: a required policy call is absent. Its body IS the structural gap (the same
+# `not … calls_func ?f` shape the requirement uses), so it self-gates once the call exists.
+#
+# Two things make it a different repair SHAPE from the others: it MINTS A NEW STATEMENT rather than
+# revising an existing one, and it is invisible to the output oracle — `audit()` prints nothing, so
+# stdout is byte-identical before and after. Only reading the code can drive this repair.
+#
+# It places the statement by linking it before whichever statement currently has no predecessor (the
+# sequence head), which keeps the emit walk a simple linked list. `?f is_a policy_call` scopes it: a
+# required call that belongs inside a payload (`greet`) is NOT satisfied by bolting on a bare call.
+RECOVERY_AUDIT = (
+    "au? is_a emit_call and au? callee ?f and au? for_proc ?p "
+    "when ?p is_a procedure and ?p requires_call ?f and ?f is_a policy_call "
+    "and not ?c is_a call and not ?c calls_func ?f\n"
+    "?au stmt_before ?pr when ?au is_a emit_call and ?pr is_a emit_print and ?pr at ?i "
+    "and not ?q is_a emit_print and not ?q stmt_before ?pr")
+
+
 # --- the version lattice + the `current` projection --------------------------------------------------
 
 LATTICE: "list[tuple[str, str, str]]" = [("arg_v2", "supersedes", "arg_v1"),
@@ -228,7 +252,8 @@ CURRENT = ("?pr current ?v when ?pr version ?v "
 
 # The library available to the generated code at run time (the `check` step's world).
 RUNTIME_LIBRARY = ("def greet(n):\n    return 'hello_' + n\n"
-                   "def shout(n):\n    return n.upper()\n")
+                   "def shout(n):\n    return n.upper()\n"
+                   "def audit():\n    pass\n")            # prints NOTHING — invisible to stdout
 
 
 # --- mechanism (§8) ---------------------------------------------------------------------------------
@@ -309,40 +334,39 @@ class Workspace:
                 if one(self.g, n, "expects") is not None]
 
 
-def inspection_graph(ws: Workspace) -> AttrGraph:
-    """The artifact graph PLUS what the shipped analyzer sees in the emitted source.
+def observe_code(ws: Workspace) -> None:
+    """READ the emitted source with the shipped analyzer and record what it saw, onto the WORKING graph.
 
-    `intake_function` reads the generated code in its OWN vocabulary (`is_a call` / `calls_func`), which
+    `intake_function` parses the generated code in its OWN vocabulary (`is_a call` / `calls_func`), which
     the INSPECTION bridge lifts into the neutral `invokes`. Names unify the two sides at the fact
     boundary — the `greet` node the lowering rules minted and the `greet` intake read out of the source
-    are the same node — which is precisely what a bridge is for."""
-    g = ws.g.copy()
+    are the same node — which is precisely what a bridge is for.
+
+    These land on `ws.g`, not a scratch copy, because a RECOVERY rule has to be able to see them: a
+    repair driven by the structure of the code needs the structure of the code in the graph it runs
+    over. Like the output observations they ACCUMULATE across runs, and that is the right reading —
+    "has this program ever been seen to call `audit`?" — so a structural repair stops firing once the
+    call exists."""
     if not ws.source:
-        return g
-    ids: dict = {}
-
-    def node(name: str) -> str:
-        if name not in ids:
-            found = g.nodes_named(name)
-            ids[name] = found[0] if found else g.add_node(name)
-        return ids[name]
-
+        return
     for s, p, o in intake_function(ws.source).facts:
-        g.add_relation(node(s), p, node(o))
-    return g
+        ws.fact(s, p, o)
+
+
+def inspection_graph(ws: Workspace) -> AttrGraph:
+    """The graph the oracles are asked over — the artifact plane, which already carries the read-side
+    facts (`observe_code`). A copy, so a question never inks a sticky answer."""
+    return ws.g.copy()
 
 
 def verdict(ws: Workspace) -> bool:
     """Is the spec satisfied? ASKED of the substrate — BOTH oracles, ANDed by a rule."""
-    g = inspection_graph(ws)
-    run_stratified(g, ORACLES)
-    return holds(g, "report", "satisfied", "yes")
+    return holds(ws.derived(ORACLES), "report", "satisfied", "yes")
 
 
 def oracle_report(ws: Workspace) -> "dict[str, bool]":
     """Each oracle's verdict separately — what the walkthrough and the pins contrast."""
-    g = inspection_graph(ws)
-    run_stratified(g, ORACLES)
+    g = ws.derived(ORACLES)
     return {"prints_ok": holds(g, "report", "prints_ok", "yes"),
             "structure_ok": not many(g, g.nodes_named("report")[0], "structural_unmet"),
             "satisfied": holds(g, "report", "satisfied", "yes")}
@@ -365,8 +389,9 @@ def _expr(ws: Workspace, node: str) -> ast.expr:
 
 
 def _ordered_statements(ws: Workspace) -> "list[str]":
-    """Statements in the order the rules derived (`stmt_before`); the walk decides nothing."""
-    stmts = of_kind(ws.g, "emit_print")
+    """Statements in the order the rules derived (`stmt_before`); the walk decides nothing. Both
+    statement kinds participate — a printed line and a bare policy call are equally statements."""
+    stmts = of_kind(ws.g, "emit_print") + of_kind(ws.g, "emit_call")
     succ = {s: [t for t in many(ws.g, s, "stmt_before") if t in stmts] for s in stmts}
     targets = {t for v in succ.values() for t in v}
     cur, seq = next((s for s in stmts if s not in targets), None), []
@@ -376,12 +401,20 @@ def _ordered_statements(ws: Workspace) -> "list[str]":
     return seq
 
 
+def _statement_ast(ws: Workspace, st: str, current: "dict[str, str]") -> ast.stmt:
+    """One statement, rendered. An `emit_call` is a bare policy call (`audit()`); an `emit_print` prints
+    the payload its CURRENT version selects."""
+    if st in of_kind(ws.g, "emit_call"):
+        return ast.Expr(ast.Call(func=ast.Name(id=ws.g.name(one(ws.g, st, "callee")), ctx=ast.Load()),
+                                 args=[], keywords=[]))
+    return ast.Expr(ast.Call(func=ast.Name(id="print", ctx=ast.Load()),
+                             args=[_expr(ws, one(ws.g, st, current[st]))], keywords=[]))
+
+
 def emit_source(ws: Workspace) -> str:
     """Walk the minted structure through the current-version projection and unparse. The last mile."""
     current = current_versions(ws)
-    body = [ast.Expr(ast.Call(func=ast.Name(id="print", ctx=ast.Load()),
-                              args=[_expr(ws, one(ws.g, pr, current[pr]))], keywords=[]))
-            for pr in _ordered_statements(ws)]
+    body = [_statement_ast(ws, st, current) for st in _ordered_statements(ws)]
     fn = ast.FunctionDef(
         name="report",
         args=ast.arguments(posonlyargs=[], args=[ast.arg(arg=p) for p in INPUTS],
@@ -407,6 +440,7 @@ def _run_and_observe(ws: Workspace) -> "list[str]":
         ws.g.add_relation(obs, "is_a", ws.node("observation"))
         ws.g.add_relation(obs, "at", ws.node(f"i{k}"))
         ws.g.add_relation(obs, "text", ws.node(line))
+    observe_code(ws)                                    # ...and READ the code, for the second oracle
     return lines
 
 
@@ -436,6 +470,7 @@ class Step:
     name: str
     adds: "tuple[str, ...]"
     needs: "tuple[str, ...]" = ()
+    cost: "int | None" = None      # knowledge the planner ranks on; None = not comparable
 
 
 STEPS = (
@@ -447,11 +482,22 @@ STEPS = (
     # can make PROGRESS without reaching the goal, and that progress is itself an observable effect.
     # `repair_shout` DEPENDS on it — it wraps the greeted payload, so it cannot run first. Declaring
     # that is the honest move; leaving the order to how operators happen to be staged would be luck.
-    Step("repair_greet", ("output_ok", "payload_greeted"), ("code_emitted",)),
-    Step("repair_shout", ("output_ok",), ("payload_greeted",)),
+    #
+    # The COSTS are authored knowledge and they now ORDER THE RECOVERY (ugm #20): the cheapest untried
+    # producer of the unmet effect is the one replan commits to. The ordering they encode is "how much
+    # of the existing program does this edit disturb":
+    #   1  repair_greet — rewrite ONE statement's payload
+    #   2  repair_audit — ADD a statement; additive, disturbs no existing behaviour
+    #   3  repair_shout — rewrite a payload that was ALREADY repaired, i.e. revise a revision
+    # Cheapest-first is the honest default for a repair loop: try the smallest edit that might work.
+    Step("repair_greet", ("output_ok", "payload_greeted"), ("code_emitted",), cost=1),
+    Step("repair_shout", ("output_ok",), ("payload_greeted",), cost=3),
+    # a repair driven by READING the code rather than by watching its output.
+    Step("repair_audit", ("output_ok",), ("code_emitted",), cost=2),
 )
 
-REPAIRS = {"repair_greet": RECOVERY, "repair_shout": RECOVERY_SHOUT}
+REPAIRS = {"repair_greet": RECOVERY, "repair_shout": RECOVERY_SHOUT,
+           "repair_audit": RECOVERY_AUDIT}
 
 
 def _perform(ws: Workspace, step: str) -> "set[str]":
@@ -510,6 +556,8 @@ def _stage(g: AttrGraph, step: Step) -> None:
         g.add_relation(o, "add", _ensure(g, eff))
     for need in step.needs:
         g.add_relation(o, "pre", _ensure(g, need))
+    if step.cost is not None:
+        g.add_relation(o, "cost", _ensure(g, f"c{step.cost}"))
 
 
 def _act_tool(ws: Workspace, order: "list[str]"):
@@ -542,10 +590,61 @@ def _act_tool(ws: Workspace, order: "list[str]"):
     return handler
 
 
-def _rank_noop():
+def _rank_tool():
+    """The planner's ranking hook, made real.
+
+    `corpus/planning.cnl` treats ranking as the §8 **comparison-as-calculator** boundary: the tool
+    derives `?x cheaper_than ?o` FACTS, and the planner's own rules (`dominated` / `best` / `chosen`)
+    select on them. So the COSTS are knowledge on the graph — each operator's `cost` is staged from the
+    spec of the step, exactly like its `pre` and `add` — and this tool only does the arithmetic no rule
+    should be asked to do.
+
+    Previously this was a no-op that just stamped `ranked`, which meant `cheaper_than` was never
+    derived and nothing was ever `dominated`. That was worse than it looked: `cheaper_than` is the
+    banks' ONLY narrowing criterion, so with no costs every untried producer committed and ran — the
+    repairs were not racing and losing, they were ALL being chosen (ugm feedback #20).
+
+    It ranks recovery too, since ugm #20: `corpus/procedure.cnl` now emits the same rank call for the
+    untried producers of an unmet effect and blocks each one that has a cheaper untried rival, so
+    "try the smallest edit first" is authored purely by staging `?o cost ?c` knowledge.
+
+    TOTAL ORDER is this tool's responsibility, not the bank's (#20): a forward round collects all its
+    matches before any fires, so two ops the calculator leaves incomparable BOTH commit. Ties are
+    therefore broken on the operator name. The choice of tiebreak carries no meaning — equal costs say
+    the operators are equally good, so there is nothing to be right about; all commitment needs is that
+    SOME single direction exists, and that it is stable rather than random (a build should be
+    reproducible). An op with no declared cost stays genuinely unranked; the bank has no basis to prefer
+    it, and pretending otherwise would be inventing knowledge.
+    """
+    def cost_of(g, op) -> "int | None":
+        c = next((t for r, t in g.relations_from(op) if g.has_key(r, "cost")), None)
+        try:
+            return int(g.name(c).lstrip("c")) if c is not None else None
+        except ValueError:
+            return None
+
     def handler(g, call_id):
         op = call_arg(g, call_id, "arg")
-        return {g.add_relation(op, "ranked", _ensure(g, "<yes>"))} if op else set()
+        if op is None:
+            return set()
+        touched = {g.add_relation(op, "ranked", _ensure(g, "<yes>"))}
+        mine = cost_of(g, op)
+        if mine is None:
+            return touched
+        for other in g.nodes():
+            if other == op:
+                continue
+            theirs = cost_of(g, other)
+            if theirs is None:
+                continue
+            # (cost, name) is a TOTAL order: equal costs still compare, so commitment never sees two
+            # incomparable rivals and pick both.
+            here, there = (mine, g.name(op)), (theirs, g.name(other))
+            if there < here:
+                touched.add(g.add_relation(other, "cheaper_than", op))
+            elif here < there:
+                touched.add(g.add_relation(op, "cheaper_than", other))
+        return touched
     return handler
 
 
@@ -620,7 +719,7 @@ def build(spec: "list[tuple[str, str, str]] | None" = None) -> Build:
     h.ingest(g, [], "to build : expand then lower then emit then check")
 
     ws, order = Workspace(spec=list(spec if spec is not None else SPEC)), []
-    h.ingest(g, rules, "run build", tools={"act": _act_tool(ws, order), "rank": _rank_noop()})
+    h.ingest(g, rules, "run build", tools={"act": _act_tool(ws, order), "rank": _rank_tool()})
     return Build(order, ws)
 
 
@@ -674,6 +773,13 @@ def run() -> None:
     print("   with `pystrider.intake` — the same analyzer used on hand-written code — and a BRIDGE")
     print("   lifts intake's vocabulary (`is_a call` / `calls_func`) into the neutral `invokes` the")
     print("   requirement is written against. The read half and the write half, meeting on one graph.")
+
+    print("\n   And the structural oracle can DRIVE A REPAIR, not just fail a build. Look again at the")
+    print("   run above: after `repair_greet` the output was ALREADY final —")
+    print("      re-ran it -> ['hello_bob', 'boss'] => STILL WRONG")
+    print("   — because the spec also requires a policy call. `repair_audit` then MINTS A STATEMENT")
+    print("   (`audit()`), and stdout is byte-identical before and after. No output-watching loop could")
+    print("   ever have found that repair; only reading the code can.")
 
     print("\n" + "=" * 78)
     print("REPAIRS COMPOSE — how a small rule set reaches a space no single rule covers")

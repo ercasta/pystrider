@@ -250,6 +250,60 @@ regression dressed as rigour). Our `run_stratified` is now a thin wrapper; the h
 at `run_bank(..., stratified=False)`, which still shows the old behaviour and so proves the scheduling
 is what buys correctness.
 
+**SLICE 8 DONE (2026-07-18) — a repair DRIVEN BY READING THE CODE.** `build_procedure` 20 pins, suite
+344. Until now the structural oracle could only FAIL a build; now it drives a third repair shape.
+`RECOVERY_AUDIT` fires on the structural gap itself (`?p requires_call ?f and ?f is_a policy_call and
+not ?c is_a call and not ?c calls_func ?f`) and **MINTS A NEW STATEMENT** rather than revising a
+payload, placing it by linking before whichever statement has no predecessor (so the emit walk stays a
+linked list). `?f is_a policy_call` scopes it — `greet` is also `requires_call` but belongs inside a
+payload, so no bare `greet()` is bolted on (pinned).
+
+**The demonstration:** `audit()` prints NOTHING. After `repair_greet` the run already produces the final
+output `['hello_bob','boss']` and the build is still `STILL WRONG`; `repair_audit` then changes stdout
+not at all and makes it satisfied. **No output-watching loop could ever find that repair.** That is the
+argument for the second oracle paying for itself, not just catching cheats.
+
+Mechanically this needed the read-side facts on the WORKING graph, not a scratch copy — a repair driven
+by the structure of the code needs that structure in the graph it runs over. `observe_code` now runs
+alongside the output observation each time the program runs, and both accumulate monotonically (the right
+reading: "has this program ever been seen to call `audit`?", so the repair self-gates once it has).
+
+**SLICE 9b (2026-07-18) — ugm ANSWERED #20 and FIXED it; costs now order the recovery.** Suite 346.
+Their answer corrected our diagnosis: replan was **not** picking in staging order, it was picking
+**every** untried producer at once — because `cheaper_than` (which our stub never produced) is the banks'
+ONLY narrowing criterion, so with no costs nothing was ever `dominated`. `corpus/procedure.cnl` gained
+the rank call for untried producers of an unmet effect + an `outranked_by` block per cheaper untried
+rival (with the two `drop` rules that make the cascade work — without them a cheaper alternative that
+itself fails strands the next-cheapest forever). So **"try the smallest edit first" is now authored
+purely by staging `?o cost ?c`**, exactly as we wanted.
+
+Our side: (1) the pin was rewritten — it asserted the opposite and now verifies that INVERTING the costs
+INVERTS the choice; (2) the rank tool now imposes a **TOTAL order** (ties broken deterministically on
+name), which their answer flags as the §8 calculator's job — a forward round collects all matches before
+firing, so two incomparable ops both commit; (3) costs re-derived on a defensible principle, "how much
+of the existing program does this edit disturb" — `greet` rewrites one payload (1), `audit` ADDS a
+statement and disturbs nothing existing (2), `shout` revises an already-repaired payload (3). Effect: the
+default build now runs **two** repairs instead of three.
+
+Known limit, pinned upstream: with no cost staged, every untried producer still commits — the bank has
+no basis for a tiebreak and a total-order `rank` is where one belongs.
+
+**SLICE 9a (2026-07-18, superseded by 9b) — `rank` made real; the intended benefit did NOT materialize.** Suite 345, 21 pins. `_rank_noop` (a Python stub that only stamped `ranked`) is gone: costs are
+now staged as knowledge (`?o cost ?c`, from `Step.cost`) and a real `rank` tool derives `cheaper_than`,
+which is exactly the §8 comparison-as-calculator boundary `planning.cnl` documents.
+
+**But it does not order the repair attempts, which is what it was for.** Caught by INVERTING the declared
+costs and observing the order unchanged — necessary, because the costs initially agreed with staging
+order, so the first "working" run proved nothing. Tracing shows `rank` is invoked for
+`expand`/`lower`/`emit` and the FIRST repair only; the later repairs are alternative producers reached
+through discrepancy→replan, never reach `cost_settled`, and are never ranked. Attempt order among them is
+still staging order. Filed as ugm **#20** (a QUESTION, not a bug — we may be holding it wrong): is
+cost-ranking meant to govern replan's choice of alternative, and if not, how should "try the smallest
+edit first" be authored? Pinned so that if the replan path gains cost-ordering the pin fails loudly.
+
+METHOD NOTE worth keeping: a passing run is not evidence that a mechanism is doing the work. The costs
+agreeing with staging order made a dead tool look alive; only the inverted-cost experiment settled it.
+
 **Framing (user, 2026-07-18):** humans make mistakes and apply recovery rules. Aiming for PERFECT rules
 that generate any program is infeasible; a limited set of rules that can **navigate** — do something,
 check it, recover / course-correct — reaches a far larger share of the solution space. Build for the
