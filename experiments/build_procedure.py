@@ -25,9 +25,17 @@ select an alternative producer (`repair`). No Python `if` chooses to recover.
 
 **The recovery is a RULE, and the fix is a real code change.** The v1 lowering emits `print(name)`; the
 spec expects a greeting. The recovery rule reads the observed mismatch and MINTS a nested call node
-(`greet(name)`) as a v2 payload, then redirects a `current` pointer at it — the monotone-safe revision
-idiom (`ast_representation` F8): nothing is deleted, v1 survives as provenance of what was tried. Re-
-emitting through the pointer produces `print(greet(name))`, and the re-check passes by execution.
+(`greet(name)`) as a NEW VERSION of the payload — the monotone-safe revision idiom
+(`ast_representation` F8): nothing is deleted, v1 survives as provenance of what was tried. Re-emitting
+through the current-version projection produces `print(greet(name))`, and the re-check passes by
+execution.
+
+**REPAIRS COMPOSE, which is what makes a small rule set reach a large space.** There are two recovery
+rules (`greet`, `shout`), neither aware of the other. A spec expecting `HELLO_BOB` is not reachable by
+either alone: the loop applies `greet` (`bob` -> `hello_bob`, closer but still wrong by execution), then
+`shout` wraps THAT repair (`shout(greet(name))` -> `HELLO_BOB`). Each hop is checked by running it.
+Progress short of the goal is itself a declared effect (`payload_greeted`), which is also how the second
+repair states that it depends on the first — the ordering is authored knowledge, not staging luck.
 
 This also exercises the one representation case the earlier probe left open: **nesting a minted node
 inside another minted node** (the repair's `ast_call` becomes the argument of an existing `emit_print`),
@@ -55,8 +63,10 @@ from ugm.dispatch import call_arg
 _CORPUS = pathlib.Path(h.__file__).resolve().parent.parent / "corpus"
 
 __all__ = [
-    "SPEC", "EXPANSION", "LOWERING", "RECOVERY", "RUNTIME_LIBRARY",
-    "Workspace", "build", "emit_source", "of_kind", "one", "many",
+    "SPEC", "SPEC_UNCOVERED", "SPEC_UNREPAIRABLE", "SPEC_TWO_REPAIRS",
+    "EXPANSION", "LOWERING", "RECOVERY", "RECOVERY_SHOUT", "CURRENT", "REPAIRS", "STEPS",
+    "RUNTIME_LIBRARY", "Build", "Refusal", "Workspace", "build", "current_versions",
+    "emit_source", "of_kind", "one", "many",
 ]
 
 
@@ -68,6 +78,36 @@ SPEC: "list[tuple[str, str, str]]" = [
     ("report", "is_a", "procedure"),
     ("report", "greets", "name"),            # the intent, succinct
     ("report", "expects_line", "hello_bob"),  # the declared observable, for input name='bob'
+]
+
+# --- the two ways a limited rule set legitimately fails ---------------------------------------------
+# The navigate framing says: don't aim for rules that generate any program. That is only honest if the
+# loop SAYS SO when it cannot get there, instead of shipping something wrong. Two distinct failures:
+
+# (a) MISSING KNOWLEDGE — an intent no expansion rule covers. Nothing to lower; the chain stops at the
+#     first step, and the honest report is "no rule covers `shouts`", an authoring on-ramp.
+SPEC_UNCOVERED: "list[tuple[str, str, str]]" = [
+    ("report", "is_a", "procedure"),
+    ("report", "shouts", "name"),             # no expansion rule mentions `shouts`
+    ("report", "expects_line", "hello_bob"),
+]
+
+# (b) INSUFFICIENT KNOWLEDGE — the rules cover the intent and produce a program, the check runs it, and
+#     no available recovery rule closes the gap. Every repair fires, the world still disagrees, and the
+#     build must REFUSE rather than ship the wrong program.
+SPEC_UNREPAIRABLE: "list[tuple[str, str, str]]" = [
+    ("report", "is_a", "procedure"),
+    ("report", "greets", "name"),
+    ("report", "expects_line", "goodbye_bob"),  # no recovery rule reaches `goodbye`
+]
+
+# The spec slice 4 REFUSED as unverified (`HELLO_BOB`), now reachable — not by a smarter single rule,
+# but by ADDING one more small recovery rule and letting the loop COMPOSE the two repairs, each step
+# checked by execution. This is the payoff of the refusal being named: it said what was missing.
+SPEC_TWO_REPAIRS: "list[tuple[str, str, str]]" = [
+    ("report", "is_a", "procedure"),
+    ("report", "greets", "name"),
+    ("report", "expects_line", "HELLO_BOB"),   # needs greet THEN shout
 ]
 
 
@@ -98,8 +138,17 @@ RECOVERY = ("gc? is_a ast_call and gc? callee greet and gc? argument ?v "
             "and ?pr arg_v2 gc? and ?pr version arg_v2 "
             "when ?pr is_a emit_print and ?pr arg_v1 ?v and report unmet yes")
 
+# A SECOND recovery rule, so the planner has a real CHOICE of repairs rather than one candidate. It
+# wraps the CURRENT payload (v2's minted call) in `shout`, i.e. it repairs a repair — the anchor it
+# mints against is itself a minted node. Neither rule knows about the other; each is a separate,
+# independently-authored piece of knowledge, which is what makes the library additive.
+RECOVERY_SHOUT = ("sc? is_a ast_call and sc? callee shout and sc? argument ?inner "
+                  "and ?pr arg_v3 sc? and ?pr version arg_v3 "
+                  "when ?pr is_a emit_print and ?pr arg_v2 ?inner and report unmet yes")
+
 # The version LATTICE — which slot supersedes which. Authored once, globally true.
-LATTICE: "list[tuple[str, str, str]]" = [("arg_v2", "supersedes", "arg_v1")]
+LATTICE: "list[tuple[str, str, str]]" = [("arg_v2", "supersedes", "arg_v1"),
+                                         ("arg_v3", "supersedes", "arg_v2")]
 
 # `current` is a PROJECTION, never a stored fact: a node's current version is the one no OTHER version
 # OF THAT NODE supersedes. Both `not` clauses fold into ugm's single conjunctive NAC, which is exactly
@@ -115,7 +164,8 @@ CURRENT = ("?pr current ?v when ?pr version ?v "
 
 
 # The library available to the generated code at run time (the `check` step's world).
-RUNTIME_LIBRARY = "def greet(n):\n    return 'hello_' + n\n"
+RUNTIME_LIBRARY = ("def greet(n):\n    return 'hello_' + n\n"
+                   "def shout(n):\n    return n.upper()\n")
 
 
 # --- mechanism (§8) ---------------------------------------------------------------------------------
@@ -138,6 +188,7 @@ def of_kind(g: AttrGraph, kind: str) -> "list[str]":
 class Workspace:
     """The artifact plane, kept separate from the planner's control plane: the spec/AST graph the steps
     build up, plus the emitted source and what running it actually printed."""
+    spec: "list[tuple[str, str, str]]" = field(default_factory=lambda: list(SPEC))
     g: AttrGraph = field(default_factory=AttrGraph)
     ids: dict = field(default_factory=dict)
     source: str = ""
@@ -168,15 +219,20 @@ def current_versions(ws: Workspace) -> "dict[str, str]":
     return {pr: scratch.name(one(scratch, pr, "current")) for pr in of_kind(scratch, "emit_print")}
 
 
+def _expr(ws: Workspace, node: str) -> ast.expr:
+    """Unparse one payload node, RECURSIVELY — a repair may wrap a previous repair, so a minted
+    `ast_call`'s argument can itself be a minted `ast_call` (`shout(greet(name))`). Reading a decided
+    structure, not deciding anything."""
+    callee = one(ws.g, node, "callee")
+    if callee is None:                       # a leaf: the original value
+        return ast.Name(id=ws.g.name(node), ctx=ast.Load())
+    return ast.Call(func=ast.Name(id=ws.g.name(callee), ctx=ast.Load()),
+                    args=[_expr(ws, one(ws.g, node, "argument"))], keywords=[])
+
+
 def _payload_expr(ws: Workspace, pr: str, slot: str) -> ast.expr:
-    """The argument expression the current version selects — v1's plain value, or v2's minted nested
-    call. Reading a decided answer, not deciding anything."""
-    target = one(ws.g, pr, slot)
-    if slot == "arg_v1":
-        return ast.Name(id=ws.g.name(target), ctx=ast.Load())
-    return ast.Call(func=ast.Name(id=ws.g.name(one(ws.g, target, "callee")), ctx=ast.Load()),
-                    args=[ast.Name(id=ws.g.name(one(ws.g, target, "argument")), ctx=ast.Load())],
-                    keywords=[])
+    """The argument expression the current version selects."""
+    return _expr(ws, one(ws.g, pr, slot))
 
 
 def emit_source(ws: Workspace) -> str:
@@ -211,39 +267,55 @@ def _run_and_capture(source: str) -> "list[str]":
 @dataclass(frozen=True)
 class Step:
     name: str
-    feature: str                 # the effect it declares (`add`)
-    needs: "str | None" = None   # its precondition (`pre`)
+    adds: "tuple[str, ...]"            # the effects it declares
+    needs: "tuple[str, ...]" = ()      # its preconditions
 
 
 STEPS = (
-    Step("expand", "spec_expanded"),
-    Step("lower", "ast_built", "spec_expanded"),
-    Step("emit", "code_emitted", "ast_built"),
-    Step("check", "output_ok", "code_emitted"),
-    Step("repair", "output_ok", "code_emitted"),   # the ALTERNATIVE producer replan may choose
+    Step("expand", ("spec_expanded",)),
+    Step("lower", ("ast_built",), ("spec_expanded",)),
+    Step("emit", ("code_emitted",), ("ast_built",)),
+    Step("check", ("output_ok",), ("code_emitted",)),
+    # TWO alternative producers of `output_ok` — the planner has a real choice of repairs, and when the
+    # one it picks leaves the effect unobserved, replan moves to the next. Navigation.
+    #
+    # `repair_greet` also declares `payload_greeted`: a step can make PROGRESS without reaching the
+    # goal, and that progress is itself an observable effect. `repair_shout` DEPENDS on it — it wraps
+    # the greeted payload, so it cannot run first. Declaring that as a precondition is the honest move:
+    # the ordering is real knowledge, and leaving it to the order operators happen to be staged in
+    # would be luck. With it declared, the planner cannot pick the repairs in an unworkable order.
+    Step("repair_greet", ("output_ok", "payload_greeted"), ("code_emitted",)),
+    Step("repair_shout", ("output_ok",), ("payload_greeted",)),
 )
 BY_NAME = {s.name: s for s in STEPS}
 
+# each repair operator IS a recovery rule bank — adding a repair is adding knowledge, not code.
+REPAIRS = {"repair_greet": RECOVERY, "repair_shout": RECOVERY_SHOUT}
 
-def _perform(ws: Workspace, step: str) -> bool:
-    """Do the step's mechanism; return whether its declared effect actually HOLDS afterwards. Every
-    decision inside is a rule bank or the observed world — never a Python judgement."""
+
+def _perform(ws: Workspace, step: str) -> "set[str]":
+    """Do the step's mechanism; return WHICH of its declared effects actually hold afterwards. Every
+    decision inside is a rule bank or the observed world — never a Python judgement.
+
+    Returning a SET, not a bool, is what lets a step make partial progress: a repair can establish
+    `payload_greeted` (the program changed) while `output_ok` remains unobserved (it is still wrong)."""
     if step == "expand":
-        for s, p, o in SPEC + LATTICE:
+        for s, p, o in ws.spec + LATTICE:
             ws.fact(s, p, o)
         ws.rules(EXPANSION)
         ok = bool(of_kind(ws.g, "step"))
-        ws.log.append(f"expand : refined the spec -> {len(of_kind(ws.g, 'step'))} step(s)")
-        return ok
+        ws.log.append(f"expand : refined the spec -> {len(of_kind(ws.g, 'step'))} step(s)"
+                      + ("" if ok else "  <- NO expansion rule covered this intent"))
+        return {"spec_expanded"} if ok else set()
     if step == "lower":
         ws.rules(LOWERING)
         ok = bool(of_kind(ws.g, "emit_print"))
         ws.log.append(f"lower  : minted {len(of_kind(ws.g, 'emit_print'))} emit_print node(s)")
-        return ok
+        return {"ast_built"} if ok else set()
     if step == "emit":
         ws.source = emit_source(ws)
         ws.log.append(f"emit   : {ws.source.splitlines()[-1].strip()!r}")
-        return bool(ws.source)
+        return {"code_emitted"} if ws.source else set()
     if step == "check":
         ws.stdout = _run_and_capture(ws.source)
         ok = ws.stdout == ws.expected()
@@ -251,16 +323,22 @@ def _perform(ws: Workspace, step: str) -> bool:
                       f"{'OK' if ok else 'MISMATCH'}")
         if not ok:
             ws.fact("report", "unmet", "yes")      # the OBSERVATION the recovery rule reads
-        return ok
-    if step == "repair":
-        ws.rules(RECOVERY)                          # the RULE decides the fix
-        ws.source = emit_source(ws)                 # re-emit through the moved `current` pointer
+        return {"output_ok"} if ok else set()
+    if step in REPAIRS:
+        before = ws.source
+        ws.rules(REPAIRS[step])                     # the RULE decides the fix
+        ws.source = emit_source(ws)                 # re-emit through the current-version projection
         ws.stdout = _run_and_capture(ws.source)
         ok = ws.stdout == ws.expected()
-        ws.log.append(f"repair : recovery rule minted v2 -> {ws.source.splitlines()[-1].strip()!r}")
-        ws.log.append(f"         re-ran it -> {ws.stdout} => {'OK' if ok else 'STILL WRONG'}")
-        return ok
-    return False
+        changed = ws.source != before
+        ws.log.append(f"{step:<13}: {'applied' if changed else 'DID NOT APPLY'} -> "
+                      f"{ws.source.splitlines()[-1].strip()!r}")
+        ws.log.append(f"{'':<13}  re-ran it -> {ws.stdout} => {'OK' if ok else 'STILL WRONG'}")
+        held = {"output_ok"} if ok else set()
+        if step == "repair_greet" and changed:
+            held.add("payload_greeted")            # PROGRESS, observable even when the goal is not met
+        return held
+    return set()
 
 
 # --- the planner harness (mirrors experiments/procedure_assembly.py) ---------------------------------
@@ -272,9 +350,10 @@ def _ensure(g: AttrGraph, name: str) -> str:
 
 def _stage(g: AttrGraph, step: Step) -> None:
     o = _ensure(g, step.name)
-    g.add_relation(o, "add", _ensure(g, step.feature))
-    if step.needs:
-        g.add_relation(o, "pre", _ensure(g, step.needs))
+    for eff in step.adds:
+        g.add_relation(o, "add", _ensure(g, eff))
+    for need in step.needs:
+        g.add_relation(o, "pre", _ensure(g, need))
 
 
 def _act_tool(ws: Workspace, order: "list[str]"):
@@ -286,15 +365,23 @@ def _act_tool(ws: Workspace, order: "list[str]"):
             return set()
         if any(g.has_key(r, "done") for r, _ in g.relations_from(op)):
             return set()                                  # an op acts once
+        # ...and an op does not act when everything it would establish ALREADY HOLDS. Content-blind
+        # (it never looks at WHICH op, only at whether the world already shows its effects), and the
+        # same category of actuator hygiene as "acts once". Without it a later alternative producer
+        # keeps firing after the goal is met — here `repair_shout` would shout an already-correct
+        # greeting, turning a passing build into a failing one.
+        now_true = {g.name(e) for r, e in g.relations_from(_ensure(g, "<now>")) if g.has_key(r, "true")}
+        declared = {g.name(e) for r, e in g.relations_from(op) if g.has_key(r, "add")}
+        if declared and declared <= now_true:
+            return set()
         name = g.name(op)
         order.append(name)
         held = _perform(ws, name)
         touched = set()
         now, yes = _ensure(g, "<now>"), _ensure(g, "<yes>")
-        if held:
-            for r, e in list(g.relations_from(op)):
-                if g.has_key(r, "add"):
-                    touched.add(g.add_relation(now, "true", e))
+        for r, e in list(g.relations_from(op)):
+            if g.has_key(r, "add") and g.name(e) in held:
+                touched.add(g.add_relation(now, "true", e))
         touched.add(g.add_relation(op, "done", yes))
         return touched
     return handler
@@ -305,6 +392,33 @@ def _rank_noop():
         op = call_arg(g, call_id, "arg")
         return {g.add_relation(op, "ranked", _ensure(g, "<yes>"))} if op else set()
     return handler
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """A build that could not be VERIFIED, reported as a first-class outcome instead of shipped code.
+
+    `kind` separates the two honest failures of a limited rule set:
+      * ``uncovered``  — no rule reached the intent at all (MISSING knowledge; the fix is a new rule,
+        and `missing` names the intent to write it for — an authoring on-ramp).
+      * ``unverified`` — rules produced a program, the world was consulted, and it disagreed; the
+        recovery rules available did not close the gap (INSUFFICIENT knowledge).
+    """
+    kind: str
+    unreached: str                       # the effect never observed
+    tried: "tuple[str, ...]"             # the steps that actually ran
+    missing: "str | None" = None         # for `uncovered`: the spec intent nothing covered
+    got: "tuple[str, ...]" = ()          # for `unverified`: what running it actually produced
+    wanted: "tuple[str, ...]" = ()
+
+    def __str__(self) -> str:
+        if self.kind == "uncovered":
+            return (f"REFUSED (uncovered): no rule covers `{self.missing}` — `{self.unreached}` was "
+                    f"never reached. Tried: {list(self.tried)}. To fix, author an expansion rule for "
+                    f"`{self.missing}`.")
+        return (f"REFUSED (unverified): the program ran and the world disagreed — wanted "
+                f"{list(self.wanted)}, got {list(self.got)}. No available recovery rule closes this. "
+                f"Tried: {list(self.tried)}.")
 
 
 @dataclass
@@ -322,14 +436,38 @@ class Build:
 
     @property
     def ok(self) -> bool:
-        return self.workspace.stdout == self.workspace.expected()
+        return bool(self.workspace.source) and self.workspace.stdout == self.workspace.expected()
 
     @property
     def recovered(self) -> bool:
-        return "repair" in self.order
+        return any(s in REPAIRS for s in self.order)
+
+    @property
+    def refusal(self) -> "Refusal | None":
+        """None when the build is verified; otherwise the NAMED reason it is not. This is the honest
+        half of the navigate framing: a limited rule set may fail, but it must say so rather than hand
+        back an unverified program."""
+        if self.ok:
+            return None
+        if not of_kind(self.workspace.g, "step"):
+            covered = {p for _, p, _ in EXPANSION_COVERS}
+            intent = next((p for s, p, o in self.workspace.spec
+                           if p not in covered and p not in ("is_a", "expects_line")), None)
+            return Refusal("uncovered", "spec_expanded", tuple(self.order), missing=intent)
+        return Refusal("unverified", "output_ok", tuple(self.order),
+                       got=tuple(self.stdout), wanted=tuple(self.workspace.expected()))
+
+    @property
+    def shipped(self) -> "str | None":
+        """The source, and ONLY when it is verified. A refused build ships nothing — the whole point."""
+        return self.workspace.source if self.ok else None
 
 
-def build() -> Build:
+# the intents the expansion bank covers — used only to NAME what was missing in a refusal message.
+EXPANSION_COVERS: "tuple[tuple[str, str, str], ...]" = (("procedure", "greets", "value"),)
+
+
+def build(spec: "list[tuple[str, str, str]] | None" = None) -> Build:
     """Author `to build : …` and `run build`, letting ugm's planner drive the steps, gap-fill, and
     (when the check fails by execution) replan onto the alternative producer."""
     rules = h.load_machine_rules("\n".join(
@@ -340,7 +478,7 @@ def build() -> Build:
         _stage(g, step)
     h.ingest(g, [], "to build : expand then lower then emit then check")
 
-    ws, order = Workspace(), []
+    ws, order = Workspace(spec=list(spec if spec is not None else SPEC)), []
     h.ingest(g, rules, "run build", tools={"act": _act_tool(ws, order), "rank": _rank_noop()})
     return Build(order, ws)
 
@@ -383,8 +521,46 @@ def run() -> None:
     except Exception as exc:
         print(f"      ({type(exc).__name__}: {exc})")
 
+    print("\n" + "=" * 78)
+    print("THE HONEST BOUNDARY — what a limited rule set does when it CANNOT get there")
+    print("=" * 78)
+    print("Navigating a large space with few rules is only honest if the loop says so when it fails,")
+    print("instead of handing back an unverified program. Two distinct failures:\n")
+
+    print("(a) MISSING knowledge — an intent no expansion rule covers:")
+    a = build(SPEC_UNCOVERED)
+    print(f"      {a.workspace.log[0]}")
+    print(f"      {a.refusal}")
+    print(f"      shipped: {a.shipped!r}\n")
+
+    print("(b) INSUFFICIENT knowledge — rules built a program, the world disagreed, and no available")
+    print("    recovery rule closes the gap:")
+    u = build(SPEC_UNREPAIRABLE)
+    for line in u.workspace.log[3:]:
+        print(f"      {line}")
+    print(f"      {u.refusal}")
+    print(f"      shipped: {u.shipped!r}")
+    print("      note it TRIED — every repair ran and was re-checked by execution; none got there.\n")
+
+    print("=" * 78)
+    print("REPAIRS COMPOSE — how a small rule set reaches a space no single rule covers")
+    print("=" * 78)
+    print("`HELLO_BOB` is not reachable by either recovery rule alone. Neither rule knows about the")
+    print("other; the LOOP composes them, checking by execution at each hop:\n")
+    c = build(SPEC_TWO_REPAIRS)
+    for line in c.workspace.log[2:]:
+        print(f"      {line}")
+    print(f"\n      ran: {c.order}")
+    print(f"      final program: {c.source.splitlines()[-1].strip()}")
+    pr2 = of_kind(c.workspace.g, "emit_print")[0]
+    print(f"      versions held: {sorted(c.workspace.g.name(v) for v in many(c.workspace.g, pr2, 'version'))}"
+          f"  current: {current_versions(c.workspace)[pr2]}")
+    print("      This is the spec the previous section would have REFUSED before the second recovery")
+    print("      rule existed. The refusal named what was missing; one small rule closed it.")
+
     print("\n   A limited set of rules that can act, notice they are wrong, and move — rather than one")
-    print("   perfect rule set that never is.")
+    print("   perfect rule set that never is. And when it cannot move far enough, it REFUSES by name")
+    print("   instead of shipping something that was never verified.")
 
 
 if __name__ == "__main__":

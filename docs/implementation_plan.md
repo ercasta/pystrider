@@ -148,6 +148,48 @@ support was never recorded, so anything built by `run_bank` was permanently unex
 *"why is this line here?"* now answers over GENERATED code — and the trace cites `report unmet yes`, i.e.
 **the failed execution is recorded as the cause of the code change.**
 
+**SLICE 4 DONE (2026-07-18) — the HONEST BOUNDARY: refusal as a first-class build outcome.** Extends
+`build_procedure` (12 pins). Navigating a large space with few rules is only honest if the loop SAYS SO
+when it cannot get there. Two distinct failures, deliberately kept apart because they have different
+fixes: **`uncovered`** (MISSING knowledge — no expansion rule reaches the intent; names the intent and
+tells you what to author) and **`unverified`** (INSUFFICIENT knowledge — rules built a program, execution
+disagreed, the available recovery rule did not close the gap). `Build.shipped` returns the source **only
+when verified**; a refused build ships `None`. The `unverified` case is the interesting one: it genuinely
+tries — repair fires, improves `print(name)` → `print(greet(name))`, gets from `['bob']` to
+`['hello_bob']` — and still refuses because the spec wanted `['HELLO_BOB']`. Getting closer is not
+getting there, and the verdict is execution's, not the generator's.
+
+**ugm #16 FIXED — and our premise was INVERTED, which mattered.** We filed "only one conjunctive NAC is
+expressible" as a limitation. In fact independent NACs always worked on the FORWARD engine
+(`lowering._nac_groups` partitions by shared NAC-local free vars), the `cnl_reference.md` line was wrong,
+and the *conjunctive* form — the one we said worked and built on — was **silently broken on the DEMAND
+engine**, which decided each NAC atom separately. So our `body_first` rule derived correctly under
+`run_bank` and returned nothing when ASKED; the same hazard applied to the `CURRENT` projection. They
+fixed the demand chain (`chain._nac_atom_groups`, joined witnesses) and gated it differentially: 1792
+(rule, world) pairs, 0 divergences (560 against the pre-fix decision). **Pinned on our side**
+(`test_the_current_projection_agrees_across_the_forward_and_demand_engines`) — a forward pass and a
+question must not disagree. LESSON: exercising a rule only forward can hide a demand-path bug; check
+both when a rule carries negation.
+
+**SLICE 5 DONE (2026-07-18) — REPAIRS COMPOSE (a second recovery rule).** `build_procedure`, 15 pins.
+Two recovery rules (`greet`, `shout`), neither aware of the other, staged as two alternative producers of
+`output_ok`. A spec expecting `HELLO_BOB` is unreachable by either alone — the LOOP composes them:
+`print(name)`→`['bob']` MISMATCH → greet →`print(greet(name))`→`['hello_bob']` STILL WRONG → shout wraps
+that repair →`print(shout(greet(name)))`→`['HELLO_BOB']` OK. Each hop checked by execution; three
+versions held (`arg_v1/v2/v3`), current = v3. **This is the exact spec slice 4 REFUSED as `unverified`** —
+the refusal named what was missing, and one small rule closed it. That is the argument for the whole
+framing: a small rule set reaches a large space by navigating, not by any rule being complete.
+
+Two mechanisms this forced, both worth keeping:
+- **Progress is a declared effect.** `_perform` returns a SET of effects that hold, not a bool, so a
+  repair can establish `payload_greeted` (the program changed) while `output_ok` stays unobserved.
+  `repair_shout` then declares `payload_greeted` as a PRECONDITION — it wraps the greeted payload, so it
+  cannot run first. The ordering between repairs is authored knowledge, not staging luck.
+- **An actuator guard: an op does not act when everything it would establish already holds.**
+  Content-blind (it never inspects WHICH op), same category as the existing "an op acts once". Without
+  it, `repair_shout` fired after `repair_greet` had already satisfied the spec and turned a PASSING build
+  into a failing one (`hello_bob`→`HELLO_BOB`) — caught by running the happy path, not by a test.
+
 **Framing (user, 2026-07-18):** humans make mistakes and apply recovery rules. Aiming for PERFECT rules
 that generate any program is infeasible; a limited set of rules that can **navigate** — do something,
 check it, recover / course-correct — reaches a far larger share of the solution space. Build for the
