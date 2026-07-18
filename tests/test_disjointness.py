@@ -102,5 +102,55 @@ class CheckSemantics(unittest.TestCase):
         Accumulate.check([Item("solo", w("c"))])
 
 
+class WildcardChannels(unittest.TestCase):
+    """A write whose key cannot be named (`<store>.<items>` from a whole-container mutation,
+    `<store>.<computed>` from an unresolvable subscript key — both synthesized by
+    `pystrider.footprint`) must be read as a WILDCARD over its store, not as an opaque name.
+
+    Read as a name, `out.<items>` does not string-match `out.total`, so a composition where one item
+    does `out['total'] = …` and another does `out.update(d)` is certified disjoint while the second
+    CLOBBERS the first at runtime — a silent unsoundness in the one check the whole non-interference
+    guarantee rests on. The wildcard reading over-approximates (the update may not touch `total`),
+    which is the safe direction: flag a maybe-collision, never miss a real one.
+    """
+
+    def test_a_whole_container_write_conflicts_with_a_keyed_write_on_the_same_store(self):
+        items = [Item("keyed", w("out.total")), Item("whole", w("out.<items>"))]
+        with self.assertRaises(CompositionError) as ctx:
+            Accumulate.check(items)
+        msg = str(ctx.exception)
+        self.assertIn("out.<items>", msg)
+        self.assertIn("keyed", msg)
+        self.assertIn("whole", msg)
+
+    def test_an_unresolvable_key_conflicts_with_a_keyed_write_on_the_same_store(self):
+        with self.assertRaises(CompositionError):
+            Accumulate.check([Item("keyed", w("out.total")), Item("comp", w("out.<computed>"))])
+
+    def test_the_wildcard_reading_is_order_independent(self):
+        a, b = Item("keyed", w("out.total")), Item("whole", w("out.<items>"))
+        forward = disjoint_writes([(a.label, a.footprint), (b.label, b.footprint)])
+        reverse = disjoint_writes([(b.label, b.footprint), (a.label, a.footprint)])
+        self.assertTrue(forward and reverse)
+        self.assertEqual({c.channel for c in forward}, {c.channel for c in reverse})
+
+    def test_a_wildcard_is_confined_to_its_own_store(self):
+        # the over-approximation is bounded: it does NOT smear across stores.
+        Accumulate.check([Item("whole", w("out.<items>")), Item("other", w("log.total"))])
+
+    def test_one_item_writing_both_shapes_is_not_a_self_conflict(self):
+        # `out.update(d)` and `out['total'] = …` in the SAME fragment is that fragment's own business —
+        # disjointness constrains DISTINCT items (`?a != ?b`), and nothing here interferes.
+        Accumulate.check([Item("solo", w("out.<items>", "out.total"))])
+
+    def test_two_wildcards_on_one_store_conflict(self):
+        with self.assertRaises(CompositionError):
+            Accumulate.check([Item("a", w("out.<items>")), Item("b", w("out.<computed>"))])
+
+    def test_a_literal_wildcard_key_is_still_just_a_key_on_another_store(self):
+        # `<items>` is a wildcard for the store it qualifies, not a globally magic token.
+        Accumulate.check([Item("a", w("out.<items>")), Item("b", w("cache.<items>"))])
+
+
 if __name__ == "__main__":
     unittest.main()

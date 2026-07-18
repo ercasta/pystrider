@@ -49,10 +49,120 @@ updated). HONEST REACH: on the stdlib it recovers only ~5 accumulators — the p
 dominated by calls to METHODS (`self.m(acc)`, needs receiver-type resolution) and IMPORTS (cross-module),
 genuinely out of view and honestly abstained. The exact local-sibling slice it *can* prove, it now does.
 
-**Suite: 301 green** (`python -m pytest -q`). Playground: `python demos/playground/playground.py`. Site:
+**Wildcard-conflict DONE (2026-07-18) — plan item #3, the stated soundness follow-on.** Two holes, both
+verified real first: (a) `grammapy.disjoint_writes` matched channels by string equality, so `out.<items>`
+(from `out.update(d)`) did not match `out.total` and a composition that CLOBBERS at runtime was certified
+disjoint — both fragments honest, both `modelable`, nothing abstaining; the unsoundness was purely in the
+READING. Fixed by a second CNL clause in `_DISJOINT_WRITES_RULE`: a wildcard channel conflicts with any
+same-store write by a distinct item (over-approximating, store-confined). (b) `CodeFootprint.writes`
+DROPPED the `<computed>` placeholder once the dynamic run named a key — the one under-approximating step
+in the derivation (one input's key licenses nothing about another's). The union is now taken whole, and
+precision is recovered by PROOF instead: a subscript key bound to a literal is resolved statically
+(`_const_bindings`, every constant a name can hold, poisoned by any non-constant binding), so it never
+becomes a placeholder. Pins: `test_disjointness.py::WildcardChannels` (7), `test_footprint.py`
+(const-key resolution + the surviving wildcard), `test_footprint_synthesis.py` (the end-to-end clobber).
+**CAVEAT — `_const_bindings` is a Python algorithm** (a small constant-propagation pass), which is the
+anti-pattern flagged below; it wants re-authoring as CNL rules over intake facts.
+
+**Suite: 310 green** (`python -m pytest -q`). Playground: `python demos/playground/playground.py`. Site:
 `python -m mkdocs build`.
 
-**Next steps (candidates, rough priority):**
+---
+
+## COURSE CORRECTION (2026-07-18, user) — READ BEFORE PICKING THE NEXT SLICE
+
+Two standing constraints that override the candidate list below:
+
+1. **This is not a theorem prover.** The "soundness" trail is a rabbit hole. The humble goal is to leverage
+   ugm to **read and write code the way humans do** — symbolic execution, actually RUNNING it and looking
+   at the output, and a *learned library of patterns and composition rules*, with patterns and rules
+   expressed AS RULES so the same library serves both writing and understanding. Rules go down to the
+   **AST**; an external tool handles only the last mile AST⇄Python text.
+2. **Leverage ugm — no algorithms in Python.** Reasoning belongs in the ugm engine (ISA, firmware, CNL).
+   Python is mechanism only (the §8 tool boundary: `ast` intake, orchestration, emission). If a reasoning
+   step cannot be expressed today, the move is to **write custom firmware, or ask the ugm team for new CNL
+   forms** — not to write the algorithm in Python. Audit existing code against this; `_const_bindings`
+   (above) is a fresh violation, and the symbolic-execution work is the main thing to resurrect.
+
+**SLICE 1 DONE (2026-07-18) — the AST-representation probe.** De-risked the representation before
+building any pipeline: `experiments/ast_representation.py` + `tests/test_ast_representation.py` (7 pins)
++ **[`docs/ast_representation_findings.md`](ast_representation_findings.md)** (findings + a ugm ask-list).
+Headline: rules CAN build ordered, nested, revisable AST — the mint wall that forced the previous
+generation into template selection has fallen. Design rules that came out: mint on invariants + attach
+with the parent LHS-bound (a mint head anchored on a per-element endpoint splits the parent per element);
+address minted nodes by ID, never by name (they are name-degenerate — this silently collapsed three
+statements into one during the probe); order/scope are derived relations, emission only walks them;
+revision = mint v2 + move a `current` pointer. **ugm ask-list #1 is the significant one:** minted nodes
+are unaddressable in prose CNL, so `why`-traces over generated code cannot be rendered. **Biggest open
+risk: the shared-vocabulary bet** — intake emits CFG/analysis-shaped facts, not the `ast_call`/`body_has`
+vocabulary the lowering rules invent; reconciling them is unstarted.
+
+**SLICE 2 DONE (2026-07-18) — vocabulary reconciliation by BRIDGES, not convergence.**
+`experiments/vocabulary_bridge.py` + `tests/test_vocabulary_bridge.py` (7) +
+**[`docs/vocabulary_bridge.md`](vocabulary_bridge.md)**. The "shared-vocabulary bet" named in slice 1 was
+the WRONG FRAME (user: multiple authors in multiple domains will never converge on one vocabulary — and
+bridges are the move we already used for business/UX/Textual in `app_synthesis`). Each author keeps their
+own vocabulary and writes ONE bridge to a neutral *question* vocabulary; patterns are authored once
+against that. **O(N) bridges, not O(N²) translations.** Proven by round trip: spec →(lowering rules)→
+minted structure (`emit_bind`/`callee`) →`ast.unparse`→ real Python →`intake`→ facts
+(`call`/`calls_func`), with ONE pattern text answering identically over both ends and the two
+vocabularies pinned DISJOINT. **The finding: bridges reconcile NAMING, not COVERAGE** — intake
+deliberately does not model a bare expression statement (audited `not_modelled`), and no bridge can
+invent a node that was never created; the two gap kinds look identical from outside (a question returns
+nothing) and have completely different fixes. Coverage gaps are a separate backlog and `not_modelled` is
+its worklist.
+
+**ugm feedback FILED** in `../ugm/docs/feedback_from_pystrider.md` as items **#15** (the question surface
+is name-addressed but minted nodes are nameless-by-design — ask for definite-description addressing),
+**#16** (independent NACs, a heads-up not a request), **#17** (`run_to_fixpoint` vs `run_bank` naming).
+NOTE the correction: an earlier draft of #15 asked for fabricated per-node skolem names (`c_s1`, `c_s2`)
+— **wrong**, it contradicts the nameless-substrate law ugm's own `_find_skolem_witness` states ("a minted
+node is identified by how it relates to the LHS match, not by a raw id or a fabricated name"). The ask is
+now structural/definite-description addressing in the QUERY layer. **The substrate is nameless; names are
+a human surface label, never identity — do not design against this.**
+
+**SLICE 3 DONE (2026-07-18) — the BUILD PROCEDURE spine.** `experiments/build_procedure.py` +
+`tests/test_build_procedure.py` (8). `to build : expand then lower then emit then check` authored as KB
+text and driven by ugm's REAL planner (`procedure.cnl` + `planning*.cnl`), the `procedure_assembly`
+harness. Each step is a §8 tool; every decision inside is a rule bank or the observed world. The full
+navigate loop runs: naive lowering emits `print(name)` → **check RUNS it** and observes `['bob']` vs the
+spec's declared `['hello_bob']` → the effect `output_ok` is never observed → the planner's own
+discrepancy/replan rules select `repair` (no Python `if`) → a RECOVERY RULE mints a nested `ast_call`
+(`greet(name)`) as a new version → re-emit → re-run → `['hello_bob']`, verified by execution. Also
+exercises the case slice 1 left open: **minting anchored on a minted node** (nesting a call inside an
+existing statement).
+
+**THE MONOTONE LESSON (cost a real bug, now pinned):** a "current version" pointer **cannot be
+materialized** — the graph is monotone, so an earlier `current arg_v1` survives forever and the node ends
+up with two currents (the first run emitted the UNREPAIRED code while claiming success). `current` must
+be **ASKED, never stored**: a projection rule (`?pr current ?v when ?pr version ?v and not ?pr version ?w
+and not ?w supersedes ?v`) derived read-only on a `g.copy()` scratch. Supersession must be scoped
+per-node by the conjunctive NAC, or repairing one statement strips every unrepaired sibling of its
+current version (pinned). This is `versioned_recovery.py`'s "append-only + `current` projection" idiom,
+re-derived the hard way — treat it as standing guidance for all revision work.
+
+**ugm #15 LANDED and is load-bearing here** (they fixed it same-day, plus #17; #16 in progress). `ByDesc`
+definite-description addressing + `who` enumerating per WITNESS node + **provenance backfill onto
+forward-built structure** (the `(given)` symptom turned out to be a third, separate bug: a firing's
+support was never recorded, so anything built by `run_bank` was permanently unexplainable). Result:
+*"why is this line here?"* now answers over GENERATED code — and the trace cites `report unmet yes`, i.e.
+**the failed execution is recorded as the cause of the code change.**
+
+**Framing (user, 2026-07-18):** humans make mistakes and apply recovery rules. Aiming for PERFECT rules
+that generate any program is infeasible; a limited set of rules that can **navigate** — do something,
+check it, recover / course-correct — reaches a far larger share of the solution space. Build for the
+loop, not for first-shot correctness. (F8 in the findings shows the representation supports it.)
+
+**Resurrection target:** the prior-generation work deleted in the `cleanup` commit
+`2fb01215f04d19a704394fa1c393fa2244f7a5b8` (2026-07-17) is worth PORTING FORWARD to the current
+generation rather than rebuilding — the user named the symbolic-execution line specifically. Candidates in
+that diff, by likely relevance: `experiments/controlflow_synthesis.py`, `codegen_understand.py`,
+`spec_synthesis.py`, `multifunction_synthesis.py`, `callgraph_synthesis.py`, `combinators_as_cnl.py`,
+`minting_comparison.py`, `rederivation.py`, `refusal.py`, `app_synthesis.py`, `generator_frontend.py`,
+plus `pystrider/emit.py`+`emit.cnl` (all recoverable via `git show 2fb0121^:<path>`). CONFIRM WITH THE
+USER which of these is the intended target before porting — the list is inferred, not stated.
+
+**Next steps (candidates from the pre-correction plan — re-read them through the two constraints above):**
 
 1. **Inter-procedural footprint — LOCAL-helper leg DONE (2026-07-17).** Following the store into a
    local/sibling callee is built; the remaining reach of the 49% "passed" slice is METHODS (`self.m(acc)`

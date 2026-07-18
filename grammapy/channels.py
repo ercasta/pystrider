@@ -75,10 +75,41 @@ class WriteConflict:
         )
 
 
-# The frame rule as a CNL rule-module: a channel is a conflict iff TWO DISTINCT items write it.
+# --- WILDCARD channels: a write that names no single key ---------------------------------------------
+# A footprint derived from CODE cannot always name the key a write lands on. `pystrider.footprint`
+# reports two such channels, and they mean the same thing here: SOME UNKNOWN KEY of that store.
+#   * ``<store>.<items>``    — a whole-container mutation (``out.update(d)`` / ``lst.append(x)``): a
+#                              list/set has no key to name, and a non-literal dict update could set ANY.
+#   * ``<store>.<computed>`` — a subscript whose key the static oracle could not resolve (``out[k] = …``).
+# Treating such a channel as an ordinary opaque NAME is silently UNSOUND: `out.<items>` would not
+# string-match `out.total`, so a composition where one item does `out['total'] = …` and another does
+# `out.update({'total': 99})` is certified disjoint while the second CLOBBERS the first at runtime.
+# The sound reading is a WILDCARD over its store: it conflicts with any write by a distinct item to the
+# SAME store. That over-approximates (the update might not touch `total`) — which is the safe direction
+# for a frame rule: it may flag a maybe-collision, it may never miss a real one.
+_WILDCARD_KEYS = ("<items>", "<computed>")
+
+
+def _store_and_key(channel: Channel) -> "tuple[str, str] | None":
+    """Split a ``<store>.<key>`` channel NAME into its parts. Returns None for a channel that is not
+    store-qualified (a plain channel name owns no store, so store-wildcard reasoning does not apply to
+    it). Reads ``.name``, never ``str(ch)`` — the latter carries the type suffix."""
+    store, sep, key = channel.name.rpartition(".")
+    return (store, key) if sep else None
+
+
+# The frame rule as a CNL rule-module. TWO ways a channel is in conflict:
+#   1. EXACT     — two distinct items write the same channel.
+#   2. WILDCARD  — an item writes a wildcard channel of some store, and a distinct item writes ANY
+#                  channel of that same store (including the wildcard itself, or another wildcard).
 # `?a != ?b` is the distinctness condition honoured by the join (ugm feedback #11) — without it this
-# self-joins and over-fires on any single writer. This IS the soundness verdict (the collapse into CNL).
-_DISJOINT_WRITES_RULE = "?c write_conflict yes when ?a writes ?c and ?b writes ?c and ?a != ?b"
+# self-joins and over-fires on any single writer. This IS the soundness verdict (the collapse into CNL):
+# both readings are rules over the write facts, not Python set arithmetic.
+_DISJOINT_WRITES_RULE = (
+    "?c write_conflict yes when ?a writes ?c and ?b writes ?c and ?a != ?b\n"
+    "?c write_conflict yes when ?a writes ?c and ?c is_wildcard yes and ?c in_store ?s "
+    "and ?b writes ?d and ?d in_store ?s and ?a != ?b"
+)
 
 
 def disjoint_writes(items: Iterable[tuple[str, Footprint]]) -> list[WriteConflict]:
@@ -93,10 +124,28 @@ def disjoint_writes(items: Iterable[tuple[str, Footprint]]) -> list[WriteConflic
     same-labelled items are one writer, so a lone item never self-conflicts). The pairwise
     ``WriteConflict`` list is then reconstructed from the same footprints for the human-facing
     rejection message. Order-independent by construction — the CNL join inspects unordered pairs.
+
+    A **wildcard** channel (``<store>.<items>`` / ``<store>.<computed>`` — a write whose key is not
+    nameable, see `_WILDCARD_KEYS`) conflicts with every write by a distinct item to the same store,
+    not just with a string-equal channel. That is the difference between admitting and catching a
+    whole-container mutation that clobbers a keyed write.
     """
     items = list(items)
     facts = [(label, "writes", str(ch)) for label, fp in items for ch in fp.writes]
     known = {str(ch) for _, fp in items for ch in fp.writes}
+    # structural facts about a channel NAME (mechanism at the fact boundary, not reasoning): which store
+    # it belongs to, and whether its key is a wildcard. The rule does the reasoning over them.
+    stores: dict[str, str] = {}
+    for _, fp in items:
+        for ch in fp.writes:
+            parts = _store_and_key(ch)
+            if parts is None:
+                continue
+            store, key = parts
+            stores[str(ch)] = store
+            facts.append((str(ch), "in_store", store))
+            if key in _WILDCARD_KEYS:
+                facts.append((str(ch), "is_wildcard", "yes"))
     answers = derive(facts, _DISJOINT_WRITES_RULE, "who write_conflict yes")
     conflicted = {a.split(" ", 1)[0] for a in answers if a.split(" ", 1)[0] in known}
 
@@ -104,12 +153,23 @@ def disjoint_writes(items: Iterable[tuple[str, Footprint]]) -> list[WriteConflic
     # input order and the Channel object (which carries the type) — reporting, not the verdict.
     writers: dict[str, list[str]] = {}
     channel_of: dict[str, Channel] = {}
+    store_writers: dict[str, list[str]] = {}
     for label, fp in items:
         for ch in fp.writes:
+            if str(ch) in stores:
+                bucket = store_writers.setdefault(stores[str(ch)], [])
+                if label not in bucket:
+                    bucket.append(label)
             if str(ch) in conflicted:
                 channel_of[str(ch)] = ch
                 bucket = writers.setdefault(str(ch), [])
                 if label not in bucket:
                     bucket.append(label)
-    return [WriteConflict(channel_of[name], ws[0], later)
-            for name, ws in writers.items() for later in ws[1:]]
+    reported: list[WriteConflict] = []
+    for name, ws in writers.items():
+        # a conflicted wildcard collides with every distinct writer of its store, which — unlike the
+        # exact case — need not write the wildcard channel itself, so the pairing widens to the store.
+        others = (store_writers[stores[name]]
+                  if channel_of[name].name.rpartition(".")[2] in _WILDCARD_KEYS else ws)
+        reported += [WriteConflict(channel_of[name], ws[0], o) for o in others if o != ws[0]]
+    return reported

@@ -40,16 +40,71 @@ __all__ = ["CodeFootprint", "footprint_of", "static_writes", "dynamic_writes", "
 
 # --- STATIC synthesis: the write channels an AST assigns to -----------------------------------------
 
-def _target_channel(t: ast.expr) -> "str | None":
-    """The channel a single assignment target writes. ``out['k'] = …`` -> ``out.k``; a computed key
-    ``out[expr] = …`` -> ``out.<computed>`` (static cannot resolve it); a bare name is a local, not a
-    shared channel, so it is not a footprint write."""
+def _target_channel(t: ast.expr, consts: "dict[str, frozenset[object]] | None" = None
+                    ) -> "tuple[str, ...]":
+    """The channels a single assignment target writes. ``out['k'] = …`` -> ``out.k``; a key held by a name
+    PROVABLY bound to constants (``k = 'total'``; `consts`) -> that constant's channel, one per possible
+    binding; any other computed key ``out[expr] = …`` -> ``out.<computed>`` (static cannot resolve it, and
+    the placeholder is a WILDCARD the check must honour); a bare name is a local, not a shared channel, so
+    it is not a footprint write."""
     if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name):
         key = t.slice
         if isinstance(key, ast.Constant):
-            return f"{t.value.id}.{key.value}"
-        return f"{t.value.id}.<computed>"
-    return None
+            return (f"{t.value.id}.{key.value}",)
+        if isinstance(key, ast.Name) and consts and key.id in consts:
+            return tuple(f"{t.value.id}.{v}" for v in sorted(consts[key.id], key=str))
+        return (f"{t.value.id}.<computed>",)
+    return ()
+
+
+def _const_bindings(root: ast.AST) -> "dict[str, frozenset[object]]":
+    """Names in this scope bound ONLY to literal constants, mapped to every constant they can hold.
+
+    This is what lets static name a key it would otherwise have to write off as ``<computed>``: in
+    ``k = 'total'`` / ``out[k] = x`` the key IS statically known, and proving it beats guessing it from a
+    single run. A name is admitted only when EVERY binding of it in the scope is a constant — one
+    non-constant or non-assignment binding (an ``AugAssign``, a loop/``with``/``except`` target, a
+    comprehension variable, a function parameter) poisons it back to unknown. Multiple constant bindings
+    keep them ALL, so the resulting channel set is a branch-complete over-approximation (sound), never a
+    pick. Deliberately NOT constant propagation: no arithmetic, no aliasing, no cross-scope flow — the
+    provable sliver only, everything else abstains to the wildcard."""
+    values: "dict[str, set[object]]" = {}
+    poisoned: set[str] = set()
+
+    def bind(target: ast.expr, value: "ast.expr | None") -> None:
+        for leaf in (target.elts if isinstance(target, (ast.Tuple, ast.List)) else [target]):
+            if not isinstance(leaf, ast.Name):
+                continue
+            # only a whole-name assignment of a bare literal is provable; unpacking splits the value, so
+            # the leaf's own value is not this node's `value` -> unknown.
+            if (value is not None and isinstance(value, ast.Constant)
+                    and not isinstance(target, (ast.Tuple, ast.List))):
+                values.setdefault(leaf.id, set()).add(value.value)
+            else:
+                poisoned.add(leaf.id)
+
+    if isinstance(root, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        a = root.args
+        poisoned.update(p.arg for p in a.posonlyargs + a.args + a.kwonlyargs)
+        poisoned.update(p.arg for p in (a.vararg, a.kwarg) if p)
+    for node in _walk_own_scope(root):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                bind(t, node.value)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            bind(node.target, node.value if isinstance(node, ast.AnnAssign) else None)
+        elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            bind(node.target, None)
+        elif isinstance(node, ast.withitem) and node.optional_vars is not None:
+            bind(node.optional_vars, None)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            poisoned.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            poisoned.update((al.asname or al.name).split(".")[0] for al in node.names)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node is not root:
+                poisoned.add(node.name)
+    return {n: frozenset(vs) for n, vs in values.items() if n not in poisoned}
 
 
 # Known container in-place MUTATORS — they write the whole container (no key), so their effect is the
@@ -131,15 +186,15 @@ def static_writes(source: str) -> "frozenset[str]":
     Branch-complete; a computed subscript key stays unresolved as ``<store>.<computed>``. Writes inside a
     NESTED helper def are excluded (they are the callee's frame — surfaced only when a call follows in)."""
     tree = ast.parse(textwrap.dedent(source))
+    root = _analysis_root(tree)
+    consts = _const_bindings(root)
     writes: set[str] = set()
-    for node in _walk_own_scope(_analysis_root(tree)):
+    for node in _walk_own_scope(root):
         targets = (node.targets if isinstance(node, ast.Assign)
                    else [node.target] if isinstance(node, ast.AugAssign) else [])
         for t in targets:
             for leaf in (t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t]):
-                ch = _target_channel(leaf)
-                if ch:
-                    writes.add(ch)
+                writes.update(_target_channel(leaf, consts))
         writes.update(_method_write_channels(node))          # lst.append(x) / d.update({...}) / d.setdefault(k)
     return frozenset(writes)
 
@@ -240,9 +295,11 @@ def modelable(source: str, *, store: str = "out", helpers: "dict[str, ast.Functi
     import, an undefined name) stays an escape.
 
     BOUNDARY on the whole-container channel: a mutator write is the coarse ``<items>`` (a list/set has no
-    key to name). A consuming disjointness check must treat ``<items>`` / ``<computed>`` as store-WILDCARDS
-    (conflicting with any same-store write) for full soundness on a store mixed between keyed and
-    whole-container writes — a stated follow-on, not exercised by the subscript-only compose demo.
+    key to name). A consuming disjointness check MUST treat ``<items>`` / ``<computed>`` as store-WILDCARDS
+    — conflicting with any same-store write by a distinct item — or a store mixed between keyed and
+    whole-container writes is certified disjoint while one write clobbers the other. `modelable` is
+    therefore NOT the only gate a consumer owes: a modelable footprint can still be coarse.
+    `grammapy.disjoint_writes` honours the wildcard reading; a different consumer must do the same.
 
     ``helpers`` supplies callees defined OUTSIDE ``source`` (a module's sibling functions when ``source``
     is one function of it) so a store passed to a sibling is followed too; defs local to ``source`` win on
@@ -366,12 +423,17 @@ class CodeFootprint:
     @property
     def writes(self) -> "frozenset[str]":
         """The sound footprint: the UNION of the two oracles (over-approximation — never miss a real
-        write). A ``<computed>`` static placeholder is dropped once the dynamic run named a concrete key,
-        so a resolved computed write does not leave a spurious unresolved channel behind."""
-        union = set(self.static) | set(self.dynamic)
-        if self.static_unresolved and self.dynamic:
-            union = {w for w in union if not w.endswith(".<computed>")} | set(self.dynamic)
-        return frozenset(union)
+        write).
+
+        The union is taken WHOLE — in particular an unresolved ``<computed>`` channel SURVIVES a dynamic
+        run that named a concrete key. Dropping it (as this once did, to avoid a 'spurious' placeholder)
+        was the one under-approximating step in the derivation: the dynamic oracle resolves the key THIS
+        input produced, and says nothing about the key another input produces, so a run that observed
+        ``out.a`` cannot license the claim that ``out[k]`` never writes ``out.total``. The placeholder is
+        a WILDCARD, and a consuming check must treat it as one (`grammapy.disjoint_writes`). Precision is
+        recovered where it can be PROVEN instead of observed: a key bound to a literal is resolved
+        statically (`_const_bindings`), so it never becomes a placeholder in the first place."""
+        return frozenset(set(self.static) | set(self.dynamic))
 
     @property
     def agree(self) -> bool:

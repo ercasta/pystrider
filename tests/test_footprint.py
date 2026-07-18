@@ -23,18 +23,35 @@ def test_static_is_branch_complete():
 
 
 def test_dynamic_resolves_a_computed_key():
-    src = "k = 'total'\nout[k] = x"
+    src = "out['k' + str(x)] = 1"                                # the key DEPENDS on the input
     assert static_writes(src) == frozenset({"out.<computed>"})   # static can't name it
-    assert dynamic_writes(src) == frozenset({"out.total"})       # execution resolves it
+    assert dynamic_writes(src, x=5) == frozenset({"out.k5"})     # execution resolves it — for THIS input
 
 
 def test_union_is_sound_each_oracle_covers_the_other():
     branch = footprint_of("if x < 0:\n    out['neg'] = 1\nelse:\n    out['pos'] = 1", x=5)
     assert branch.dynamic_missed == frozenset({"out.neg"})       # dynamic missed the untaken arm
     assert branch.writes == frozenset({"out.neg", "out.pos"})    # union recovers it
-    computed = footprint_of("k = 'total'\nout[k] = x")
+    computed = footprint_of("out['k' + str(x)] = 1", x=5)
     assert computed.static_unresolved == frozenset({"out.<computed>"})
-    assert computed.writes == frozenset({"out.total"})           # resolved; placeholder dropped
+    # the placeholder SURVIVES the resolved key: this run named `out.k5`, another input names another
+    # key, so the wildcard is the only sound thing to carry forward.
+    assert computed.writes == frozenset({"out.<computed>", "out.k5"})
+
+
+def test_a_key_bound_to_a_literal_is_resolved_statically_not_guessed_from_a_run():
+    # precision is recovered where it can be PROVEN: `k = 'total'` makes the key statically known, so it
+    # never becomes a wildcard and the two oracles agree without the dynamic run licensing anything.
+    fp = footprint_of("k = 'total'\nout[k] = x")
+    assert fp.static == frozenset({"out.total"}) and fp.agree
+    assert fp.static_unresolved == frozenset()
+    # EVERY constant a name can hold is kept — a branch-complete over-approximation, never a pick.
+    both = static_writes("if x < 0:\n    k = 'neg'\nelse:\n    k = 'pos'\nout[k] = 1")
+    assert both == frozenset({"out.neg", "out.pos"})
+    # one non-constant binding poisons the name back to the honest wildcard.
+    assert static_writes("k = 'total'\nk = str(x)\nout[k] = 1") == frozenset({"out.<computed>"})
+    assert static_writes("def f(k):\n    out[k] = 1") == frozenset({"out.<computed>"})   # a parameter
+    assert static_writes("for k in ks:\n    out[k] = 1") == frozenset({"out.<computed>"})  # a loop target
 
 
 def test_a_bare_local_is_not_a_channel():

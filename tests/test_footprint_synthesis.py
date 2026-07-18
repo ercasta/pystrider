@@ -32,24 +32,47 @@ def test_the_liar_is_admitted_by_declared_but_rejected_by_derived():
     assert not _admits(derived)          # derived from the code -> the real collision is caught
 
 
+def test_a_whole_container_write_that_clobbers_a_keyed_one_is_caught_end_to_end():
+    """The wildcard leg of the same gap, derived from CODE and checked by the real Accumulate.
+
+    Both fragments are perfectly honest and both are `modelable` — nothing here is a liar, and nothing
+    abstains. The unsoundness was purely in the READING of the derived channels: `out.update(d)` derives
+    the coarse `out.<items>`, which does not string-match the `out.total` the other fragment writes. The
+    two compose "disjointly" and the second silently overwrites the first.
+    """
+    keyed, whole = "out['total'] = x", "data = {'total': 99}\nout.update(data)"
+    assert footprint_of(whole).writes == frozenset({"out.<items>"})   # no key to name
+    assert not footprint_of(keyed).unknown and not footprint_of(whole).unknown  # neither abstains
+
+    # the collision is REAL: run them in sequence against one store and the keyed write is gone.
+    store: dict = {}
+    exec(keyed, {"out": store, "x": 1})
+    exec(whole, {"out": store, "x": 1})
+    assert store["total"] == 99                                      # `keyed` lost its write
+
+    assert not _admits([derived_item("keyed", keyed), derived_item("whole", whole)])
+
+
 def test_static_synthesis_is_branch_complete():
     src = "if x < 0:\n    out['neg'] = 1\nelse:\n    out['pos'] = 1"
     assert static_writes(src) == {"out.neg", "out.pos"}   # both arms, even the untaken one
 
 
 def test_dynamic_synthesis_resolves_a_computed_key():
-    src = "k = 'total'\nout[k] = x"
+    src = "out['k' + str(x)] = 1"                         # the key DEPENDS on the input
     assert static_writes(src) == {"out.<computed>"}       # static can't name the key
-    assert dynamic_writes(src) == {"out.total"}           # execution resolves it
+    assert dynamic_writes(src, x=5) == {"out.k5"}         # execution resolves it — for THIS input
 
 
 def test_union_is_the_sound_footprint_each_oracle_covers_the_other():
     branch = footprint_of("if x < 0:\n    out['neg'] = 1\nelse:\n    out['pos'] = 1", x=5)
     assert branch.dynamic_missed == frozenset({"out.neg"})     # dynamic missed the untaken branch
     assert branch.writes == frozenset({"out.neg", "out.pos"})  # union recovers it
-    computed = footprint_of("k = 'total'\nout[k] = x")
+    computed = footprint_of("out['k' + str(x)] = 1", x=5)
     assert computed.static_unresolved == frozenset({"out.<computed>"})
-    assert computed.writes == frozenset({"out.total"})         # the resolved key, placeholder dropped
+    # the run named the key it produced; the placeholder SURVIVES, because another input names another
+    # key. Dropping it here would be the one under-approximating step in the derivation.
+    assert computed.writes == frozenset({"out.<computed>", "out.k5"})
 
 
 def test_honest_fragment_static_and_dynamic_agree():
