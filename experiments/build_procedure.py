@@ -89,6 +89,7 @@ __all__ = [
     "SPEC", "SPEC_UNCOVERED", "SPEC_UNREPAIRABLE", "SPEC_TWO_REPAIRS", "SPEC_LOOP", "SPEC_LOOP_FLAT", "INPUTS_LOOP_FLAT",
     "SPEC_BRANCH", "INPUTS_BRANCH", "REACHED", "unexercised",
     "SPEC_GUARD", "INPUTS_GUARD", "RECOVERY_GUARD",
+    "SPEC_CASES", "CASES_GREET", "CHEAT_ONE_CASE", "SPEC_BRANCH_CASES", "CASES_BRANCH",
     "EXPANSION", "LOWERING", "RECOVERY", "RECOVERY_SHOUT", "CURRENT", "VERDICT", "REFUSAL",
     "REPAIRS", "STALE", "JUDGE", "STEPS", "RUNTIME_LIBRARY", "INPUTS", "INPUTS_LOOP", "ATTRIBUTION", "STATEMENT",
     "Build", "Refusal", "Workspace", "build", "current_versions", "verdict", "oracle_report",
@@ -231,6 +232,62 @@ SPEC_BRANCH: "list[tuple[str, str, str]]" = [
 ]
 
 
+# --- SEVERAL CASES: one spec, more than one input set ------------------------------------------------
+# `expects hello_bob` was only ever true relative to `name=bob`, so a spec checked against ONE input set
+# cannot tell a program that COMPUTES the answer from one that happens to print the right literal. Two
+# cases can, using nothing but the output oracle — which makes them an independent second defense against
+# exactly the class of program the structural oracle was invented to catch.
+#
+# Expectations are authored REIFIED here (the `expectation` node with `in_case` + `text`) because there is
+# genuinely more than one; the shorthand `?n expects ?x` is the same thing with the case left implicit,
+# and `EXPANSION` lifts it into `k0`.
+CASES_GREET = [("k0", {"name": "bob"}), ("k1", {"name": "ann"})]
+
+SPEC_CASES: "list[tuple[str, str, str]]" = [
+    ("report", "is_a", "procedure"),
+    ("greet_line", "is_a", "intent"), ("greet_line", "of", "report"),
+    ("greet_line", "outputs", "name"), ("greet_line", "at", "i0"),
+    ("x0", "is_a", "expectation"), ("x0", "of_intent", "greet_line"),
+    ("x0", "in_case", "k0"), ("x0", "text", "hello_bob"),
+    ("x1", "is_a", "expectation"), ("x1", "of_intent", "greet_line"),
+    ("x1", "in_case", "k1"), ("x1", "text", "hello_ann"),
+]
+
+# the literal-printing cheat, judged against the SAME spec: right on `k0`, wrong on `k1`.
+CHEAT_ONE_CASE = "def report(name):\n    print('hello_bob')"
+
+
+# ...and the answer to the gap slice 16 left open. `SPEC_BRANCH` SHIPS on one input set while reporting
+# `goodbye_bob` unexercised — not owed, but never tested either. The way to stop a spec being vacuously
+# satisfied is not a cleverer rule; it is to RUN THE CASE THAT EXERCISES IT. Adding `k1`, where the guard
+# is taken, turns that quiet `unexercised` into an honest refusal, because `goodbye` really is
+# unreachable by any recovery rule. The vacuity was in the TESTING, and cases are what close it.
+CASES_BRANCH = [("k0", {"name": "bob", "vip": True, "banned": False}),
+                ("k1", {"name": "bob", "vip": True, "banned": True})]
+
+SPEC_BRANCH_CASES: "list[tuple[str, str, str]]" = [
+    ("report", "is_a", "procedure"),
+    ("vip_gate", "is_a", "intent"), ("vip_gate", "of", "report"),
+    ("vip_gate", "when_holds", "vip"), ("vip_gate", "at", "i0"),
+    ("vip_line", "is_a", "intent"), ("vip_line", "of", "report"),
+    ("vip_line", "inside", "vip_gate"),
+    ("vip_line", "outputs", "name"), ("vip_line", "at", "b0"),
+    ("v0", "is_a", "expectation"), ("v0", "of_intent", "vip_line"),
+    ("v0", "in_case", "k0"), ("v0", "text", "hello_bob"),
+    ("v1", "is_a", "expectation"), ("v1", "of_intent", "vip_line"),
+    ("v1", "in_case", "k1"), ("v1", "text", "hello_bob"),
+    ("ban_gate", "is_a", "intent"), ("ban_gate", "of", "report"),
+    ("ban_gate", "when_holds", "banned"), ("ban_gate", "at", "i1"),
+    ("ban_line", "is_a", "intent"), ("ban_line", "of", "report"),
+    ("ban_line", "inside", "ban_gate"),
+    ("ban_line", "outputs", "name"), ("ban_line", "at", "b1"),
+    # owed ONLY in the case that takes the guard — and unreachable by any recovery rule.
+    ("b1x", "is_a", "expectation"), ("b1x", "of_intent", "ban_line"),
+    ("b1x", "in_case", "k1"), ("b1x", "text", "goodbye_bob"),
+    ("i0", "before", "i1"),
+]
+
+
 # A spec whose OUTPUT the naive lowering already gets exactly right, and whose SHAPE it does not: one
 # plain output intent plus a required branch. `print(name)` prints `bob`, which is all the spec asks for
 # — so the output oracle is satisfied on the first run and only reading the code finds anything wrong.
@@ -257,7 +314,17 @@ EXPANSION = (
     # element) minted TWO steps, and the second was silently dropped by the emit walk.
     "st? is_a step and st? of_procedure ?p and st? from_intent ?n and st? outputs ?v and st? at ?i "
     "when ?n is_a intent and ?n of ?p and ?n outputs ?v and ?n at ?i\n"
-    "?st wants ?x when ?st is_a step and ?st from_intent ?n and ?n expects ?x\n"
+    # EXPECTATIONS ARE REIFIED, and they carry a CASE. A spec is checked against several input sets, so
+    # "what should this line print" has no answer until you say ON WHICH INPUTS — `expects hello_bob`
+    # only ever meant anything relative to `name=bob`. The expectation node carries `in_case` + `text`,
+    # and every downstream judgement reads it through that node rather than through a bare string.
+    #
+    # The legacy one-case form (`?n expects ?x`) is LIFTED into the default case BY A RULE, not by a
+    # Python shim — so there is exactly one representation downstream and a single-case spec is simply a
+    # multi-case spec with one case. Keyed on (intent, text): one expectation per distinct text.
+    "ex? is_a expectation and ex? of_intent ?n and ex? in_case k0 and ex? text ?x "
+    "when ?n is_a intent and ?n expects ?x\n"
+    "?st wants ?e when ?st is_a step and ?st from_intent ?n and ?e is_a expectation and ?e of_intent ?n\n"
     # An intent that ITERATES becomes a step too. It declares no `wants` — a loop prints nothing by
     # itself, so it can never be the unmet statement; only what is inside it can be.
     # `is_a loop_step` is the INVARIANT the lowering mint keys on. Without it the mint would have to
@@ -362,7 +429,10 @@ ATTRIBUTION = "?o from_stmt ?pr when ?o from_line ?n and ?pr source_line ?n"
 #
 # Monotone, and correctly so: `was_reached` means "has this statement EVER been seen to run", the same
 # reading as the output observations it guards.
-REACHED = "?st was_reached yes when ?st source_line ?n and ?n was_executed yes"
+# Reachability is PER CASE, for the same reason expectations are: a branch taken on one input set is not
+# taken on another, and that difference is the whole point of running more than one. The line identity
+# stays per-EMISSION (`r0L4`) so `ATTRIBUTION` joins unchanged; the CASE rides on `executed_in`.
+REACHED = "?pr reached_in ?c when ?pr source_line ?n and ?n executed_in ?c"
 
 # --- the UNMET condition, authored ONCE and reused by composition ------------------------------------
 # "this statement's line is not (yet) right": the step this statement realizes wants some text, and NO
@@ -377,8 +447,13 @@ REACHED = "?st was_reached yes when ?st source_line ?n and ?n was_executed yes"
 # `?pr was_reached yes` is the conditional's contribution: an expectation is only OWED by a statement the
 # run actually reached. Without it, a statement under an untaken branch is unmet forever — the repairs
 # chase a line that was never going to print, and a build that is correct refuses.
-_UNMET_FOR_STMT = ("?pr for_step ?st and ?st is_a step and ?st wants ?x and ?pr was_reached yes "
-                   "and not ?o from_stmt ?pr and not ?o text ?x")
+#
+# Read per CASE: this statement, on THESE inputs, was reached and did not print what that case expects.
+# The three `not` atoms share `?o`, so they are one conjunctive NAC — "no observation attributed to this
+# statement, in this case, carrying this text".
+_UNMET_FOR_STMT = ("?pr for_step ?st and ?st is_a step and ?st wants ?e "
+                   "and ?e in_case ?c and ?e text ?x and ?pr reached_in ?c "
+                   "and not ?o from_stmt ?pr and not ?o in_case ?c and not ?o text ?x")
 
 # --- STALE: the unmet condition COLLAPSED onto the payload, so a mint cannot multiply ---------------
 # A minted node is keyed on the WHOLE MATCH, not on the head (STANDING LESSON 2). `_UNMET_FOR_STMT`
@@ -444,18 +519,28 @@ RECOVERY_SHOUT = _repair_by_application("shout", "arg_v3", "arg_v2")
 # a procedure is satisfied when none of its steps is unmet.
 
 VERDICT = (ATTRIBUTION + "\n" + REACHED + "\n"
-           "?st unmet yes when ?st is_a step and ?st wants ?x and ?pr for_step ?st "
-           "and ?pr was_reached yes and not ?o from_stmt ?pr and not ?o text ?x\n"
+           # unmet in ANY case is unmet: a program that gets it right on one input set and wrong on
+           # another is wrong. This is where several cases start doing real work — with one case the
+           # rule is what it always was.
+           "?st unmet yes when ?st is_a step and ?st wants ?e and ?e in_case ?c and ?e text ?x "
+           "and ?pr for_step ?st and ?pr reached_in ?c "
+           "and not ?o from_stmt ?pr and not ?o in_case ?c and not ?o text ?x\n"
            # ...and the boundary that guard creates, reported rather than hidden. An expectation whose
            # statement never ran is not unmet — but neither is it VERIFIED, and a build that quietly
            # counted it as satisfied would be claiming more than it checked. Naming it keeps the ledger
            # honest: these are the expectations this run did not exercise, and a spec whose branch is
            # never taken on any input is a spec nothing tested.
-           "?st unexercised yes when ?st is_a step and ?st wants ?x and ?pr for_step ?st "
-           "and not ?pr was_reached yes\n"
+           # ...and untestedness attaches to the EXPECTATION, not to the step that owes it — STANDING
+           # LESSON 2's corollary: attach a collapsed judgement to the thing it is ABOUT, not to its
+           # owner. On the step it means "some expectation of this step was untested", and reading it
+           # back reported EVERY text the step wants, so a statement satisfied on `k0` was listed as
+           # unexercised because its `k1` twin had not been run. One expectation is one (case, text)
+           # pair, which is exactly the grain the claim is made at.
+           "?e unexercised yes when ?e is_a expectation and ?e in_case ?c and ?st wants ?e "
+           "and ?pr for_step ?st and not ?pr reached_in ?c\n"
            # a step that wants something and got NO statement at all is unmet too — otherwise a spec
            # that lowered to nothing would pass for want of anything to attribute against.
-           "?st unmet yes when ?st is_a step and ?st wants ?x and not ?pr for_step ?st\n"
+           "?st unmet yes when ?st is_a step and ?st wants ?e and not ?pr for_step ?st\n"
            "?p prints_ok yes when ?p is_a procedure "
            "and not ?st unmet yes and not ?st of_procedure ?p")
 
@@ -645,14 +730,26 @@ def holds(g: AttrGraph, subject: str, pred: str, obj: str) -> bool:
 class Workspace:
     """The artifact plane, kept separate from the planner's control plane."""
     spec: "list[tuple[str, str, str]]" = field(default_factory=lambda: list(SPEC))
-    inputs: dict = field(default_factory=lambda: dict(INPUTS))
+    # CASES: the input sets this spec is checked against, `[(case_id, inputs), …]`. The INPUTS are
+    # mechanism — they are what you feed the program, the §8 boundary — while the EXPECTATIONS about them
+    # are knowledge and live on the graph as `expectation` nodes carrying `in_case`. One case is the
+    # ordinary situation and reads exactly as the old single-input pipeline did.
+    cases: "list[tuple[str, dict]]" = field(
+        default_factory=lambda: [("k0", dict(INPUTS))])
     g: AttrGraph = field(default_factory=AttrGraph)
     ids: dict = field(default_factory=dict)
     source: str = ""
-    stdout: "list[str]" = field(default_factory=list)
+    stdout: "list[str]" = field(default_factory=list)     # the FIRST case's, for a short log line
+    per_case: "dict[str, list[str]]" = field(default_factory=dict)   # what every case actually printed
     log: "list[str]" = field(default_factory=list)
     emits: int = 0                   # bumps per emission; scopes line identities to ONE version of the
                                      # program, so a statement that moves does not inherit stale output.
+
+    @property
+    def inputs(self) -> dict:
+        """The PARAMETER SET, taken from the first case. Every case must bind the same names — they run
+        the same function — so this is the signature, not a choice of case."""
+        return self.cases[0][1]
 
     def node(self, name: str) -> str:
         if name not in self.ids:
@@ -675,9 +772,14 @@ class Workspace:
         return scratch
 
     def wanted(self) -> "list[str]":
-        # every expectation, not one per intent — a looped intent declares one per element.
-        return [self.g.name(x) for n in of_kind(self.g, "intent")
-                for x in many(self.g, n, "expects")]
+        # every expectation, not one per intent — a looped intent declares one per element. Read off the
+        # AUTHORED facts (legacy `expects` plus any case-tagged `expectation` the spec states directly),
+        # so this works before `expand` has lifted anything.
+        authored = [self.g.name(x) for n in of_kind(self.g, "intent")
+                    for x in many(self.g, n, "expects")]
+        cased = [self.g.name(x) for e in of_kind(self.g, "expectation")
+                 for x in many(self.g, e, "text")]
+        return authored + [t for t in cased if t not in authored]
 
 
 def observe_code(ws: Workspace) -> None:
@@ -729,9 +831,9 @@ def unexercised(ws: Workspace) -> "list[str]":
     so `holds(g, g.name(st), ...)` resolves every step to whichever one `nodes_named` happens to return
     first. That mistake reported an empty list here while the rule was firing correctly."""
     g = ws.derived(ORACLES)
-    return sorted(g.name(x) for st in of_kind(g, "step")
-                  if any(g.name(v) == "yes" for v in many(g, st, "unexercised"))
-                  for x in many(g, st, "wants"))
+    return sorted(g.name(t) for e in of_kind(g, "expectation")
+                  if any(g.name(v) == "yes" for v in many(g, e, "unexercised"))
+                  for t in many(g, e, "text"))
 
 
 def current_versions(ws: Workspace) -> "dict[str, str]":
@@ -836,7 +938,20 @@ def _run_and_observe(ws: Workspace) -> "list[str]":
     The `print` the generated code sees is ours, and it notes its caller's line number. That is the
     honest way to learn which statement produced which output when a loop makes one statement produce
     many: ask the run, rather than deriving it from a position that no longer means anything. The
-    library is exec'd separately so line numbers are the GENERATED source's own."""
+    library is exec'd separately so line numbers are the GENERATED source's own.
+
+    Runs ONCE PER CASE, and every fact it mints is tagged with the case that produced it. Nothing about a
+    run means anything without knowing which inputs it was: `bob` is the right output for one input set
+    and the wrong one for another, and a branch taken here is skipped there. The returned stdout is the
+    FIRST case's, purely so the log and the walkthrough have something short to print — the graph carries
+    every case, and the rules read all of them."""
+    ws.per_case = {case: _run_one_case(ws, case, inputs) for case, inputs in ws.cases}
+    observe_code(ws)                                    # ...and READ the code, for the second oracle
+    return next(iter(ws.per_case.values()), [])
+
+
+def _run_one_case(ws: Workspace, case: str, inputs: dict) -> "list[str]":
+    """One execution, on one input set, minting observations and reached-lines tagged with `case`."""
     env: dict = {}
     seen: "list[tuple[int, str]]" = []
 
@@ -868,26 +983,30 @@ def _run_and_observe(ws: Workspace) -> "list[str]":
         env["print"] = observing_print
         sys.settrace(tracer)
         try:
-            env["report"](*ws.inputs.values())
+            env["report"](*inputs.values())
         finally:
             sys.settrace(previous)                      # never leave a tracer on the harness
     except Exception as exc:
         seen.append((0, f"<error: {type(exc).__name__}>"))
 
+    # Line identity stays per-EMISSION so `ATTRIBUTION` joins unchanged; the CASE rides on its own
+    # predicate. A statement reached on one input set and not another therefore has one line node with
+    # `executed_in` for some cases and not others, which is exactly the question the verdict asks.
     tag = f"r{ws.emits - 1}"                            # the emission this run exercised
     for line in sorted(executed):
-        ws.g.add_relation(ws.node(f"{tag}L{line}"), "was_executed", ws.node("yes"))
+        ws.g.add_relation(ws.node(f"{tag}L{line}"), "executed_in", ws.node(case))
     for k, (line, text) in enumerate(seen):
         obs = ws.g.add_node("obs")                      # a fresh node per observation (never interned)
         ws.g.add_relation(obs, "is_a", ws.node("observation"))
         ws.g.add_relation(obs, "at", ws.node(f"i{k}"))
         ws.g.add_relation(obs, "text", ws.node(text))
+        ws.g.add_relation(obs, "in_case", ws.node(case))
         ws.g.add_relation(obs, "from_line", ws.node(f"{tag}L{line}"))
-    observe_code(ws)                                    # ...and READ the code, for the second oracle
     return [text for _, text in seen]
 
 
-def judge_source(spec: "list[tuple[str, str, str]]", source: str) -> "dict[str, bool]":
+def judge_source(spec: "list[tuple[str, str, str]]", source: str,
+                 cases: "list[tuple[str, dict]] | None" = None) -> "dict[str, bool]":
     """Judge an ARBITRARY program against a spec, reporting each oracle separately.
 
     Used to show what the black-box oracle alone would accept. The loop never produces the cheating
@@ -901,7 +1020,7 @@ def judge_source(spec: "list[tuple[str, str, str]]", source: str) -> "dict[str, 
         return (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
                 and isinstance(node.value.func, ast.Name) and node.value.func.id == "print")
 
-    ws = Workspace(spec=list(spec))
+    ws = Workspace(spec=list(spec), cases=cases) if cases else Workspace(spec=list(spec))
     for s_, p_, o_ in ws.spec + LATTICE:
         ws.fact(s_, p_, o_)
     ws.rules(EXPANSION)
@@ -967,12 +1086,21 @@ STEPS = (
     # and the tiebreak is explicitly meaningless (see `_rank_tool`) — a green build resting on it would be
     # the "passing run is not evidence" trap (STANDING LESSON 8) authored in on purpose. 4 is the honest
     # number under the stated principle, so 4 it stays, and the gap is pinned instead. Filed to ugm as a
-    # HYPOTHESIS (STANDING LESSON 11): should an untried-but-INAPPLICABLE rival be able to outrank?
+    # HYPOTHESIS (STANDING LESSON 14): should an untried-but-INAPPLICABLE rival be able to outrank?
     Step("repair_guard", ("output_ok",), ("code_emitted",), cost=4),
 )
 
 REPAIRS = {"repair_greet": RECOVERY, "repair_shout": RECOVERY_SHOUT,
            "repair_audit": RECOVERY_AUDIT, "repair_guard": RECOVERY_GUARD}
+
+
+def _ran(ws: Workspace) -> str:
+    """What the run produced, per case. With one case this reads exactly as the old single-input log
+    line did; with several it names each, because `['bob']` is meaningless without saying on which
+    inputs."""
+    if len(ws.per_case) <= 1:
+        return str(ws.stdout)
+    return "  ".join(f"{c}:{out}" for c, out in ws.per_case.items())
 
 
 def _perform(ws: Workspace, step: str) -> "set[str]":
@@ -998,7 +1126,7 @@ def _perform(ws: Workspace, step: str) -> "set[str]":
     if step == "check":
         ws.stdout = _run_and_observe(ws)             # OBSERVE only
         ok = verdict(ws)                             # ASK the rules
-        ws.log.append(f"check  : ran it -> {ws.stdout} (wanted {ws.wanted()}) => "
+        ws.log.append(f"check  : ran it -> {_ran(ws)} (wanted {ws.wanted()}) => "
                       f"{'OK' if ok else 'MISMATCH'}")
         return {"output_ok"} if ok else set()
     if step in REPAIRS:
@@ -1011,7 +1139,7 @@ def _perform(ws: Workspace, step: str) -> "set[str]":
         changed = ws.source != before
         ws.log.append(f"{step:<13}: {'applied' if changed else 'DID NOT APPLY'} -> "
                       f"{' ; '.join(l.strip() for l in ws.source.splitlines()[1:])}")
-        ws.log.append(f"{'':<13}  re-ran it -> {ws.stdout} => {'OK' if ok else 'STILL WRONG'}")
+        ws.log.append(f"{'':<13}  re-ran it -> {_ran(ws)} => {'OK' if ok else 'STILL WRONG'}")
         held = {"output_ok"} if ok else set()
         if step == "repair_greet" and changed:
             held.add("payload_greeted")              # PROGRESS, observable even when the goal is not met
@@ -1194,7 +1322,8 @@ class Build:
 
 
 def build(spec: "list[tuple[str, str, str]] | None" = None,
-          inputs: "dict | None" = None) -> Build:
+          inputs: "dict | None" = None,
+          cases: "list[tuple[str, dict]] | None" = None) -> Build:
     """Author `to build : …` and `run build`, letting ugm's planner drive the steps and (when the check
     fails by execution) replan onto an alternative producer."""
     rules = h.load_machine_rules("\n".join(
@@ -1205,8 +1334,9 @@ def build(spec: "list[tuple[str, str, str]] | None" = None,
         _stage(g, step)
     h.ingest(g, [], "to build : expand then lower then emit then check")
 
-    ws = Workspace(spec=list(spec if spec is not None else SPEC),
-                   inputs=dict(inputs if inputs is not None else INPUTS))
+    if cases is None:
+        cases = [("k0", dict(inputs if inputs is not None else INPUTS))]
+    ws = Workspace(spec=list(spec if spec is not None else SPEC), cases=cases)
     order: "list[str]" = []
     h.ingest(g, rules, "run build", tools={"act": _act_tool(ws, order), "rank": _rank_tool()})
     return Build(order, ws)
@@ -1343,6 +1473,36 @@ def run() -> None:
     print(f"\n   ...and the boundary that creates is REPORTED, not hidden — expectations this build")
     print(f"   never exercised: {unexercised(e.workspace)}. Not owed, but not verified either; a build")
     print("   that counted them as satisfied would be claiming more than it checked.")
+
+    print("\n" + "=" * 78)
+    print("SEVERAL CASES — 'expects hello_bob' only ever meant anything relative to name=bob")
+    print("=" * 78)
+    m = build(SPEC_CASES, cases=CASES_GREET)
+    for line in m.workspace.log:
+        print(f"   {line}")
+    print(f"\n   ONE repair satisfies BOTH input sets, because it applies `greet` to whatever `name` is")
+    print("   rather than patching the output that was observed.")
+    print("\n   And a second case is an INDEPENDENT defense against the program the structural oracle")
+    print("   was invented to catch — the one that prints the literal the spec happens to expect:\n")
+    for line in CHEAT_ONE_CASE.splitlines():
+        print(f"      {line}")
+    print(f"\n      judged on ONE case  -> prints_ok "
+          f"{judge_source(SPEC_CASES, CHEAT_ONE_CASE, cases=[('k0', {'name': 'bob'})])['prints_ok']}")
+    print(f"      judged on TWO cases -> prints_ok "
+          f"{judge_source(SPEC_CASES, CHEAT_ONE_CASE, cases=CASES_GREET)['prints_ok']}")
+    print("\n   Caught by the OUTPUT oracle alone. Neither defense makes the other redundant: cases")
+    print("   catch a program that does not GENERALIZE, the structural oracle catches one that reaches")
+    print("   the right answer the wrong way even on every input you thought to try.")
+
+    print("\n   ...and this is the answer to what the BRANCHES section left open. That build shipped")
+    print("   while reporting `goodbye_bob` untested. Run the case that TAKES the guard:")
+    one_case = build(SPEC_BRANCH_CASES, cases=CASES_BRANCH[:1])
+    two = build(SPEC_BRANCH_CASES, cases=CASES_BRANCH)
+    print(f"      one case  -> ok={one_case.ok}   unexercised={unexercised(one_case.workspace)}")
+    print(f"      two cases -> ok={two.ok}  {two.refusal.kind}   "
+          f"unexercised={unexercised(two.workspace)}")
+    print("   The vacuity was in the TESTING, not in the rules. Nothing about the rule set changed —")
+    print("   the expectation stopped being untested and immediately turned out to be unreachable.")
 
     print("\n" + "=" * 78)
     print("THE HONEST BOUNDARY — when the rules cannot get there, REFUSE by name")

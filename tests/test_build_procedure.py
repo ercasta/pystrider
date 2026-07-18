@@ -14,6 +14,7 @@ from experiments.build_procedure import (
     SPEC_TWO_REPAIRS, SPEC_UNCOVERED, SPEC_UNREPAIRABLE,
     SPEC_BRANCH, INPUTS_BRANCH, unexercised,
     SPEC_GUARD, INPUTS_GUARD, Workspace, _perform,
+    SPEC_CASES, CASES_GREET, CHEAT_ONE_CASE, SPEC_BRANCH_CASES, CASES_BRANCH,
     build, current_versions, many, of_kind, one, run_stratified, verdict,
 )
 
@@ -464,7 +465,11 @@ def test_a_looped_intent_mints_ONE_step_despite_MANY_expectations():
     body_steps = [s for s in of_kind(g, "step")
                   if g.name(one(g, s, "from_intent")) == "body_line"]
     assert len(body_steps) == 1
-    assert {g.name(w) for w in many(g, body_steps[0], "wants")} == {"hello_ann", "hello_bob"}
+    # `wants` now points at reified EXPECTATION nodes (each carrying its case + text), so the texts are
+    # read one hop out. Still one step, still both expectations — the arity claim is unchanged.
+    wants = many(g, body_steps[0], "wants")
+    assert len(wants) == 2                                   # one expectation node per element
+    assert {g.name(t) for w in wants for t in many(g, w, "text")} == {"hello_ann", "hello_bob"}
 
 
 def test_the_SPINE_lowers_loops_with_the_SHARED_pattern():
@@ -650,7 +655,7 @@ def test_a_required_BRANCH_is_verified_by_READING_the_emitted_code():
 def test_a_missing_GUARD_is_repaired_by_RESTRUCTURING_not_by_rewriting_a_payload():
     # the fourth repair shape. SPEC_GUARD's output is ALREADY exactly right on the first run — only
     # reading the code finds anything wrong — and the repair wraps the program rather than editing it.
-    ws = Workspace(spec=list(SPEC_GUARD), inputs=dict(INPUTS_GUARD))
+    ws = Workspace(spec=list(SPEC_GUARD), cases=[("k0", dict(INPUTS_GUARD))])
     for step in ("expand", "lower", "emit"):
         _perform(ws, step)
     assert _perform(ws, "check") == set()                     # not satisfied...
@@ -665,7 +670,7 @@ def test_a_missing_GUARD_is_repaired_by_RESTRUCTURING_not_by_rewriting_a_payload
 def test_the_guard_repair_RESTRUCTURES_BY_ADDITION_because_the_graph_is_monotone():
     # nothing is moved — nothing CAN be. The new container CLAIMS the statement (`body_has`) and the
     # already-existing `in_body` derivation takes it off the top-level sequence.
-    ws = Workspace(spec=list(SPEC_GUARD), inputs=dict(INPUTS_GUARD))
+    ws = Workspace(spec=list(SPEC_GUARD), cases=[("k0", dict(INPUTS_GUARD))])
     for step in ("expand", "lower", "emit", "check", "repair_guard"):
         _perform(ws, step)
     g = ws.g
@@ -683,7 +688,7 @@ def test_the_guard_repair_mints_ONE_guard_however_many_STATEMENTS_it_claims():
         ("second", "outputs", "name"), ("second", "at", "i1"), ("second", "expects", "bob"),
         ("i0", "before", "i1"),
     ]
-    ws = Workspace(spec=two, inputs=dict(INPUTS_GUARD))
+    ws = Workspace(spec=two, cases=[("k0", dict(INPUTS_GUARD))])
     for step in ("expand", "lower", "emit", "check", "repair_guard"):
         _perform(ws, step)
     assert len(of_kind(ws.g, "cond_node")) == 1               # ONE guard, two statements claimed
@@ -720,3 +725,72 @@ def test_an_INAPPLICABLE_cheaper_rival_STRANDS_a_costlier_repair():
         assert "repair_guard" in cheaper.order and cheaper.ok is True
     finally:
         bp.STEPS = original
+
+
+# --- SEVERAL CASES: one spec, more than one input set ------------------------------------------------
+# `expects hello_bob` only ever meant anything relative to `name=bob`. Checking against more than one
+# input set is what makes the expectations say something about the PROGRAM rather than about one run.
+
+
+def test_a_single_case_spec_is_just_a_MULTI_case_spec_with_ONE_case():
+    # the legacy shorthand `?n expects ?x` is lifted into the default case BY A RULE, so there is one
+    # representation downstream rather than a Python shim and a special path.
+    b = build()
+    g = b.workspace.g
+    exps = of_kind(g, "expectation")
+    assert exps, "the legacy `expects` form must be lifted into reified expectations"
+    assert {g.name(c) for e in exps for c in many(g, e, "in_case")} == {"k0"}
+    assert {g.name(t) for e in exps for t in many(g, e, "text")} == {"hello_bob", "boss"}
+
+
+def test_ONE_repair_satisfies_SEVERAL_cases():
+    # the repair has to generalize: `greet` is applied to whatever `name` is, so one edit satisfies both
+    # input sets. A repair that merely patched the observed output could not.
+    b = build(SPEC_CASES, cases=CASES_GREET)
+    assert b.ok and "print(greet(name))" in b.source
+    assert unexercised(b.workspace) == []
+
+
+def test_a_SECOND_CASE_catches_the_literal_cheat_with_the_OUTPUT_oracle_alone():
+    # THE pin for this slice. The structural oracle exists because a black-box check can be satisfied by
+    # a program that prints the literal the spec expects. A second input set catches that same program
+    # using nothing but the output oracle — two INDEPENDENT defenses against one class of wrong program,
+    # which is why neither makes the other redundant.
+    one = judge_source(SPEC_CASES, CHEAT_ONE_CASE, cases=[("k0", {"name": "bob"})])
+    assert one["prints_ok"] is True                  # one case: the cheat passes
+    two = judge_source(SPEC_CASES, CHEAT_ONE_CASE, cases=CASES_GREET)
+    assert two["prints_ok"] is False                 # two cases: caught, by OUTPUT alone
+
+    honest = judge_source(SPEC_CASES, build(SPEC_CASES, cases=CASES_GREET).source,
+                          cases=CASES_GREET)
+    assert honest["prints_ok"] is True               # ...and the honest program still passes both
+
+
+def test_ADDING_THE_CASE_turns_a_vacuous_pass_into_an_honest_REFUSAL():
+    # the answer to the gap slice 16 left open. `goodbye_bob` is unreachable by any recovery rule; under
+    # one input set the guard is never taken, so it is never owed and the build ships while REPORTING it
+    # untested. Running the case that takes the guard is what converts that into a refusal — the vacuity
+    # was in the testing, not in the rules.
+    one = build(SPEC_BRANCH_CASES, cases=CASES_BRANCH[:1])
+    assert one.ok is True and one.shipped is not None
+    assert "goodbye_bob" in unexercised(one.workspace)
+
+    two = build(SPEC_BRANCH_CASES, cases=CASES_BRANCH)
+    assert two.ok is False and two.refusal.kind == "unverified"
+    assert two.shipped is None
+    assert unexercised(two.workspace) == []          # every expectation now actually tested
+
+
+def test_UNEXERCISED_attaches_to_the_EXPECTATION_not_to_the_STEP():
+    # STANDING LESSON 2's corollary, and a bug a single-case pin could not have caught: on the STEP the
+    # flag means "some expectation of this step was untested", so reading it back listed EVERY text the
+    # step wants — marking a statement satisfied on `k0` as unexercised because its `k1` twin had not
+    # run. `vip_line` is reached and correct on `k0`, so its `k0` expectation must NOT be reported.
+    one = build(SPEC_BRANCH_CASES, cases=CASES_BRANCH[:1])
+    g = one.workspace.derived(ORACLES)
+    flagged = {(g.name(one_c), g.name(t))
+               for e in of_kind(g, "expectation")
+               if any(g.name(v) == "yes" for v in many(g, e, "unexercised"))
+               for one_c in many(g, e, "in_case") for t in many(g, e, "text")}
+    assert ("k0", "hello_bob") not in flagged        # exercised on the case that ran
+    assert ("k1", "hello_bob") in flagged            # its twin, on a case that did not

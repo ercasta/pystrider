@@ -21,10 +21,17 @@ rabbit hole the user stopped).
 **The active work is the BUILD SPINE:** a succinct spec becomes running Python through steps sequenced
 by ugm's real planner, with the navigate loop (do → check → recover) as the organizing principle.
 
-- **`experiments/build_procedure.py`** (+ `tests/test_build_procedure.py`, 46 pins) — the centrepiece.
+- **`experiments/build_procedure.py`** (+ `tests/test_build_procedure.py`, 51 pins) — the centrepiece.
   `to build : expand then lower then emit then check`, driven by `corpus/procedure.cnl` +
   `planning*.cnl`. Run it: `python -m experiments.build_procedure` (the walkthrough prints the whole
-  argument).
+  argument, and is the fastest way back into the state of play — several bugs this session were found by
+  READING its output, not by a test).
+  Its specs, roughly in order of what each was built to demonstrate: `SPEC` (attribution over multiple
+  statements) · `SPEC_UNCOVERED` / `SPEC_UNREPAIRABLE` (the two refusal kinds) · `SPEC_TWO_REPAIRS`
+  (repairs compose) · `SPEC_LOOP` / `SPEC_LOOP_FLAT` (nesting; a requirement only reading the code can
+  check) · `SPEC_BRANCH` (an expectation under an untaken branch is NOT OWED) · `SPEC_GUARD` (a repair
+  that restructures — currently stranded, ugm #22) · `SPEC_CASES` / `SPEC_BRANCH_CASES` (several input
+  sets; the second is the one that turns a vacuous pass into a refusal).
 - **`experiments/ast_representation.py`** (+7) / **[`docs/ast_representation_findings.md`](ast_representation_findings.md)**
   — how ordered/nested/revisable AST lives in triples. The design rules everything else obeys.
 - **`experiments/vocabulary_bridge.py`** (+7) / **[`docs/vocabulary_bridge.md`](vocabulary_bridge.md)**
@@ -40,7 +47,7 @@ by ugm's real planner, with the navigate loop (do → check → recover) as the 
   iteration in hand-written Python and WRITES one from an intent. The humble goal's load-bearing claim,
   isolated and perturbation-tested. Run it: `python -m experiments.bidirectional_pattern`.
 
-**Suite: 383 green** (`./.venv/Scripts/python.exe -m pytest -q`, ~7.5 min). Playground:
+**Suite: 388 green** (`./.venv/Scripts/python.exe -m pytest -q`, ~7.5 min). Playground:
 `python demos/playground/playground.py`. Site: `python -m mkdocs build`.
 
 ### What the spine currently proves
@@ -58,6 +65,12 @@ staged `cost` knowledge, and composing to reach specs no single rule covers. Pro
 to the pipeline: the same description that lowering uses as a rule HEAD to build a construct, the
 structural oracle uses as a rule BODY to confirm — by READING the emitted source — that it is really
 there. That is the humble goal's central clause, made structural.
+
+**A spec is checked against SEVERAL INPUT SETS.** Expectations are reified (`expectation` nodes carrying
+`in_case` + `text`), because `expects hello_bob` only ever meant anything relative to `name=bob`. A second
+case catches the literal-printing cheat with the OUTPUT oracle alone — so cases and the structural oracle
+are independent defenses: cases catch a program that does not GENERALIZE, the structural oracle catches
+one that is right the wrong way on every input you tried.
 
 **Reachability is OBSERVED, because conditionals made it load-bearing.** An expectation is owed only by a
 statement the run actually reached — the run traces which lines executed and one rule joins that to the
@@ -128,7 +141,23 @@ name, and ZERO shipped silently wrong (each shipped program re-executed by the p
     fact land on one graph, so a requirement checked without `from_code` is satisfied by the structure
     the writer just minted — it verifies its own intention instead of the artifact, and passes. Standing
     trap for any bidirectional vocabulary.
-11. **File findings to ugm as HYPOTHESES, not as facts** (their explicit request, 2026-07-18 — see the
+11. **When a limitation can be hidden by tuning a MEANINGLESS knob, PIN THE LIMITATION.** `repair_guard`
+    goes green at cost 3 — but only by winning an alphabetical tiebreak that `_rank_tool`'s own docstring
+    calls meaningless. Re-pricing would have authored LESSON 8's trap in on purpose: a passing build whose
+    passing proves nothing. Keep the honest number, pin the gap, and pin (by varying that one input) that
+    the knob is the only thing in the way, so a future fix fails loudly.
+12. **Migrate a representation by LIFTING THE OLD FORM WITH A RULE, never with a Python shim.** Slice 18
+    changed the core of the verdict — expectations became case-tagged nodes — and 46 existing pins went
+    green unchanged, because `?n expects ?x` is lifted into case `k0` BY A RULE. There is then exactly one
+    representation downstream and no special path: a single-case spec is genuinely a multi-case spec with
+    one case. This is the cheapest way to make a breaking change to the substrate's shape.
+13. **A judgement that COLLAPSES several witnesses must attach to the thing it is ABOUT.** Stated as a
+    sub-bullet of lesson 2 and it has now cost three separate bugs, so it is its own lesson. On the owner
+    it silently means "SOME witness has this property", and reading it back reports the owner's whole
+    fan-out: `unexercised` on the STEP listed every text the step wants, marking an expectation satisfied
+    on `k0` untested because its `k1` twin had not run. Ask what ONE of these facts is about — usually a
+    (case, text) pair, a payload version, a node of its own — and put it there.
+14. **File findings to ugm as HYPOTHESES, not as facts** (their explicit request, 2026-07-18 — see the
     `diagnose-as-hypothesis` memory). Keep the full analysis: four of our confident diagnoses were
     INVERTED and each still found a real bug, so the analysis is load-bearing even when wrong. What
     costs them time is a causal claim stated as settled, because they then start from our model instead
@@ -136,22 +165,56 @@ name, and ZERO shipped silently wrong (each shipped program re-executed by the p
     an authoring step?"). Root cause of the inversions: we reason from ONE of ugm's two engines
     (`run_bank` forward vs `chain_sip` demand), which have a parity contract we cannot see from here.
 
+### ⚠ UNCOMMITTED WORK IN THE TREE (2026-07-18, end of session)
+
+Slices 17 and 18 are **written, green, and NOT COMMITTED** — `git diff --stat` shows ~317/38 across
+`docs/implementation_plan.md`, `experiments/build_procedure.py`, `tests/test_build_procedure.py`. Slice 16
+(conditionals) was committed mid-session; slices 17–18 were not. Suite is 388 green as it stands, so the
+tree is in a committable state — check `git status` first and commit before starting anything new.
+
+**LINE-ENDING TRAP, and it is not only the ugm feedback file.** Every file in this repo is stored LF, and
+editing tools on this machine rewrite them CRLF, which produces a whole-file phantom diff (3,700 lines for
+a 435-line change). `git diff --stat` looked catastrophic three times this session. Normalize before
+reviewing a diff:
+
+```python
+for f in [...]:
+    p = pathlib.Path(f); b = p.read_bytes()
+    if b != b.replace(b'\r\n', b'\n'): p.write_bytes(b.replace(b'\r\n', b'\n'))
+```
+
+`git diff --stat --ignore-cr-at-eol` tells you whether that is what you are looking at.
+
 ### NEXT (recommended order)
 
-1. **Grow the grid's AXES, now that the harness exists.** `reach_curve.py` measures predicted-vs-actual
-   reach honestly, but its grid varies transforms/shape/length/structure over a rule set with two
-   expansion rules. The measurement gets interesting when the SPEC space is richer than the rule set in
-   ways we did not design — more expansion rules, and specs whose reachability is genuinely unobvious
-   in advance (today `_reachable` is easy to state, which is a sign the space is still small).
-2. ~~**More nesting shapes** (`if`)~~ — **DONE, slice 16 below.** The follow-ons it opened, in order of
-   interest: (a) the `else` arm, which is a SECOND pattern rather than a bridge (`CONDITIONAL` describes
-   the then-side only); ~~(b) a repair that adds or widens a GUARD~~ (DONE, slice 17 — and it surfaced ugm #22:
-   an inapplicable cheaper rival strands it, so it is pinned as a known limit rather than reachable); (c) driving a spec over SEVERAL input sets, since `unexercised` currently reports
-   what one run did not test and the obvious answer is to run more than one.
-3. Cheap follow-ons: retire `run_stratified` (now a thin wrapper; `run_bank` stratifies by default);
+1. **Derive the CASE, instead of authoring it.** The sharpest thing slice 18 left open. `unexercised`
+   NAMES an untested expectation but the author still has to invent the input set that exercises it —
+   and for a guarded statement the rules already know the condition (`?cs guards_on ?c`). Deriving "to
+   exercise this, run a case where `banned` is true" turns the honest gap into a closed loop, and it is
+   the same OBSERVE-don't-derive discipline pointed at the inputs rather than the outputs. Ours entirely,
+   not blocked on ugm.
+2. **The `else` arm.** `CONDITIONAL` describes the then-side only, so a two-armed `if` is half-invisible.
+   A SECOND pattern description, not a bridge — cheap, self-contained, and it makes the library's
+   construction story a fourth time rather than a third.
+3. **Grow the grid's AXES.** `reach_curve.py` measures predicted-vs-actual reach honestly, but its grid
+   varies transforms/shape/length/structure over a rule set with two expansion rules. Now stronger than
+   when this was first written: branches, guards and CASES are three new axes, and reachability over a
+   multi-case spec is genuinely unobvious in advance (today `_reachable` is easy to state, which is a
+   sign the space is still small).
+4. **Audit `_const_bindings`** (see Known debt) — the standing constraint the user set, not a new
+   capability, and the only item on this list that is debt rather than reach.
+5. Cheap follow-ons: retire `run_stratified` (now a thin wrapper; `run_bank` stratifies by default);
    loosen the remaining literal `order`/source assertions in `test_build_procedure.py` to the properties
-   they mean (the tiebreak pin was just given this treatment); a findings doc for the spine, since the
+   they mean (the tiebreak pin was given this treatment); a findings doc for the spine, since the
    slice log below is the only write-up.
+
+### Waiting on ugm (nothing is BLOCKED by it)
+
+**#22** — the only open dependency, and it holds back exactly one thing: `repair_guard`'s reachability
+*through the planner*. The rule itself is authored, green, and exercised directly in the pins. **#21**
+(report a mint head's skolem key at load time) is a diagnostic nicety, never blocking. If #22 is answered,
+the first move is to re-run `test_an_INAPPLICABLE_cheaper_rival_STRANDS_a_costlier_repair` — it is written
+to FAIL LOUDLY the moment the stranding is fixed.
 
 ### Known debt
 
@@ -171,8 +234,9 @@ name, and ZERO shipped silently wrong (each shipped program re-executed by the p
   loop body contributes no `loop_body` link — unlike a nested `for`, which does. An inconsistency between
   the two containers, deliberately left alone in slice 16 to keep the blast radius small; it means
   "what does this loop body contain?" under-reports a conditional child.
-- `unexercised` is per-BUILD, i.e. relative to the one input set a build ran on. It honestly reports what
-  that run did not test, but nothing yet drives a spec over several inputs.
+- Cases must be authored BY HAND. Nothing derives which input sets would exercise an unexercised
+  expectation, so `unexercised` names the gap but the author still has to close it. Deriving a case that
+  takes a named branch is the obvious next lever on this axis.
 - `judge_source` (judging a FOREIGN program) attributes output by position — the k-th printing statement
   realizes the k-th step. Declared in its docstring and used nowhere in the build loop, but it means
   that helper cannot judge a foreign program containing a loop.
@@ -184,7 +248,7 @@ The durable record is the **memory files** (`build-procedure-spine`, `bidirectio
 `diagnose-as-hypothesis`, `pattern-writer`) and, for the superseded line,
 **[`the_case.md`](the_case.md)** / **[`deep_dive.md`](deep_dive.md)** / **[`roadmap.md`](roadmap.md)**.
 ugm feedback + their answers live in `../ugm/docs/feedback_from_pystrider.md` (we are at item **#22**,
-rewritten as a question after their note on how we file — see STANDING LESSON 11). **That file uses LF
+rewritten as a question after their note on how we file — see STANDING LESSON 14). **That file uses LF
 line endings; write it with `write_bytes`, not `write_text`, or you produce a 2000-line phantom diff.**
 
 ---
@@ -482,6 +546,44 @@ default build now runs **two** repairs instead of three.
 Known limit, pinned upstream: with no cost staged, every untried producer still commits — the bank has
 no basis for a tiebreak and a total-order `rank` is where one belongs.
 
+**SLICE 18 DONE (2026-07-18) — SEVERAL CASES: one spec, more than one input set.** 51 pins (+5),
+suite 388. The follow-on slice 16 argued for, and it closes that slice's own honest gap.
+
+**The premise.** `expects hello_bob` was only ever true relative to `name=bob`. A spec checked against ONE
+input set cannot distinguish a program that COMPUTES the answer from one that prints the right literal —
+which is precisely why the structural oracle had to be invented. Expectations are now REIFIED
+(`expectation` nodes carrying `in_case` + `text`) and every judgement reads them through that node.
+
+**The legacy shorthand is lifted BY A RULE, not by a Python shim** (`?n expects ?x` → an expectation in
+case `k0`), so there is exactly ONE representation downstream and a single-case spec is genuinely a
+multi-case spec with one case. That is what let 46 existing pins go green unchanged through a change to
+the core of the verdict. Reachability became per-case too (`reached_in ?c`), with line identity left
+per-EMISSION so `ATTRIBUTION` joined unchanged — the case rides on its own predicate.
+
+**THE HEADLINE — a second case catches the literal cheat using the OUTPUT ORACLE ALONE.**
+`print('hello_bob')` judged against `SPEC_CASES`: `prints_ok True` on one case, `prints_ok False` on two.
+So cases and the structural oracle are two INDEPENDENT defenses against the same class of wrong-for-the-
+right-reason program, and neither makes the other redundant: **cases catch a program that does not
+GENERALIZE; the structural oracle catches one that reaches the right answer the wrong way even on every
+input you thought to try.** One repair satisfies both cases, because `greet` applies to whatever `name`
+is rather than patching an observed output.
+
+**...AND IT CLOSES SLICE 16'S GAP.** `SPEC_BRANCH` shipped while reporting `goodbye_bob` untested. Add the
+case that TAKES the guard and the same spec, with the same rule set, refuses `unverified` — the
+expectation stopped being untested and immediately turned out to be unreachable. **The vacuity was in the
+TESTING, not in the rules**, which is why no cleverer rule was the answer.
+
+**A BUG A SINGLE-CASE PIN COULD NOT HAVE CAUGHT — STANDING LESSON 2's corollary, again.** `unexercised`
+was first derived onto the STEP. On the step it means "SOME expectation of this step was untested", so
+reading it back reported EVERY text the step wants — a statement satisfied on `k0` was listed as
+unexercised because its `k1` twin had not been run. Moved onto the EXPECTATION node, which is one
+(case, text) pair and exactly the grain the claim is made at. **Attach a collapsed judgement to the thing
+it is ABOUT, not to its owner** — third time this has bitten, now pinned directly
+(`test_UNEXERCISED_attaches_to_the_EXPECTATION_not_to_the_STEP`).
+
+Also: the check log now names each case (`k0:['bob']  k1:['ann']`), because `['bob']` says nothing
+without the inputs it came from.
+
 **SLICE 17 DONE (2026-07-18) — A REPAIR THAT CHANGES REACHABILITY, and the planner limit it exposed.**
 46 pins (+5), suite 383. The fourth repair SHAPE: the three before it rewrite a payload, wrap a previous
 repair, and ADD a statement — each leaves the set of executed statements alone. `RECOVERY_GUARD`
@@ -508,7 +610,7 @@ cannot hold on a spec where `repair_greet` did not apply), and is therefore neve
 that RAN AND FAILED is ruled out. Both drop rules for `?alt outranked_by ?x` are never satisfied and the
 block is permanent. The cascade assumes every cheaper rival will eventually be TRIED, which holds when
 alternatives differ only in cost and stops holding the moment one declares a precondition the world
-cannot satisfy. Filed as ugm **#22**, a QUESTION in the #20 format (STANDING LESSON 11), with our
+cannot satisfy. Filed as ugm **#22**, a QUESTION in the #20 format (STANDING LESSON 14), with our
 diagnosis flagged as hypothesis and the three places we may be holding it wrong listed.
 
 **THE METHOD NOTE — we did NOT re-price to make it green.** Cost 3 "fixes" it only by winning the
