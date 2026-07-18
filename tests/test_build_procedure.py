@@ -13,6 +13,7 @@ from experiments.build_procedure import (
     SPEC_LOOP, SPEC_LOOP_FLAT, INPUTS_LOOP_FLAT, LOWERING, oracle_report,
     SPEC_TWO_REPAIRS, SPEC_UNCOVERED, SPEC_UNREPAIRABLE,
     SPEC_BRANCH, INPUTS_BRANCH, unexercised,
+    SPEC_GUARD, INPUTS_GUARD, Workspace, _perform,
     build, current_versions, many, of_kind, one, run_stratified, verdict,
 )
 
@@ -217,8 +218,10 @@ def test_declared_COSTS_order_the_recovery():
     assert ok1 and ok2                           # both orders still reach a verified program
 
     # the shipped costs encode "how much of the existing program does this edit disturb".
+    # `repair_guard` RESTRUCTURES (it changes which statements run), so it is the most disturbing of
+    # all — and its 4 is load-bearing rather than decorative: see the stranding pin below.
     assert {s.name: s.cost for s in STEPS if s.name in REPAIRS} == {
-        "repair_greet": 1, "repair_audit": 2, "repair_shout": 3}
+        "repair_greet": 1, "repair_audit": 2, "repair_shout": 3, "repair_guard": 4}
 
 
 def test_the_rank_calculator_imposes_a_TOTAL_order():
@@ -639,3 +642,81 @@ def test_a_required_BRANCH_is_verified_by_READING_the_emitted_code():
     flat = "def report(name, vip, banned):\n    print(greet(name))\n"
     judged = judge_source(SPEC_BRANCH, flat)
     assert judged["structure_ok"] is False               # no branch on `vip` in the code
+
+
+# --- the guard repair: a repair that changes REACHABILITY, and the planner limit it exposed ----------
+
+
+def test_a_missing_GUARD_is_repaired_by_RESTRUCTURING_not_by_rewriting_a_payload():
+    # the fourth repair shape. SPEC_GUARD's output is ALREADY exactly right on the first run — only
+    # reading the code finds anything wrong — and the repair wraps the program rather than editing it.
+    ws = Workspace(spec=list(SPEC_GUARD), inputs=dict(INPUTS_GUARD))
+    for step in ("expand", "lower", "emit"):
+        _perform(ws, step)
+    assert _perform(ws, "check") == set()                     # not satisfied...
+    assert oracle_report(ws)["prints_ok"] is True             # ...though the OUTPUT was right all along
+    assert oracle_report(ws)["structure_ok"] is False         # only the structural oracle objects
+
+    assert _perform(ws, "repair_guard") == {"output_ok"}
+    assert [ln.strip() for ln in ws.source.splitlines()[1:]] == ["if vip:", "print(name)"]
+    assert oracle_report(ws) == {"prints_ok": True, "structure_ok": True, "satisfied": True}
+
+
+def test_the_guard_repair_RESTRUCTURES_BY_ADDITION_because_the_graph_is_monotone():
+    # nothing is moved — nothing CAN be. The new container CLAIMS the statement (`body_has`) and the
+    # already-existing `in_body` derivation takes it off the top-level sequence.
+    ws = Workspace(spec=list(SPEC_GUARD), inputs=dict(INPUTS_GUARD))
+    for step in ("expand", "lower", "emit", "check", "repair_guard"):
+        _perform(ws, step)
+    g = ws.g
+    pr = of_kind(g, "emit_print")[0]
+    assert many(g, pr, "in_body")                             # now nested...
+    assert [g.name(v) for v in many(g, pr, "version")] == ["arg_v1"]   # ...and never rewritten
+
+
+def test_the_guard_repair_mints_ONE_guard_however_many_STATEMENTS_it_claims():
+    # STANDING LESSON 2: minting with `?pr is_a emit_print` in the body would key the skolem on the
+    # STATEMENT and produce one guard per statement. The mint is keyed on (procedure, condition).
+    two = [f for f in SPEC_GUARD if f[0] != "vip_line" or f[1] != "at"] + [
+        ("vip_line", "at", "i0"),
+        ("second", "is_a", "intent"), ("second", "of", "report"),
+        ("second", "outputs", "name"), ("second", "at", "i1"), ("second", "expects", "bob"),
+        ("i0", "before", "i1"),
+    ]
+    ws = Workspace(spec=two, inputs=dict(INPUTS_GUARD))
+    for step in ("expand", "lower", "emit", "check", "repair_guard"):
+        _perform(ws, step)
+    assert len(of_kind(ws.g, "cond_node")) == 1               # ONE guard, two statements claimed
+    assert len(many(ws.g, of_kind(ws.g, "emit_if")[0], "body_has")) == 2
+
+
+def test_the_guard_repair_SELF_GATES_when_the_branch_is_already_there():
+    # its body IS the structural gap, so a spec that already produces the branch never triggers it.
+    b = build(SPEC_BRANCH, INPUTS_BRANCH)
+    assert b.ok and "repair_guard" not in b.order
+    assert build().ok and "repair_guard" not in build().order
+
+
+def test_an_INAPPLICABLE_cheaper_rival_STRANDS_a_costlier_repair():
+    # A KNOWN LIMIT, pinned so it fails loudly if the planner gains a fix (the ugm #20 treatment).
+    #
+    # `repair_shout` (cost 3) is cheaper than `repair_guard` (cost 4) and can NEVER run here: its
+    # `payload_greeted` precondition cannot hold on a spec where `repair_greet` did not apply. It is
+    # therefore never `done`, and `procedure.cnl` derives `excluded` only from `?o discrepancy ?e` — an
+    # op that RAN and FAILED — so it is never excluded either. Its `outranked_by` block is never dropped.
+    b = build(SPEC_GUARD, INPUTS_GUARD)
+    assert "repair_guard" not in b.order                      # stranded
+    assert b.ok is False and b.refusal.kind == "unstructured"  # ...and refused, not silently shipped
+    assert b.shipped is None
+
+    # the cost is the ONLY thing standing in the way — verified by varying it alone (STANDING LESSON 8:
+    # perturb the input whenever claiming a mechanism is load-bearing).
+    import experiments.build_procedure as bp
+    original = bp.STEPS
+    try:
+        bp.STEPS = tuple(bp.Step(s.name, s.adds, s.needs, 3 if s.name == "repair_guard" else s.cost)
+                         for s in original)
+        cheaper = bp.build(SPEC_GUARD, INPUTS_GUARD)
+        assert "repair_guard" in cheaper.order and cheaper.ok is True
+    finally:
+        bp.STEPS = original

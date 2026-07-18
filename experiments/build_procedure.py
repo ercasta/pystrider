@@ -88,6 +88,7 @@ _CORPUS = pathlib.Path(h.__file__).resolve().parent.parent / "corpus"
 __all__ = [
     "SPEC", "SPEC_UNCOVERED", "SPEC_UNREPAIRABLE", "SPEC_TWO_REPAIRS", "SPEC_LOOP", "SPEC_LOOP_FLAT", "INPUTS_LOOP_FLAT",
     "SPEC_BRANCH", "INPUTS_BRANCH", "REACHED", "unexercised",
+    "SPEC_GUARD", "INPUTS_GUARD", "RECOVERY_GUARD",
     "EXPANSION", "LOWERING", "RECOVERY", "RECOVERY_SHOUT", "CURRENT", "VERDICT", "REFUSAL",
     "REPAIRS", "STALE", "JUDGE", "STEPS", "RUNTIME_LIBRARY", "INPUTS", "INPUTS_LOOP", "ATTRIBUTION", "STATEMENT",
     "Build", "Refusal", "Workspace", "build", "current_versions", "verdict", "oracle_report",
@@ -227,6 +228,21 @@ SPEC_BRANCH: "list[tuple[str, str, str]]" = [
     ("i0", "before", "i1"),
     # ...and the shape itself is required, read back out of the emitted code.
     ("report", "requires_branch_on", "vip"),
+]
+
+
+# A spec whose OUTPUT the naive lowering already gets exactly right, and whose SHAPE it does not: one
+# plain output intent plus a required branch. `print(name)` prints `bob`, which is all the spec asks for
+# — so the output oracle is satisfied on the first run and only reading the code finds anything wrong.
+# The repair that closes it does not touch a payload; it WRAPS the program in the missing guard.
+INPUTS_GUARD = {"name": "bob", "vip": True}
+
+SPEC_GUARD: "list[tuple[str, str, str]]" = [
+    ("report", "is_a", "procedure"),
+    ("vip_line", "is_a", "intent"), ("vip_line", "of", "report"),
+    ("vip_line", "outputs", "name"), ("vip_line", "at", "i0"),
+    ("vip_line", "expects", "bob"),                  # ALREADY correct under the naive lowering
+    ("report", "requires_branch_on", "vip"),         # ...and the code is still the wrong shape
 ]
 
 
@@ -526,6 +542,41 @@ RECOVERY_AUDIT = (
     "?au stmt_before ?pr when ?au is_a emit_call and ?pr is_a emit_print and ?pr at ?i "
     "and not ?q is_a statement and not ?q stmt_before ?pr "
     "and not ?lp body_has ?pr")
+
+
+# --- recovery that changes REACHABILITY: wrap the program in a missing guard --------------------------
+# The FOURTH repair shape, and the first that changes WHICH CODE RUNS rather than what a statement says.
+# The three before it rewrite a payload, wrap a previous repair, and ADD a statement; each leaves the set
+# of executed statements alone. This one restructures: a required branch is absent, so an `emit_if` is
+# minted and the existing statements become its body.
+#
+# NOTHING IS MOVED, because nothing can be — the graph is monotone and a `stmt_before` fact cannot be
+# retracted. The new container simply CLAIMS the statement (`body_has`), and `in_body` (already derived
+# from `body_has` alone) takes it off the top-level sequence; the emit walk filters dangling links to
+# statements outside the scope it is sequencing. Restructuring by ADDITION is what the monotone substrate
+# makes available in place of a move, and it is the same idiom as versioning a payload one level up.
+#
+# TWO RULES, not one — STANDING LESSON 2. Minting with `?pr is_a emit_print` in the body would key the
+# skolem on the STATEMENT and produce one guard per statement (fine for one, silently wrong for two).
+# The mint is keyed on (procedure, condition), and the body is ATTACHED with the guard LHS-bound, where
+# it mints nothing however many statements it claims.
+#
+# The gate is raw INTAKE vocabulary (`is_a branch` / `condition` / `reads`), not the bridged neutral form
+# — the same choice `RECOVERY_AUDIT` makes, so a repair bank needs no bridge to see the code it is
+# reading. Its body IS the structural gap, so it self-gates the moment the branch exists.
+RECOVERY_GUARD = (
+    STATEMENT + "\n"
+    "gd? is_a cond_node and gd? checks ?c and gd? for_proc ?p "
+    "when ?p is_a procedure and ?p requires_branch_on ?c "
+    "and not ?b is_a branch and not ?b condition ?e and not ?e reads ?c\n"
+    # ATTACH the body: every step of this procedure, with the guard LHS-bound. `then_does` points at the
+    # STEP (the descriptor the pattern speaks about), so the shared `CONDITIONAL_TO_EMIT` bridge and the
+    # existing `lowers_to` do the rest — this repair authors no emit vocabulary of its own.
+    "?gd then_does ?st when ?gd is_a cond_node and ?gd for_proc ?p "
+    "and ?st is_a step and ?st of_procedure ?p\n"
+    "?st lowers_to ?pr when ?pr is_a emit_print and ?pr for_step ?st\n"
+    + CONDITIONAL_TO_EMIT + "\n"
+    "?pr in_body yes when ?lp body_has ?pr")
 
 
 # --- the version lattice + the `current` projection --------------------------------------------------
@@ -901,10 +952,27 @@ STEPS = (
     Step("repair_shout", ("output_ok",), ("payload_greeted",), cost=3),
     # a repair driven by READING the code rather than by watching its output.
     Step("repair_audit", ("output_ok",), ("code_emitted",), cost=2),
+    # ...and the most disturbing edit of all under the same principle: it RESTRUCTURES, changing which
+    # statements run at all rather than what any of them says. Costliest, so it is tried last.
+    #
+    # ⚠ AND THE PLANNER CANNOT CURRENTLY REACH IT — a known limit, deliberately NOT papered over by
+    # re-pricing. `repair_shout` (cost 3) is cheaper, is never `done` (its `payload_greeted` precondition
+    # cannot hold on a spec where `repair_greet` did not apply), and is never `excluded` either, because
+    # `procedure.cnl` derives exclusion from `?o discrepancy ?e` — i.e. only an op that RAN and FAILED is
+    # ruled out. So `?alt outranked_by ?x` is never dropped and cost 4 is stranded behind an op that can
+    # never be attempted. Verified by varying this number alone: at cost 3 or below the repair runs and
+    # the build verifies; at 4 the planner stops after the two no-op repairs.
+    #
+    # Pricing it at 3 would "fix" it only by winning the alphabetical tiebreak against `repair_shout`,
+    # and the tiebreak is explicitly meaningless (see `_rank_tool`) — a green build resting on it would be
+    # the "passing run is not evidence" trap (STANDING LESSON 8) authored in on purpose. 4 is the honest
+    # number under the stated principle, so 4 it stays, and the gap is pinned instead. Filed to ugm as a
+    # HYPOTHESIS (STANDING LESSON 11): should an untried-but-INAPPLICABLE rival be able to outrank?
+    Step("repair_guard", ("output_ok",), ("code_emitted",), cost=4),
 )
 
 REPAIRS = {"repair_greet": RECOVERY, "repair_shout": RECOVERY_SHOUT,
-           "repair_audit": RECOVERY_AUDIT}
+           "repair_audit": RECOVERY_AUDIT, "repair_guard": RECOVERY_GUARD}
 
 
 def _perform(ws: Workspace, step: str) -> "set[str]":

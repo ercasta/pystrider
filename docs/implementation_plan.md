@@ -21,7 +21,7 @@ rabbit hole the user stopped).
 **The active work is the BUILD SPINE:** a succinct spec becomes running Python through steps sequenced
 by ugm's real planner, with the navigate loop (do → check → recover) as the organizing principle.
 
-- **`experiments/build_procedure.py`** (+ `tests/test_build_procedure.py`, 41 pins) — the centrepiece.
+- **`experiments/build_procedure.py`** (+ `tests/test_build_procedure.py`, 46 pins) — the centrepiece.
   `to build : expand then lower then emit then check`, driven by `corpus/procedure.cnl` +
   `planning*.cnl`. Run it: `python -m experiments.build_procedure` (the walkthrough prints the whole
   argument).
@@ -40,7 +40,7 @@ by ugm's real planner, with the navigate loop (do → check → recover) as the 
   iteration in hand-written Python and WRITES one from an intent. The humble goal's load-bearing claim,
   isolated and perturbation-tested. Run it: `python -m experiments.bidirectional_pattern`.
 
-**Suite: 378 green** (`./.venv/Scripts/python.exe -m pytest -q`, ~7.5 min). Playground:
+**Suite: 383 green** (`./.venv/Scripts/python.exe -m pytest -q`, ~7.5 min). Playground:
 `python demos/playground/playground.py`. Site: `python -m mkdocs build`.
 
 ### What the spine currently proves
@@ -145,9 +145,8 @@ name, and ZERO shipped silently wrong (each shipped program re-executed by the p
    in advance (today `_reachable` is easy to state, which is a sign the space is still small).
 2. ~~**More nesting shapes** (`if`)~~ — **DONE, slice 16 below.** The follow-ons it opened, in order of
    interest: (a) the `else` arm, which is a SECOND pattern rather than a bridge (`CONDITIONAL` describes
-   the then-side only); (b) a repair that adds or widens a GUARD, which is the first repair shape that
-   would change reachability rather than a payload — and the first that could make an `unexercised`
-   expectation owed; (c) driving a spec over SEVERAL input sets, since `unexercised` currently reports
+   the then-side only); ~~(b) a repair that adds or widens a GUARD~~ (DONE, slice 17 — and it surfaced ugm #22:
+   an inapplicable cheaper rival strands it, so it is pinned as a known limit rather than reachable); (c) driving a spec over SEVERAL input sets, since `unexercised` currently reports
    what one run did not test and the obvious answer is to run more than one.
 3. Cheap follow-ons: retire `run_stratified` (now a thin wrapper; `run_bank` stratifies by default);
    loosen the remaining literal `order`/source assertions in `test_build_procedure.py` to the properties
@@ -163,6 +162,9 @@ name, and ZERO shipped silently wrong (each shipped program re-executed by the p
   `for` over a non-Name target. Each is an audited `not_modelled` marker, and that list IS the coverage
   worklist. Two kinds GRADUATED off it, both because a pattern needed to see them and no bridge can
   close a coverage gap: bare calls (`expr_stmt`) and `for` over a plain name (`for_loop`).
+- **`repair_guard` is authored and pinned but UNREACHABLE by the planner** (ugm #22 — an inapplicable
+  cheaper rival strands it). The rule is exercised directly in the pins; `SPEC_GUARD` refuses. Revisit
+  when ugm answers, and delete the stranding pin the moment it starts passing.
 - `CONDITIONAL` describes the THEN arm only, so a two-armed `if` is recognized by its then-side and its
   `else` is invisible. Coverage gap in the PATTERN (a second description closes it, not a bridge).
 - `intake._branch_structure` does not append the branch node to `self.statements`, so an `if` nested in a
@@ -181,7 +183,7 @@ The durable record is the **memory files** (`build-procedure-spine`, `bidirectio
 `reach-measured`, `vocabulary-bridges`, `ast-minting-unblocked`, `humble-goal-course-correction`,
 `diagnose-as-hypothesis`, `pattern-writer`) and, for the superseded line,
 **[`the_case.md`](the_case.md)** / **[`deep_dive.md`](deep_dive.md)** / **[`roadmap.md`](roadmap.md)**.
-ugm feedback + their answers live in `../ugm/docs/feedback_from_pystrider.md` (we are at item **#21**,
+ugm feedback + their answers live in `../ugm/docs/feedback_from_pystrider.md` (we are at item **#22**,
 rewritten as a question after their note on how we file — see STANDING LESSON 11). **That file uses LF
 line endings; write it with `write_bytes`, not `write_text`, or you produce a 2000-line phantom diff.**
 
@@ -479,6 +481,44 @@ default build now runs **two** repairs instead of three.
 
 Known limit, pinned upstream: with no cost staged, every untried producer still commits — the bank has
 no basis for a tiebreak and a total-order `rank` is where one belongs.
+
+**SLICE 17 DONE (2026-07-18) — A REPAIR THAT CHANGES REACHABILITY, and the planner limit it exposed.**
+46 pins (+5), suite 383. The fourth repair SHAPE: the three before it rewrite a payload, wrap a previous
+repair, and ADD a statement — each leaves the set of executed statements alone. `RECOVERY_GUARD`
+restructures, minting an `emit_if` and making the existing statements its body.
+
+**RESTRUCTURING BY ADDITION — the monotone move.** Nothing is moved because nothing CAN be: a
+`stmt_before` fact cannot be retracted. The new container CLAIMS the statement (`body_has`) and the
+already-existing `in_body` derivation takes it off the top-level sequence; the emit walk filters dangling
+links to statements outside the scope it is sequencing. This is the versioning idiom one level up, and it
+is worth naming as the general answer to "move X" on a monotone graph: **add a claimant and let a derived
+projection re-scope it.** Two rules, not one, per STANDING LESSON 2 — minting with `?pr is_a emit_print`
+in the body would key the skolem on the STATEMENT and give one guard per statement (pinned at two).
+
+**`SPEC_GUARD` is the cleanest structural-oracle case yet**: its output is EXACTLY right on the first run
+(`prints_ok: True` immediately), so the entire drive comes from reading the code. The repair authors no
+emit vocabulary of its own — it attaches `then_does` to the STEP and lets the shared `CONDITIONAL_TO_EMIT`
+bridge and the existing `lowers_to` do the rest, which is the pattern library paying off a third time.
+
+**⚠ THE REAL FINDING — AN INAPPLICABLE CHEAPER RIVAL STRANDS A COSTLIER REPAIR, PERMANENTLY.** The rule
+works (applied directly it produces the intended program and both oracles pass) and **the planner cannot
+reach it.** `repair_shout` (cost 3) is cheaper, can never run here (its `payload_greeted` precondition
+cannot hold on a spec where `repair_greet` did not apply), and is therefore never `done` — and never
+`excluded` either, because `procedure.cnl` derives exclusion from `?o discrepancy ?e`, i.e. only an op
+that RAN AND FAILED is ruled out. Both drop rules for `?alt outranked_by ?x` are never satisfied and the
+block is permanent. The cascade assumes every cheaper rival will eventually be TRIED, which holds when
+alternatives differ only in cost and stops holding the moment one declares a precondition the world
+cannot satisfy. Filed as ugm **#22**, a QUESTION in the #20 format (STANDING LESSON 11), with our
+diagnosis flagged as hypothesis and the three places we may be holding it wrong listed.
+
+**THE METHOD NOTE — we did NOT re-price to make it green.** Cost 3 "fixes" it only by winning the
+alphabetical tiebreak against `repair_shout`, and `_rank_tool`'s own docstring says the tiebreak carries
+no meaning; a green build resting on it would be STANDING LESSON 8's trap authored in deliberately. 4 is
+the honest number under the stated principle ("how much of the existing program does this edit disturb"
+— restructuring disturbs most), so 4 stays and the gap is PINNED instead:
+`test_an_INAPPLICABLE_cheaper_rival_STRANDS_a_costlier_repair` asserts the stranding AND, by varying that
+one number, that the cost is the only thing in the way. If the planner ever gains a fix, it fails loudly.
+**Generalize this: when a limitation can be hidden by tuning a meaningless knob, pin the limitation.**
 
 **SLICE 16 DONE (2026-07-18) — CONDITIONALS, and REACHABILITY became an OBSERVED fact.** 41 pins in
 `test_build_procedure.py` (+7). Plan item #2. `if` is a third nesting shape, and the reason it was worth
