@@ -315,7 +315,14 @@ class _Walker:
           then- and else-entry point, each body threaded independently, then two edges into a fresh
           **merge** point. Value at the merge is the *union* of the branches — derived by the frame
           rule firing once per merge edge (Horn disjunction), never a Python join.
+
+        ...and, since the `CONDITIONAL` pattern, a THIRD register alongside both: the STRUCTURAL one
+        (`is_a branch` / `condition` / `then_body`), emitted by `_branch_structure` below. The same
+        per-SOURCE-vs-per-PATH split `_for` documents applies here for the same reason — a conditional
+        inside a loop is walked once per unrolling, and "how many branches does this function have?"
+        must not count the unrollings.
         """
+        branch = self._branch_structure(node, state)
         guard_var = self._guard_var(node.test)
         if guard_var is not None and not node.orelse:
             gid = self._in_state(self._scope(self._fresh("g")), state)
@@ -324,7 +331,8 @@ class _Walker:
             self.line_of[gid] = node.lineno
             before = set(self.attributes)
             before_calls = set(self.call_target)
-            exit_state = self.block(node.body, state)
+            exit_state, kids = self._block_ids(node.body, state)
+            self._link_then_body(branch, kids)
             for site in self.attributes:                          # attrs created inside this body ...
                 if site not in before:
                     self._emit(site, "within_guard", gid)         # ... are guarded by it
@@ -348,12 +356,46 @@ class _Walker:
             then_kind, else_kind = ("nonnull", "null") if kind == "nonnull" else ("null", "nonnull")
             self._emit(then_edge, f"assume_{then_kind}", vid)     # true-branch of the test
             self._emit(else_edge, f"assume_{else_kind}", vid)     # false-branch of the test
-        then_exit = self.block(node.body, then_entry)
+        then_exit, kids = self._block_ids(node.body, then_entry)
+        self._link_then_body(branch, kids)
         else_exit = self.block(node.orelse, else_entry) if node.orelse else else_entry
         merge = self._fresh_state()
         self._edge(then_exit, merge)                              # join: both paths flow to the merge
         self._edge(else_exit, merge)
         return merge
+
+    def _branch_structure(self, node: ast.If, state: str) -> "str | None":
+        """The STRUCTURAL register for a conditional — what it IS, as opposed to what it does to state.
+
+        Deliberately the same shape `_for` emits (`is_a for_loop` / `iterates` / `loop_body`), because
+        the generation half MINTS the mirror of it (`emit_if` / `cond_on` / `body_has`) and a bridge can
+        only reconcile NAMING; neither side may be missing structure the other has
+        (`docs/vocabulary_bridge.md`).
+
+        Emitted once per SOURCE position, guarded by `_structured`: an `if` nested in a loop body is
+        walked once per unrolling, and a second `branch` node for one source statement would make the
+        pattern report two conditionals where the programmer wrote one — the same trap `_for` records.
+
+        Returns the node id on the FIRST walk of this source position and `None` afterwards, so the
+        caller links `then_body` from that walk's direct children only — the later walks are CFG copies
+        of the same code, not distinct statements. The condition is modelled as a real expression read,
+        which is what lets the pattern ask WHAT is being checked rather than merely that a check exists.
+        """
+        bid = self._scope(f"{self.ns}if@{node.lineno}")
+        if bid in self._structured:
+            return None
+        self._structured.add(bid)
+        self._emit(bid, "is_a", "branch")
+        self._emit(bid, "condition", self.expr(node.test, state))
+        self.line_of[bid] = node.lineno
+        self.label_of[bid] = f"if {self._snippet(node.test)}"
+        return bid
+
+    def _link_then_body(self, branch: "str | None", kids: list[str]) -> None:
+        """Link a branch to the DIRECT children of its then-arm. A no-op on a re-walk (`branch is None`),
+        which is what keeps the structural register per-SOURCE while the CFG stays per-PATH."""
+        for child in kids if branch is not None else ():
+            self._emit(branch, "then_body", child)
 
     def _block_ids(self, stmts: list[ast.stmt], state: str) -> tuple[str, list[str]]:
         """`block`, but also reporting the DIRECT child statement of each entry — the first id the

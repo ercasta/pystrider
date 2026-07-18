@@ -49,6 +49,15 @@ repair. Each hop is checked by running it. Progress short of the goal is a decla
 tried; `current` is a PROJECTION (`CURRENT`), asked read-only, never stored — a stored pointer cannot
 move on a monotone graph.
 
+**BRANCHES made reachability part of the judgement.** A loop body runs N times; a branch body may run
+NONE. Every unmet condition here is a negation — "no observation shows this statement printing what it
+wants" — which silently assumed the statement had a chance to produce one. So the run also reports WHICH
+LINES EXECUTED (`REACHED`), and an expectation is owed only by a statement that ran. Derived statically
+this would be both the forbidden Python algorithm and usually wrong, since whether a branch is taken
+depends on the inputs. The proof that it is observed: the same spec and the same rules ship on one input
+and refuse on another. What that buys is honest only if the gap is named, so `unexercised` reports the
+expectations a run never tested — not owed, but not verified either.
+
 **Provenance over generated code** (ugm feedback #15): the walkthrough asks `why` about a line of the
 GENERATED program, addressed by definite description (`ByDesc`) because the substrate is nameless.
 
@@ -68,14 +77,17 @@ from ugm.dispatch import call_arg
 
 from pystrider.intake import intake_function
 from pystrider.patterns import (
-    APPLICATION, APPLICATION_FROM_INTAKE, APPLICATION_TO_EMIT, ITERATION,
-    ITERATION_FROM_INTAKE, ITERATION_TO_EMIT, RECOGNIZE_APPLICATION, RECOGNIZE_ITERATION,
+    APPLICATION, APPLICATION_FROM_INTAKE, APPLICATION_TO_EMIT, CONDITIONAL,
+    CONDITIONAL_FROM_INTAKE, CONDITIONAL_TO_EMIT, ITERATION,
+    ITERATION_FROM_INTAKE, ITERATION_TO_EMIT, RECOGNIZE_APPLICATION, RECOGNIZE_CONDITIONAL,
+    RECOGNIZE_ITERATION,
 )
 
 _CORPUS = pathlib.Path(h.__file__).resolve().parent.parent / "corpus"
 
 __all__ = [
     "SPEC", "SPEC_UNCOVERED", "SPEC_UNREPAIRABLE", "SPEC_TWO_REPAIRS", "SPEC_LOOP", "SPEC_LOOP_FLAT", "INPUTS_LOOP_FLAT",
+    "SPEC_BRANCH", "INPUTS_BRANCH", "REACHED", "unexercised",
     "EXPANSION", "LOWERING", "RECOVERY", "RECOVERY_SHOUT", "CURRENT", "VERDICT", "REFUSAL",
     "REPAIRS", "STALE", "JUDGE", "STEPS", "RUNTIME_LIBRARY", "INPUTS", "INPUTS_LOOP", "ATTRIBUTION", "STATEMENT",
     "Build", "Refusal", "Workspace", "build", "current_versions", "verdict", "oracle_report",
@@ -187,6 +199,37 @@ SPEC_LOOP_FLAT: "list[tuple[str, str, str]]" = [
 ]
 
 
+# --- BRANCHING: an intent that only applies WHEN something holds -------------------------------------
+# The third nesting shape, and a different problem from the loop. A loop body runs N times; a branch body
+# may run NO times — so "this statement has never been observed to print what it wants" stops implying
+# "this statement is wrong". Every unmet condition in this file was written under that assumption.
+#
+# The spec is built to make the distinction sharp. `ban_line` expects `goodbye_bob`, which is EXACTLY the
+# expectation `SPEC_UNREPAIRABLE` refuses over: no recovery rule reaches `goodbye`. The only difference is
+# that it sits under a branch this run does not take. So the same unreachable expectation is a REFUSAL in
+# one spec and simply NOT OWED in the other, and nothing but reachability distinguishes them.
+INPUTS_BRANCH = {"name": "bob", "vip": True, "banned": False}
+
+SPEC_BRANCH: "list[tuple[str, str, str]]" = [
+    ("report", "is_a", "procedure"),
+    ("vip_gate", "is_a", "intent"), ("vip_gate", "of", "report"),
+    ("vip_gate", "when_holds", "vip"), ("vip_gate", "at", "i0"),
+    ("vip_line", "is_a", "intent"), ("vip_line", "of", "report"),
+    ("vip_line", "inside", "vip_gate"),
+    ("vip_line", "outputs", "name"), ("vip_line", "at", "b0"),
+    ("vip_line", "expects", "hello_bob"),            # TAKEN branch -> owed, and repaired by `greet`
+    ("ban_gate", "is_a", "intent"), ("ban_gate", "of", "report"),
+    ("ban_gate", "when_holds", "banned"), ("ban_gate", "at", "i1"),
+    ("ban_line", "is_a", "intent"), ("ban_line", "of", "report"),
+    ("ban_line", "inside", "ban_gate"),
+    ("ban_line", "outputs", "name"), ("ban_line", "at", "b1"),
+    ("ban_line", "expects", "goodbye_bob"),          # UNTAKEN branch -> never owed, never repaired
+    ("i0", "before", "i1"),
+    # ...and the shape itself is required, read back out of the emitted code.
+    ("report", "requires_branch_on", "vip"),
+]
+
+
 # --- expansion: refine the succinct spec (rules) -----------------------------------------------------
 # An intent that OUTPUTS something becomes a step. `from_intent` keeps the link back, which is what lets
 # a rule later notice an intent that produced no step at all.
@@ -207,7 +250,13 @@ EXPANSION = (
     # that stops being luck later.
     "ls? is_a step and ls? is_a loop_step and ls? of_procedure ?p and ls? from_intent ?n "
     "and ls? loops_over ?v and ls? at ?i and ls? binds ?b "
-    "when ?n is_a intent and ?n of ?p and ?n iterates ?v and ?n at ?i and ?n binds ?b")
+    "when ?n is_a intent and ?n of ?p and ?n iterates ?v and ?n at ?i and ?n binds ?b\n"
+    # ...and an intent that only applies WHEN something holds becomes a guarding step. Like a loop step
+    # it declares no `wants`: a branch prints nothing by itself, so it can never be the unmet statement.
+    # `is_a cond_step` is the invariant the lowering mint keys on, for the loop step's reason.
+    "cs? is_a step and cs? is_a cond_step and cs? of_procedure ?p and cs? from_intent ?n "
+    "and cs? guards_on ?c and cs? at ?i "
+    "when ?n is_a intent and ?n of ?p and ?n when_holds ?c and ?n at ?i")
 
 
 # --- lowering: mint the AST (rules) ------------------------------------------------------------------
@@ -221,7 +270,8 @@ EXPANSION = (
 
 STATEMENT = ("?x is_a statement when ?x is_a emit_print\n"
              "?x is_a statement when ?x is_a emit_call\n"
-             "?x is_a statement when ?x is_a emit_for")
+             "?x is_a statement when ?x is_a emit_for\n"
+             "?x is_a statement when ?x is_a emit_if")
 
 LOWERING = (
     STATEMENT + "\n"
@@ -246,6 +296,18 @@ LOWERING = (
     "?st lowers_to ?pr when ?pr is_a emit_print and ?pr for_step ?st\n"
     + ITERATION_TO_EMIT + "\n"
     "?l at ?i when ?l is_a emit_for and ?l for_step ?st and ?st at ?i\n"
+    # THE BRANCH IS LOWERED BY THE SHARED PATTERN TOO — the identical three steps, which is the point:
+    # a third construct of a third shape went in without the library's construction changing.
+    "cd? is_a cond_node and cd? for_step ?cs when ?cs is_a cond_step\n"
+    + CONDITIONAL.replace("?x", "?c") +
+    " when ?c is_a cond_node and ?c for_step ?cs and ?cs guards_on ?cond "
+    "and ?cs from_intent ?outer and ?body is_a step and ?body from_intent ?inner "
+    "and ?inner inside ?outer\n"
+    + CONDITIONAL_TO_EMIT + "\n"
+    "?l at ?i when ?l is_a emit_if and ?l for_step ?st and ?st at ?i\n"
+    # `in_body` is written over `body_has` alone, so it needed no clause for the new container: a
+    # statement nested by ANY container is off the top-level sequence. That generality was luck the
+    # first time and is a property worth keeping.
     "?pr in_body yes when ?lp body_has ?pr\n"
     # ordering is over STATEMENTS of any kind, so a loop takes its place in the sequence like anything
     # else. Statements in different scopes are simply never given `before` facts relating them.
@@ -268,6 +330,24 @@ LOWERING = (
 
 ATTRIBUTION = "?o from_stmt ?pr when ?o from_line ?n and ?pr source_line ?n"
 
+# --- REACHED: whether a statement ever RAN, also an OBSERVED fact -------------------------------------
+# Conditionals are what forced this. Every unmet condition below is a negation — "no observation shows
+# this statement printing what it wants" — and a negation over observations silently assumes the
+# statement had a chance to produce one. A loop body always gets that chance (possibly zero times, but
+# the pipeline never generated an empty sequence); a BRANCH body may legitimately never run, and then
+# "never observed to print it" means nothing at all about whether the code is right.
+#
+# The fix is the move STANDING LESSON 9 names, and the same one `check` and `ATTRIBUTION` already made:
+# the run ALREADY KNOWS which lines executed, so ask it rather than deriving reachability statically.
+# `_run_and_observe` traces the generated frame and mints `was_executed` on the lines it saw; one rule
+# joins that to the emission record. A static reachability analysis here would be exactly the Python
+# algorithm the course correction forbids, and it would also be WRONG more often — whether a branch is
+# taken depends on the inputs, which only running it can settle.
+#
+# Monotone, and correctly so: `was_reached` means "has this statement EVER been seen to run", the same
+# reading as the output observations it guards.
+REACHED = "?st was_reached yes when ?st source_line ?n and ?n was_executed yes"
+
 # --- the UNMET condition, authored ONCE and reused by composition ------------------------------------
 # "this statement's line is not (yet) right": the step this statement realizes wants some text, and NO
 # observation ATTRIBUTED TO THIS STATEMENT shows it. The `not` clauses share the free `?o`, so they form
@@ -277,7 +357,11 @@ ATTRIBUTION = "?o from_stmt ?pr when ?o from_line ?n and ?pr source_line ?n"
 # statement has EVER been seen to produce the wanted line, so a repair stops firing the moment a run
 # produces it. Reused verbatim in both recovery rules and (in `?st` form) in the verdict, so there is
 # exactly one definition of "unmet" in the system.
-_UNMET_FOR_STMT = ("?pr for_step ?st and ?st is_a step and ?st wants ?x "
+#
+# `?pr was_reached yes` is the conditional's contribution: an expectation is only OWED by a statement the
+# run actually reached. Without it, a statement under an untaken branch is unmet forever — the repairs
+# chase a line that was never going to print, and a build that is correct refuses.
+_UNMET_FOR_STMT = ("?pr for_step ?st and ?st is_a step and ?st wants ?x and ?pr was_reached yes "
                    "and not ?o from_stmt ?pr and not ?o text ?x")
 
 # --- STALE: the unmet condition COLLAPSED onto the payload, so a mint cannot multiply ---------------
@@ -310,7 +394,7 @@ STALE = ("?pr stale ?v when ?pr is_a emit_print and ?pr arg_v1 ?v and " + _UNMET
 # and `repair_shout` would then rewrite a line `repair_greet` had already fixed. (Only the planner's
 # actuator guard was hiding it.) So the judgement pass runs first, over what has actually been
 # observed, and the minting pass is gated on its result.
-JUDGE = ATTRIBUTION + "\n" + STALE
+JUDGE = ATTRIBUTION + "\n" + REACHED + "\n" + STALE
 
 def _repair_by_application(callee: str, slot: str, prev: str) -> str:
     """A payload repair, built out of the SHARED `APPLICATION` pattern.
@@ -343,9 +427,16 @@ RECOVERY_SHOUT = _repair_by_application("shout", "arg_v3", "arg_v2")
 # `check` forms no opinion; these rules do. `unmet_at` is the same condition as above in step form, and
 # a procedure is satisfied when none of its steps is unmet.
 
-VERDICT = (ATTRIBUTION + "\n"
+VERDICT = (ATTRIBUTION + "\n" + REACHED + "\n"
            "?st unmet yes when ?st is_a step and ?st wants ?x and ?pr for_step ?st "
-           "and not ?o from_stmt ?pr and not ?o text ?x\n"
+           "and ?pr was_reached yes and not ?o from_stmt ?pr and not ?o text ?x\n"
+           # ...and the boundary that guard creates, reported rather than hidden. An expectation whose
+           # statement never ran is not unmet — but neither is it VERIFIED, and a build that quietly
+           # counted it as satisfied would be claiming more than it checked. Naming it keeps the ledger
+           # honest: these are the expectations this run did not exercise, and a spec whose branch is
+           # never taken on any input is a spec nothing tested.
+           "?st unexercised yes when ?st is_a step and ?st wants ?x and ?pr for_step ?st "
+           "and not ?pr was_reached yes\n"
            # a step that wants something and got NO statement at all is unmet too — otherwise a spec
            # that lowered to nothing would pass for want of anything to attribute against.
            "?st unmet yes when ?st is_a step and ?st wants ?x and not ?pr for_step ?st\n"
@@ -379,7 +470,13 @@ INSPECTION = ("?c invokes ?f when ?c is_a call and ?c calls_func ?f\n"          
               # that neither watching stdout for one input nor counting calls can catch.
               + APPLICATION_FROM_INTAKE + "\n" + RECOGNIZE_APPLICATION + "\n"
               "?p structural_unmet ?f when ?p requires_application_of ?f and ?f applied_to ?a "
-              "and not ?c from_code yes and not ?c applies ?f and not ?c to ?a")
+              "and not ?c from_code yes and not ?c applies ?f and not ?c to ?a\n"
+              # The THIRD pattern as a question, and the one the output oracle is least able to help
+              # with: an untaken branch contributes nothing to stdout, so watching the output cannot
+              # distinguish "guarded correctly" from "not emitted at all". Only reading the code can.
+              + CONDITIONAL_FROM_INTAKE + "\n" + RECOGNIZE_CONDITIONAL + "\n"
+              "?p structural_unmet ?c when ?p requires_branch_on ?c "
+              "and not ?x from_code yes and not ?x is_a conditional and not ?x checks ?c")
 
 # the two oracles combined — an AND authored as a rule, not as a Python `and`.
 SATISFIED = "?p satisfied yes when ?p prints_ok yes and not ?p structural_unmet ?f"
@@ -570,6 +667,22 @@ def oracle_report(ws: Workspace) -> "dict[str, bool]":
             "satisfied": holds(g, "report", "satisfied", "yes")}
 
 
+def unexercised(ws: Workspace) -> "list[str]":
+    """The expectations this build never exercised — steps whose statement no run ever reached.
+
+    The honest counterpart to reachability-aware `unmet`. Those expectations are not owed, so they do
+    not fail the build; but they were not VERIFIED either, and a loop that silently counted them as
+    satisfied would claim more than it checked. ASKED, like every other judgement here.
+
+    Read BY NODE ID, never by name: steps are MINTED and therefore name-degenerate (STANDING LESSON 1),
+    so `holds(g, g.name(st), ...)` resolves every step to whichever one `nodes_named` happens to return
+    first. That mistake reported an empty list here while the rule was firing correctly."""
+    g = ws.derived(ORACLES)
+    return sorted(g.name(x) for st in of_kind(g, "step")
+                  if any(g.name(v) == "yes" for v in many(g, st, "unexercised"))
+                  for x in many(g, st, "wants"))
+
+
 def current_versions(ws: Workspace) -> "dict[str, str]":
     """Which version of each statement is current — a read-only projection, never a stored pointer."""
     scratch = ws.derived(CURRENT)
@@ -601,7 +714,8 @@ def _sequence(ws: Workspace, members: "list[str]") -> "list[str]":
 def _ordered_statements(ws: Workspace) -> "list[str]":
     """The TOP-LEVEL sequence. Which statements are top level is a rule's answer (`in_body`), not a
     property the walker works out — a statement inside a loop body is sequenced by its own scope."""
-    stmts = (of_kind(ws.g, "emit_print") + of_kind(ws.g, "emit_call") + of_kind(ws.g, "emit_for"))
+    stmts = (of_kind(ws.g, "emit_print") + of_kind(ws.g, "emit_call")
+             + of_kind(ws.g, "emit_for") + of_kind(ws.g, "emit_if"))
     return _sequence(ws, [s for s in stmts if not many(ws.g, s, "in_body")])
 
 
@@ -618,6 +732,11 @@ def _statement_ast(ws: Workspace, st: str, current: "dict[str, str]",
             iter=ast.Name(id=ws.g.name(one(ws.g, st, "iter_over")), ctx=ast.Load()),
             body=[_statement_ast(ws, k, current, where) for k in kids] or [ast.Pass()],
             orelse=[])
+    elif st in of_kind(ws.g, "emit_if"):
+        kids = _sequence(ws, many(ws.g, st, "body_has"))
+        node = ast.If(test=ast.Name(id=ws.g.name(one(ws.g, st, "cond_on")), ctx=ast.Load()),
+                      body=[_statement_ast(ws, k, current, where) for k in kids] or [ast.Pass()],
+                      orelse=[])
     elif st in of_kind(ws.g, "emit_call"):
         node = ast.Expr(ast.Call(func=ast.Name(id=ws.g.name(one(ws.g, st, "callee")), ctx=ast.Load()),
                                  args=[], keywords=[]))
@@ -638,7 +757,7 @@ def _record_lines(ws: Workspace, mine: "list[ast.stmt]", theirs: "list[ast.stmt]
         st = where.get(id(a))
         if st is not None:
             ws.g.add_relation(st, "source_line", ws.node(f"{tag}L{b.lineno}"))
-        if isinstance(a, ast.For):
+        if isinstance(a, (ast.For, ast.If)):
             _record_lines(ws, a.body, b.body, where)
 
 
@@ -678,15 +797,35 @@ def _run_and_observe(ws: Workspace) -> "list[str]":
         for text in buf.getvalue().splitlines() or [""]:
             seen.append((line, text))
 
+    # ...and WHICH LINES RAN, which stdout cannot report: a statement under an untaken branch and a
+    # statement that was never emitted look identical from the outside (both print nothing). The tracer
+    # is mechanism reporting what the world did, exactly like `observing_print` — not an analysis. Only
+    # frames of the generated source are traced; the runtime library's own lines are not the program.
+    executed: "set[int]" = set()
+
+    def tracer(frame, event, arg):
+        if frame.f_code.co_filename != "<generated>":
+            return None
+        if event == "line":
+            executed.add(frame.f_lineno)
+        return tracer
+
+    previous = sys.gettrace()
     try:
         exec(compile(RUNTIME_LIBRARY, "<library>", "exec"), env)
         exec(compile(ws.source, "<generated>", "exec"), env)
         env["print"] = observing_print
-        env["report"](*ws.inputs.values())
+        sys.settrace(tracer)
+        try:
+            env["report"](*ws.inputs.values())
+        finally:
+            sys.settrace(previous)                      # never leave a tracer on the harness
     except Exception as exc:
         seen.append((0, f"<error: {type(exc).__name__}>"))
 
     tag = f"r{ws.emits - 1}"                            # the emission this run exercised
+    for line in sorted(executed):
+        ws.g.add_relation(ws.node(f"{tag}L{line}"), "was_executed", ws.node("yes"))
     for k, (line, text) in enumerate(seen):
         obs = ws.g.add_node("obs")                      # a fresh node per observation (never interned)
         ws.g.add_relation(obs, "is_a", ws.node("observation"))
@@ -1111,6 +1250,31 @@ def run() -> None:
     print(f"      {flat.refusal}")
     print(f"      shipped: {flat.shipped!r}")
     print("\n   Right output, wrong SHAPE — and the refusal says so instead of blaming the world.")
+
+    print("\n" + "=" * 78)
+    print("BRANCHES — where 'never printed it' stops meaning 'wrong'")
+    print("=" * 78)
+    e = build(SPEC_BRANCH, INPUTS_BRANCH)
+    print("   final program:")
+    for line in e.source.splitlines():
+        print(f"      {line}")
+    print(f"\n   ran it -> {e.stdout}   ok={e.ok}")
+    print("\n   A loop body runs N times; a BRANCH body may run no times at all. Every unmet condition")
+    print("   here is a negation — 'no observation shows this statement printing what it wants' — and")
+    print("   that silently assumed the statement had a chance to produce one.")
+    print(f"\n   `ban_line` expects 'goodbye_bob', which is EXACTLY what SPEC_UNREPAIRABLE is refused")
+    print("   over: no recovery rule reaches `goodbye`. Guarded by a branch this run does not take, it")
+    print("   is simply not owed — and the statement is left alone, still at v1.")
+    print("\n   Reachability is OBSERVED, not derived: the run traces which lines executed, and one rule")
+    print("   joins that to the emission record. The evidence that this is the honest seam is that the")
+    print("   SAME spec and the SAME rules flip verdict on the INPUT alone:")
+    taken = build(SPEC_BRANCH, {"name": "bob", "vip": True, "banned": True})
+    print(f"      banned=False -> ok={e.ok}")
+    print(f"      banned=True  -> ok={taken.ok}   ({taken.refusal.kind})")
+    print("   No static reading of that code could tell those apart. Only running it can.")
+    print(f"\n   ...and the boundary that creates is REPORTED, not hidden — expectations this build")
+    print(f"   never exercised: {unexercised(e.workspace)}. Not owed, but not verified either; a build")
+    print("   that counted them as satisfied would be claiming more than it checked.")
 
     print("\n" + "=" * 78)
     print("THE HONEST BOUNDARY — when the rules cannot get there, REFUSE by name")

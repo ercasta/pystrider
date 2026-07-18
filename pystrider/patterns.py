@@ -28,7 +28,8 @@ description can serve a reader and a writer that share no predicate name.
 from __future__ import annotations
 
 __all__ = ["ITERATION", "RECOGNIZE_ITERATION", "ITERATION_FROM_INTAKE", "ITERATION_TO_EMIT",
-           "APPLICATION", "RECOGNIZE_APPLICATION", "APPLICATION_FROM_INTAKE", "APPLICATION_TO_EMIT"]
+           "APPLICATION", "RECOGNIZE_APPLICATION", "APPLICATION_FROM_INTAKE", "APPLICATION_TO_EMIT",
+           "CONDITIONAL", "RECOGNIZE_CONDITIONAL", "CONDITIONAL_FROM_INTAKE", "CONDITIONAL_TO_EMIT"]
 
 
 # --- ITERATION: "for each element of a sequence, do something" ----------------------------------------
@@ -90,3 +91,38 @@ APPLICATION_FROM_INTAKE = ("?c applies ?f and ?c to ?a and ?c from_code yes "
 # WRITE: the emit vocabulary a payload walker consumes.
 APPLICATION_TO_EMIT = ("?n is_a ast_call and ?n callee ?fn and ?n argument ?arg "
                        "when ?n is_a call_node and ?n applies ?fn and ?n to ?arg")
+
+
+# --- CONDITIONAL: "when this holds, do these things" --------------------------------------------------
+# The THIRD pattern, and again a different shape. `ITERATION` is an unconditional container (its body
+# runs, N times); `APPLICATION` is an expression. A conditional is a container whose body MAY NOT RUN AT
+# ALL, which is a distinction no earlier entry in this library makes — and the one that forced the build
+# loop to learn about reachability, because "this statement was never observed to print what it wants"
+# stops implying "this statement is wrong" the moment it can legitimately not run.
+#
+# `checks` rather than `tests`: intake already spends `tests` on its null-GUARD register, and the two
+# vocabularies are pinned disjoint. A pattern that borrowed a consumer's word would be reconciling by
+# coincidence instead of by a bridge.
+#
+# HONEST LIMIT, in the same register as `APPLICATION`'s: this describes the THEN side only. An `else`
+# body is not part of what this pattern says a conditional is, so a two-armed conditional is recognized
+# by its then-arm and its else-arm is invisible. That is a coverage gap in the PATTERN — the kind no
+# bridge can close (`docs/vocabulary_bridge.md`) — and closing it means a second description, not a
+# second bridge.
+CONDITIONAL = "?x checks ?cond and ?x then_does ?body"
+
+RECOGNIZE_CONDITIONAL = "?x is_a conditional when " + CONDITIONAL
+
+# READ: intake's STRUCTURAL register for `if` (`is_a branch` / `condition` / `then_body`), which is
+# deliberately shaped like the one it emits for `for` — per-SOURCE, emitted once, alongside the CFG
+# fork/merge that answers a different question entirely. `from_code` for the same reason `ITERATION`
+# stamps it: this consumer writes conditionals AND reads them back on one graph.
+CONDITIONAL_FROM_INTAKE = ("?f checks ?c and ?f then_does ?b and ?f from_code yes "
+                           "when ?f is_a branch and ?f condition ?e and ?e reads ?c "
+                           "and ?f then_body ?b")
+
+# WRITE: what the emitter walks. Same shape as `ITERATION_TO_EMIT` — the body a pattern describes is a
+# DESCRIPTOR, and `lowers_to` is how the consuming pipeline names the statement that realizes it.
+CONDITIONAL_TO_EMIT = ("?n is_a emit_if and ?n cond_on ?c and ?n body_has ?pr "
+                       "when ?n is_a cond_node and ?n checks ?c and ?n then_does ?b "
+                       "and ?b lowers_to ?pr")

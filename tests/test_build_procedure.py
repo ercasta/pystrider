@@ -12,6 +12,7 @@ from experiments.build_procedure import (
     CURRENT, INPUTS_LOOP, RECOVERY, REFUSAL, REPAIRS, STALE, STEPS, VERDICT,
     SPEC_LOOP, SPEC_LOOP_FLAT, INPUTS_LOOP_FLAT, LOWERING, oracle_report,
     SPEC_TWO_REPAIRS, SPEC_UNCOVERED, SPEC_UNREPAIRABLE,
+    SPEC_BRANCH, INPUTS_BRANCH, unexercised,
     build, current_versions, many, of_kind, one, run_stratified, verdict,
 )
 
@@ -542,3 +543,99 @@ def test_the_generated_line_is_explainable_back_to_the_observed_run():
                        ("why", ByDesc("pr", (("at", "i0"),)), "version", "arg_v2"),
                        h.load_machine_rules(RECOVERY), provenance=True)
     assert any("<- rule" in line for line in trace)        # threaded a rule, not "(given)"
+
+
+# --- conditionals: the third nesting shape, and reachability as an OBSERVED fact ---------------------
+# A branch body may legitimately never run, which breaks an assumption every unmet condition in the
+# spine was written under: "never observed to print what it wants" no longer implies "wrong".
+
+
+def test_a_branch_is_lowered_by_the_SHARED_pattern_and_nests_its_body():
+    b = build(SPEC_BRANCH, INPUTS_BRANCH)
+    assert "if vip:" in b.source and "if banned:" in b.source
+    g = b.workspace.g
+    ifs = of_kind(g, "emit_if")
+    assert len(ifs) == 2                                  # one per guarding intent, not one per body
+    # the body statement is NESTED (off the top-level sequence), the same way a loop body is.
+    nested = [pr for i in ifs for pr in many(g, i, "body_has")]
+    assert nested and all(many(g, pr, "in_body") for pr in nested)
+
+
+def test_the_UNCHANGED_recovery_rules_repair_inside_a_branch_body():
+    # the loop slice's claim, re-run on a container of a different KIND: nothing in the repair rules
+    # knows what encloses a statement, so a third nesting shape needed no new recovery rule.
+    b = build(SPEC_BRANCH, INPUTS_BRANCH)
+    assert b.ok and "print(greet(name))" in b.source
+    assert "repair_greet" in b.order
+
+
+def test_an_expectation_under_an_UNTAKEN_branch_is_NOT_OWED():
+    # THE pin for this slice. `goodbye_bob` is the exact expectation SPEC_UNREPAIRABLE is refused over —
+    # no recovery rule reaches `goodbye`. Guarded by a branch this run does not take, it is not owed,
+    # and the statement is left completely alone (still v1, never repaired).
+    assert build(SPEC_UNREPAIRABLE).refusal.kind == "unverified"    # unguarded: refused
+
+    b = build(SPEC_BRANCH, INPUTS_BRANCH)
+    assert b.ok and b.shipped is not None                           # guarded: ships
+    g = b.workspace.g
+    banned = [i for i in of_kind(g, "emit_if")
+              if g.name(one(g, i, "cond_on")) == "banned"][0]
+    body = many(g, banned, "body_has")[0]
+    assert [g.name(v) for v in many(g, body, "version")] == ["arg_v1"]
+
+
+def test_reachability_is_OBSERVED_so_the_SAME_spec_flips_verdict_on_the_INPUT():
+    # the evidence that reachability is observed rather than derived: one spec, one rule set, two runs.
+    # Take the guarded branch and the same expectation becomes owed — and unreachable, so the build
+    # refuses. No static reading of the code could distinguish these two cases; only running it can.
+    taken = build(SPEC_BRANCH, {"name": "bob", "vip": True, "banned": True})
+    assert taken.ok is False and taken.refusal.kind == "unverified"
+    assert build(SPEC_BRANCH, INPUTS_BRANCH).ok is True
+
+
+def test_an_UNEXERCISED_expectation_is_reported_rather_than_counted_as_satisfied():
+    # the boundary reachability creates, kept honest. The build ships, but it does not pretend to have
+    # verified an expectation whose statement never ran.
+    b = build(SPEC_BRANCH, INPUTS_BRANCH)
+    assert b.ok is True
+    assert unexercised(b.workspace) == ["goodbye_bob"]
+    # ...and nothing is reported unexercised once every branch is taken.
+    assert unexercised(build(SPEC_BRANCH,
+                             {"name": "bob", "vip": True, "banned": True}).workspace) == []
+
+
+def test_the_branch_pattern_reads_HAND_WRITTEN_python_too():
+    # the bidirectional claim for the third pattern: the same description that LOWERED the branch above
+    # recognizes one in code the pipeline never wrote, reached through the intake bridge.
+    from pystrider.intake import intake_function
+    from pystrider.patterns import CONDITIONAL_FROM_INTAKE, RECOGNIZE_CONDITIONAL
+    from ugm import AttrGraph
+
+    g = AttrGraph()
+    ids: dict = {}
+
+    def node(n):
+        if n not in ids:
+            found = g.nodes_named(n)
+            ids[n] = found[0] if found else g.add_node(n)
+        return ids[n]
+
+    src = "def report(flag, name):\n    if flag:\n        print(name)\n"
+    for s, p, o in intake_function(src).facts:
+        g.add_relation(node(s), p, node(o))
+    run_stratified(g, CONDITIONAL_FROM_INTAKE + "\n" + RECOGNIZE_CONDITIONAL)
+    found = of_kind(g, "conditional")
+    assert found, "the pattern must recognize a hand-written conditional"
+    assert g.name(one(g, found[0], "checks")) == "flag"
+    assert many(g, found[0], "then_does")                # ...and reach its body
+
+
+def test_a_required_BRANCH_is_verified_by_READING_the_emitted_code():
+    # the structural oracle over the third pattern. An untaken branch contributes nothing to stdout, so
+    # a program that simply omitted the guard would satisfy the output oracle completely.
+    b = build(SPEC_BRANCH, INPUTS_BRANCH)
+    assert oracle_report(b.workspace)["structure_ok"] is True
+
+    flat = "def report(name, vip, banned):\n    print(greet(name))\n"
+    judged = judge_source(SPEC_BRANCH, flat)
+    assert judged["structure_ok"] is False               # no branch on `vip` in the code

@@ -21,7 +21,7 @@ rabbit hole the user stopped).
 **The active work is the BUILD SPINE:** a succinct spec becomes running Python through steps sequenced
 by ugm's real planner, with the navigate loop (do → check → recover) as the organizing principle.
 
-- **`experiments/build_procedure.py`** (+ `tests/test_build_procedure.py`, 34 pins) — the centrepiece.
+- **`experiments/build_procedure.py`** (+ `tests/test_build_procedure.py`, 41 pins) — the centrepiece.
   `to build : expand then lower then emit then check`, driven by `corpus/procedure.cnl` +
   `planning*.cnl`. Run it: `python -m experiments.build_procedure` (the walkthrough prints the whole
   argument).
@@ -30,16 +30,17 @@ by ugm's real planner, with the navigate loop (do → check → recover) as the 
 - **`experiments/vocabulary_bridge.py`** (+7) / **[`docs/vocabulary_bridge.md`](vocabulary_bridge.md)**
   — vocabularies reconcile by BRIDGES, never convergence; bridges fix naming, never coverage.
 - **`pystrider/patterns.py`** — THE PATTERN LIBRARY. Structural descriptions in a neutral vocabulary,
-  read as a rule BODY to recognize and as a rule HEAD to construct. Two entries of DIFFERENT shape
-  (`ITERATION`, a container of statements; `APPLICATION`, an expression with an operand), each driving
-  the spine's construction AND its structural oracle. Its module docstring carries the authoring rules.
+  read as a rule BODY to recognize and as a rule HEAD to construct. Three entries of DIFFERENT shape
+  (`ITERATION`, a container of statements; `APPLICATION`, an expression with an operand; `CONDITIONAL`,
+  a container that may not run at all), each driving the spine's construction AND its structural oracle.
+  Its module docstring carries the authoring rules.
 - **`experiments/reach_curve.py`** (+5) — the coverage claim MEASURED over a 36-spec grid: predicted
   reach vs actual reach, and zero silent-wrong. Run it: `python -m experiments.reach_curve`.
 - **`experiments/bidirectional_pattern.py`** (+8) — ONE authored pattern text that both RECOGNIZES an
   iteration in hand-written Python and WRITES one from an intent. The humble goal's load-bearing claim,
   isolated and perturbation-tested. Run it: `python -m experiments.bidirectional_pattern`.
 
-**Suite: 371 green** (`./.venv/Scripts/python.exe -m pytest -q`, ~5.5 min). Playground:
+**Suite: 378 green** (`./.venv/Scripts/python.exe -m pytest -q`, ~7.5 min). Playground:
 `python demos/playground/playground.py`. Site: `python -m mkdocs build`.
 
 ### What the spine currently proves
@@ -57,6 +58,12 @@ staged `cost` knowledge, and composing to reach specs no single rule covers. Pro
 to the pipeline: the same description that lowering uses as a rule HEAD to build a construct, the
 structural oracle uses as a rule BODY to confirm — by READING the emitted source — that it is really
 there. That is the humble goal's central clause, made structural.
+
+**Reachability is OBSERVED, because conditionals made it load-bearing.** An expectation is owed only by a
+statement the run actually reached — the run traces which lines executed and one rule joins that to the
+emission record. The same spec and rules therefore ship on one input and refuse on another, which no
+static reading could distinguish. What that guard lets through is REPORTED (`unexercised`), never
+silently counted as verified.
 
 Refusal is a first-class outcome with THREE kinds, because each sends you somewhere different:
 `uncovered` (missing knowledge — names the intent to author), `unverified` (insufficient knowledge — the
@@ -136,10 +143,12 @@ name, and ZERO shipped silently wrong (each shipped program re-executed by the p
    expansion rules. The measurement gets interesting when the SPEC space is richer than the rule set in
    ways we did not design — more expansion rules, and specs whose reachability is genuinely unobvious
    in advance (today `_reachable` is easy to state, which is a sign the space is still small).
-2. **More nesting shapes.** `if` is the obvious next one, and it is a different problem from `for`: a
-   branch means a statement can legitimately produce NO output on a given run, so "never observed to
-   print what it wants" stops implying "wrong". Conditionals are where the current unmet condition will
-   need to learn about reachability.
+2. ~~**More nesting shapes** (`if`)~~ — **DONE, slice 16 below.** The follow-ons it opened, in order of
+   interest: (a) the `else` arm, which is a SECOND pattern rather than a bridge (`CONDITIONAL` describes
+   the then-side only); (b) a repair that adds or widens a GUARD, which is the first repair shape that
+   would change reachability rather than a payload — and the first that could make an `unexercised`
+   expectation owed; (c) driving a spec over SEVERAL input sets, since `unexercised` currently reports
+   what one run did not test and the obvious answer is to run more than one.
 3. Cheap follow-ons: retire `run_stratified` (now a thin wrapper; `run_bank` stratifies by default);
    loosen the remaining literal `order`/source assertions in `test_build_procedure.py` to the properties
    they mean (the tiebreak pin was just given this treatment); a findings doc for the spine, since the
@@ -154,6 +163,14 @@ name, and ZERO shipped silently wrong (each shipped program re-executed by the p
   `for` over a non-Name target. Each is an audited `not_modelled` marker, and that list IS the coverage
   worklist. Two kinds GRADUATED off it, both because a pattern needed to see them and no bridge can
   close a coverage gap: bare calls (`expr_stmt`) and `for` over a plain name (`for_loop`).
+- `CONDITIONAL` describes the THEN arm only, so a two-armed `if` is recognized by its then-side and its
+  `else` is invisible. Coverage gap in the PATTERN (a second description closes it, not a bridge).
+- `intake._branch_structure` does not append the branch node to `self.statements`, so an `if` nested in a
+  loop body contributes no `loop_body` link — unlike a nested `for`, which does. An inconsistency between
+  the two containers, deliberately left alone in slice 16 to keep the blast radius small; it means
+  "what does this loop body contain?" under-reports a conditional child.
+- `unexercised` is per-BUILD, i.e. relative to the one input set a build ran on. It honestly reports what
+  that run did not test, but nothing yet drives a spec over several inputs.
 - `judge_source` (judging a FOREIGN program) attributes output by position — the k-th printing statement
   realizes the k-th step. Declared in its docstring and used nowhere in the build loop, but it means
   that helper cannot judge a foreign program containing a loop.
@@ -462,6 +479,61 @@ default build now runs **two** repairs instead of three.
 
 Known limit, pinned upstream: with no cost staged, every untried producer still commits — the bank has
 no basis for a tiebreak and a total-order `rank` is where one belongs.
+
+**SLICE 16 DONE (2026-07-18) — CONDITIONALS, and REACHABILITY became an OBSERVED fact.** 41 pins in
+`test_build_procedure.py` (+7). Plan item #2. `if` is a third nesting shape, and the reason it was worth
+doing is not the shape — it is that a branch body **may run no times at all**, which falsifies an
+assumption every unmet condition in the spine was written under.
+
+**The assumption.** Every unmet condition here is a NEGATION: "no observation shows this statement
+printing what it wants". That silently assumes the statement had a CHANCE to produce one. A loop body
+always did (possibly zero iterations, but the pipeline never generated an empty sequence); a branch body
+may legitimately never run, and then "never observed to print it" says nothing whatever about whether the
+code is right. Left unfixed, the repairs chase a line that was never going to print and a correct build
+refuses.
+
+**The fix is STANDING LESSON 9 again, and it is the third time this file has reached for it.** Not a
+static reachability analysis — that is both the Python algorithm the correction forbids and *usually
+wrong*, since whether a branch is taken depends on the inputs. The run ALREADY KNOWS: `_run_and_observe`
+traces the generated frame and mints `was_executed` on the lines it saw, and one rule (`REACHED`) joins
+that to the emission record `emit` was already keeping. Same move as `check` (output) and `ATTRIBUTION`
+(which statement produced a line), one level further down.
+
+**THE PIN THAT SETTLES IT: the same spec and the same rules flip verdict on the INPUT alone.**
+`SPEC_BRANCH`'s `ban_line` expects `goodbye_bob` — *exactly* the expectation `SPEC_UNREPAIRABLE` is
+refused over, since no recovery rule reaches `goodbye`. Guarded by a branch, with `banned=False` the
+build SHIPS (not owed, statement untouched at v1); with `banned=True` the identical spec REFUSES
+`unverified`. No static reading of that code distinguishes those two cases. That is the argument that
+observation was the honest seam and not a shortcut.
+
+**And the boundary it creates is REPORTED, not hidden.** Reachability-aware `unmet` means an unreached
+expectation cannot fail a build — so a build could ship having verified less than it appears to. `?st
+unexercised yes` derives exactly those, and `unexercised()` reports them (`['goodbye_bob']` above,
+empty once both branches are taken). Not owed, but not verified either; counting them as satisfied would
+claim more than was checked. This is the vacuity hazard named rather than papered over — and the natural
+next slice is driving one spec over several input sets.
+
+**The library took a third entry without changing its construction.** `CONDITIONAL`
+(`?x checks ?cond and ?x then_does ?body`) is a third SHAPE — `ITERATION` is an unconditional container,
+`APPLICATION` an expression, this a *guarded* container — and it went in by the same three steps: mint on
+invariants, ATTACH with the node LHS-bound, BRIDGE to each consumer. Both directions pinned (it lowers the
+branch, and recognizes one in hand-written Python). `checks` rather than `tests` deliberately: intake
+already spends `tests` on its null-guard register, and a pattern borrowing a consumer's word would be
+reconciling by coincidence instead of by a bridge. Two generalities held without edits, which is the
+evidence they were real: `?pr in_body yes when ?lp body_has ?pr` needed no clause for the new container,
+and the RECOVERY rules repair inside a branch body unchanged.
+
+**INTAKE COVERAGE GROWN — the structural register for `if`.** `if` was already modelled for control flow
+(fork/merge, plus the null-`guard` shape) but had no STRUCTURAL register, so no pattern could read it —
+a coverage gap, and no bridge closes those. `_branch_structure` emits `is_a branch` / `condition` /
+`then_body`, deliberately mirroring `_for`'s, with the same per-SOURCE guard (`_structured`) for the same
+reason: an `if` inside a loop is walked once per unrolling. 74 existing intake-facing pins unaffected.
+
+**A MISTAKE WORTH RECORDING — STANDING LESSON 1, live.** `unexercised()` first read the flag with
+`holds(g, g.name(st), ...)`. Steps are MINTED and therefore name-degenerate, so every step resolved to
+whichever node `nodes_named` returned first, and the helper reported an EMPTY list while the rule was
+firing perfectly. The rules were right and the reader was wrong — which is the failure mode the nameless
+substrate produces, and it looks exactly like a rule that did not fire.
 
 **SLICE 15 DONE (2026-07-18) — REACH MEASURED.** `experiments/reach_curve.py` + 5 pins, suite 371.
 The coverage claim ("a limited rule set navigates a large space") had never been measured; every slice
