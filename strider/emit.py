@@ -50,7 +50,7 @@ RENDERABLE = ("module", "function_def", "class_def", "block", "for_stmt", "if_st
               "return_stmt", "assign", "aug_assign", "ann_assign", "assert_stmt",
               "import_stmt", "import_from", "alias", "compare", "binop", "bool_op", "unary_op",
               "if_expr", "subscript", "slice", "starred", "tuple", "list", "set", "dict", "pair",
-              "keyword_arg", "name", "constant", "attribute", "pass_stmt")
+              "keyword_arg", "fstring", "interpolation", "name", "constant", "attribute", "pass_stmt")
 
 
 class CannotEmit(Exception):
@@ -253,6 +253,15 @@ class Emit:
 
     def _keyword_arg(self, n):
         return ast.keyword(arg=self.g.attr(n, "name"), value=self.node(self.g.target(n, "value")))
+
+    def _fstring(self, n):
+        return ast.JoinedStr(values=[self.node(p) for p in self.g.targets(n, "part")])
+
+    def _interpolation(self, n):
+        spec = self.g.target(n, "format")
+        return ast.FormattedValue(value=self.node(self.g.target(n, "value")),
+                                  conversion=self.g.attr(n, "conversion"),
+                                  format_spec=self.node(spec) if spec else None)
 
     def _name(self, n):
         return ast.Name(id=self.g.attr(n, "id"), ctx=ast.Load())

@@ -48,6 +48,7 @@ MODELLED = ("Module", "FunctionDef", "ClassDef", "arguments", "arg", "For", "If"
             "Assign", "AugAssign", "AnnAssign", "Assert", "Import", "ImportFrom", "alias",
             "Compare", "BinOp", "BoolOp", "UnaryOp", "IfExp", "Subscript", "Slice", "Starred",
             "Tuple", "List", "Dict", "Set", "keyword",
+            "JoinedStr", "FormattedValue",
             "Name", "Constant", "Expr", "Attribute", "Pass")
 
 class _Nowhere:
@@ -91,6 +92,8 @@ _CONSUMES = {
     "Name": {"id", "ctx"},
     "Constant": {"value", "kind"},
     "Attribute": {"value", "attr", "ctx"},
+    "JoinedStr": {"values"},
+    "FormattedValue": {"value", "conversion", "format_spec"},
     "Expr": {"value"},
     "Pass": set(),
 }
@@ -441,6 +444,26 @@ class Intake:
     def _keyword(self, t):
         n = self.node("keyword_arg", t, name=t.arg)
         self.part(n, "value", self.visit(t.value, n))
+        return n
+
+    def _JoinedStr(self, t):
+        """An f-string: an ordered mix of literal text and interpolations.
+
+        ⚠ Modelled as PARTS rather than as a template string with holes. The interpolated expressions are
+        ordinary expressions — `f"{a + b}"` contains a real `BinOp` — so keeping them as sub-nodes means
+        everything else already knows how to read them, and a pattern could match inside one."""
+        n = self.node("fstring", t)
+        for v in t.values:
+            self.part(n, "part", self.visit(v, n))
+        return n
+
+    def _FormattedValue(self, t):
+        """One `{...}` inside an f-string. `conversion` is Python's `!r`/`!s`/`!a` as the raw int it uses
+        (-1 for none), kept as data rather than decoded, because emit needs exactly that int back."""
+        n = self.node("interpolation", t, conversion=t.conversion)
+        self.part(n, "value", self.visit(t.value, n))
+        if t.format_spec is not None:          # `:>10` — itself an f-string, so it nests naturally
+            self.part(n, "format", self.visit(t.format_spec, n))
         return n
 
     def _Name(self, t):

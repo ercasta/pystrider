@@ -94,8 +94,8 @@ def test_an_unmodelled_construct_is_named_not_dropped():
 
 
 def test_the_unmodelled_report_carries_line_numbers():
-    _lib, got = intaken('\n\nxs = f"{y}"\n')
-    assert ("JoinedStr", 3) in got.unmodelled
+    _lib, got = intaken("\n\nxs = lambda: 1\n")
+    assert ("Lambda", 3) in got.unmodelled
 
 
 def test_an_unmodelled_construct_makes_its_CONTAINER_partial():
@@ -104,7 +104,7 @@ def test_an_unmodelled_construct_makes_its_CONTAINER_partial():
     lib, got = intaken("""
 def f(xs):
     for x in xs:
-        y = f"{x}"
+        y = lambda: x
 """)
     loop = find(lib, got.module, "for_stmt")[0]
     assert lib.graph.attr(loop, "partial") is True
@@ -115,7 +115,7 @@ def test_a_partial_loop_is_REFUSED_by_the_pattern_layer():
     lib, got = intaken("""
 def f(xs):
     for x in xs:
-        y = f"{x}"
+        y = lambda: x
 """)
     lift(lib, got.module)
     loop = find(lib, got.module, "for_stmt")[0]

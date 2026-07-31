@@ -128,7 +128,7 @@ def test_control_the_read_back_graph_shares_NOTHING_with_the_written_one():
 def test_a_partial_node_is_REFUSED_rather_than_emitted_incomplete():
     """We did not read all of it, so we cannot write all of it. Emitting the part we understood would
     produce code that is confidently missing a statement."""
-    lib, got = read('def f(xs):\n    for x in xs:\n        y = f"{x}"\n')
+    lib, got = read("def f(xs):\n    for x in xs:\n        y = lambda: x\n")
     with pytest.raises(CannotEmit) as exc:
         emit(lib, find(lib, got.module, "for_stmt")[0])
     assert "partial" in str(exc.value)
@@ -288,3 +288,28 @@ def test_class_keywords_are_REFUSED_because_they_are_not_visited():
     lib, got = read("class A(metaclass=M):\n    pass")
     assert not got.complete
     assert "ClassDef.keywords" in {kind for kind, _line in got.unmodelled}
+
+
+def test_an_fstrings_INTERPOLATIONS_ARE_ORDINARY_EXPRESSIONS():
+    """⭐ Modelled as parts, not as a template with opaque holes. `f"{a + b}"` contains a real `binop`, so
+    everything that already reads expressions reads inside an f-string for free — and a pattern could
+    match in there."""
+    lib, got = read("def f(a, b):\n    return f'{a + b}'")
+    assert got.complete
+    assert find(lib, got.module, "binop"), "the interpolated expression is not a sub-node"
+    assert lib.graph.attr(find(lib, got.module, "binop")[0], "op") == "add"
+
+
+def test_a_format_spec_NESTS_because_it_is_itself_an_fstring():
+    """`:>{width}` is a JoinedStr in its own right, so nothing special is needed to hold it."""
+    source = "def f(x, width):\n    return f'{x:>{width}}'"
+    lib, got = read(source)
+    assert got.complete
+    assert emit(lib, got.module).strip() == source
+
+
+def test_the_conversion_flag_is_kept_as_the_int_python_uses():
+    """`!r` is `conversion=114`. Kept as data rather than decoded, because emit needs exactly that int
+    back — decoding and re-encoding it would be two places to get it wrong."""
+    lib, got = read("def f(x):\n    return f'{x!r}'")
+    assert lib.graph.attr(find(lib, got.module, "interpolation")[0], "conversion") == 114

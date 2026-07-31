@@ -110,3 +110,32 @@ Eight pins went red on widening because their EXAMPLES had moved inside the memb
 invariants were right; the examples had gone stale. **Widening a membrane invalidates the examples, never
 the invariant** — so a membrane pin should draw its example from whatever is currently outside, and
 expect to be re-pointed each time the boundary moves.
+
+---
+
+# Slice 6 — f-strings (2026-07-31)
+
+**Predicted 64.8%, measured 64.6%** (685/1061), unstable still **0**. Within 0.2pp — much closer than
+slice 5's miss, and for a knowable reason: f-strings do not have the nested-node double-counting that
+threw the earlier estimate (a function containing a `ListComp` also contains a `comprehension`, so the
+same functions were blocked twice).
+
+**⚠ A CORRECTION TO SLICE 5's P4.** That section said f-strings were "worth roughly 40% of what remains".
+Wrong: 435 was a count of refusal *occurrences*, not of *functions blocked*. By functions — which is what
+reach measures — comprehensions block 318 and f-strings only 107. F-strings were still worth doing (cheap,
++5pp, and they are everywhere in real code), but the stated rationale was mis-derived and the next slice
+should be chosen on the corrected figure.
+
+**Modelled as PARTS, not as a template with opaque holes.** `f"{a + b}"` contains a real `binop`
+sub-node, so everything that already reads expressions reads inside an f-string for free, and a pattern
+could match in there. A format spec (`:>{width}`) is itself a `JoinedStr`, so it nests with no special
+case. The `!r` conversion is kept as the raw int Python uses rather than decoded, because emit needs
+exactly that int back and decoding it twice is two places to get it wrong.
+
+**The membrane lesson recurred, exactly as recorded.** Three pins used f-strings as their
+"still-outside" example — written that way *in slice 5, when f-strings were outside*. They went red on
+schedule. Re-pointed at `Lambda`, which sits well clear of the widening backlog.
+
+**Remaining blockers, by functions:** `ListComp` 183, `GeneratorExp` 163, `SetComp` 86, `DictComp` 34,
+`Raise` 28, `With` 25. Comprehensions are now unambiguously the next lever and also the hardest — they
+bind variables and introduce a scope, so they are not a container that can simply be walked.
