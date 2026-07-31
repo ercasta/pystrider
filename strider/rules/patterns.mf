@@ -1,10 +1,16 @@
 # The pattern library. Each function here is ONE authored description serving BOTH halves:
 # called, it constructs the construct; read back by `establishes`, it recognizes one.
 #
-# ⚠ AUTHORING RULE (slice 0, finding #1): a pattern is a CAST, never a minting function. Its subject
-# must be a PARAMETER, so that every effect carries `subject=<param>` and the effects can be joined
-# into one description. `NEW R(x)` puts the subject in a register, the roles come back None, and the
-# pattern silently stops being a pattern — three orphan facts about unrelated nodes.
+# ⚠ AUTHORING RULE: a pattern is a CAST, never a minting function. Its subject must be a PARAMETER.
+#
+# This was originally forced by the engine — `NEW R(x)` put the subject in a register, roles came back
+# None, and the pattern silently stopped being one. We reported that; ugm fixed it (a minted register is
+# now a `$`-prefixed subject), so a minting pattern is readable today.
+#
+# The rule stays for a BETTER reason: a cast can be applied to a node that ALREADY EXISTS. That is what
+# lifting needs — a bridge casts the very `for_stmt` node intake minted, so `from_code`, `origin` and
+# `source_line` come along and what gets recognized is the artifact. A minting pattern would build a
+# fresh node and leave the provenance behind.
 #
 # ⚠ AUTHORING RULE (slice 0, finding #3): every label and key must be a LITERAL. A label read from a
 # register cannot be recovered statically, `establishes` reports `unknown`, and recognition abstains

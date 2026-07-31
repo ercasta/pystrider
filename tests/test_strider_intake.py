@@ -10,7 +10,7 @@ import pytest
 
 import strider
 from strider.intake import MODELLED, intake
-from strider.lift import bridges, lift, reachable
+from strider.lift import bridges, lift, reachable, vocabulary_drift
 
 LOOP = """
 def totals(rows):
@@ -306,3 +306,25 @@ def test_control_a_plain_signature_is_still_complete():
     """⚠ Vacuity control: the guard must not refuse ordinary code."""
     _lib, got = intaken("def f(x, y):\n    return x")
     assert got.complete, got.unmodelled
+
+
+# --- the two vocabularies must keep meeting ------------------------------------------------------------
+
+def test_no_bridge_writes_a_label_no_pattern_READS():
+    """⚠ The neutral labels live in two files — `patterns.mf` declares them, `python.mf`'s bridges write
+    them — because a bridge cannot yet delegate to a pattern (`INVOKE` needs a dict of bindings and `.mf`
+    has no dict literal). Rename a label in one file and lifted code just stops being recognized: no
+    error, simply less understanding than yesterday. Both sides are derived from the stored bodies here,
+    so this cannot itself go stale."""
+    assert vocabulary_drift(strider.load()) == {}
+
+
+def test_control_the_drift_check_BITES():
+    """⚠ Vacuity control. An empty result proves nothing unless a real drift turns it non-empty."""
+    from strider.library import RULES, Library, load as load_lib
+    text = "\n".join(f.read_text(encoding="utf-8") for f in sorted(RULES.glob("*.mf")))
+    drifted = load_lib(text.replace('"each_does"', '"each_doez"', 1))
+    split = Library(drifted.graph,
+                    tuple(n for n in drifted.names if "_from_" not in n),
+                    tuple(n for n in drifted.names if "_from_" in n))
+    assert vocabulary_drift(split) == {"as_iteration_from_for_stmt": ["each_does"]}

@@ -18,7 +18,7 @@ node — because a rule enforced at two sites is a rule that will eventually be 
 from __future__ import annotations
 
 from .library import Library
-from .mf import function
+from .mf import driver, function
 
 _PREFIX, _INFIX = "as_", "_from_"
 
@@ -40,6 +40,39 @@ def bridges(lib: Library, *, lowering: bool = False) -> dict:
             continue
         if (_arity(lib, name) == 2) == lowering:
             out[name.split(_INFIX, 1)[1]] = name
+    return out
+
+
+def vocabulary_drift(lib: Library) -> dict:
+    """Labels a lift-bridge WRITES that no pattern READS. Empty means the two vocabularies still meet.
+
+    **⚠ Why this check has to exist.** The neutral labels appear in two files: `patterns.mf` declares
+    them, and `python.mf`'s bridges write them. Ideally a bridge would *delegate* — `INVOKE` the pattern
+    rather than restate its labels — and then there would be one place and nothing to drift. That is not
+    expressible today: `INVOKE` takes a dict of parameter bindings and the `.mf` surface has no dict
+    literal, so a bridge has no way to say which pattern parameter each register fills.
+
+    Given that, the duplication is forced. What is NOT forced is it drifting silently: rename a label in
+    `patterns.mf` and the bridges keep writing the old one, so lifted code simply stops being recognized —
+    no error, just less understanding than yesterday. This turns that into a fact anyone can ask for, and
+    a pin asserts it is empty.
+
+    Derived, never declared: both sides are read from the stored bodies, so it cannot itself go stale."""
+    from .patterns import Abstained, pattern_of
+
+    wanted = set()
+    for name in lib.patterns:
+        try:
+            wanted |= {label for _kind, label, _s, _o in pattern_of(lib, name)[1]}
+        except Abstained:
+            continue
+
+    out = {}
+    for name in bridges(lib).values():                     # lifts only; lowerings write Python's names
+        effects, _unknown = driver.establishes(lib.graph, name)
+        stray = {label for _kind, label, _s, _o in effects} - wanted
+        if stray:
+            out[name] = sorted(stray)
     return out
 
 
@@ -93,4 +126,4 @@ def reachable(lib: Library, root: str) -> list:
     return order
 
 
-__all__ = ["lift", "lower", "bridges", "reachable"]
+__all__ = ["lift", "lower", "bridges", "reachable", "vocabulary_drift"]

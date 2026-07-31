@@ -61,21 +61,11 @@ Run it: `python -m experiments.microfunction_pattern`
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-import ugm as _ugm
-
-# `microfunctions` is not packaged by ../ugm's pyproject (`packages = ["ugm", "ugm.cnl", "units"]`), so
-# it is not importable the way `ugm` is. Reach it through the installed sibling's repo root rather than a
-# hardcoded relative path. ⚠ FEEDBACK FOR ../ugm: if microfunctions is to be the substrate it needs to
-# ship in `packages`; every consumer otherwise re-invents this.
-_UGM_REPO = Path(_ugm.__file__).resolve().parents[1]
-if str(_UGM_REPO) not in sys.path:
-    sys.path.insert(0, str(_UGM_REPO))
-
-from microfunctions import asm, driver, function as fn      # noqa: E402
-from microfunctions.graph import new_graph                  # noqa: E402
+# `microfunctions` imports plainly since ugm added it to `packages` — reported as
+# `docs/feedback_microfunctions.md` §1, fixed, and verified upstream against a real wheel. This file
+# previously carried a `sys.path` fix; it is gone.
+from microfunctions import asm, driver, function as fn
+from microfunctions.graph import new_graph
 
 
 # --- THE PATTERN, authored once, as ONE microfunction -------------------------------------------------

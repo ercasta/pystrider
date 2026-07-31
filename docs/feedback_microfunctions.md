@@ -148,7 +148,41 @@ carries joins — and we now say so in our own docs so nobody assumes one subsum
 
 ---
 
-## 6. Small API papercuts
+## 6. ⭐ NEW — `asm` silently accepts a malformed `INVOKE`, then fails at runtime with an opaque error
+
+This one is squarely inside the discipline `asm.py` states for itself: *"Silent acceptance of a plausible-
+looking wrong opcode is the failure mode worth engineering against."* Every opcode name is checked. The
+**operand shape** of `INVOKE` is not.
+
+**Measured.** `INVOKE` wants `INVOKE R(dst), "name", {"param": operand, ...}` — a dict. The `.mf` surface
+has no dict literal, so the natural thing to write is positional:
+
+```
+fn bridge(f) -> iteration:
+    GET R(s) F(f) "over"
+    INVOKE R(out) as_iteration F(f) R(s) R(s) R(s)
+```
+
+This **parses without complaint**, and `function.names` reports both functions defined. It fails only when
+run, with `AttributeError: 'str' object has no attribute 'items'` — no line number, no opcode named, and
+nothing pointing at the operand that was wrong.
+
+**We think** this is the one opcode taking a structured operand, so it is the one place the opcode-name
+check does not cover the instruction. Validating the operand shape at parse time would put it back inside
+the boundary, with the file and line `asm` already has to hand.
+
+**Why we cared enough to find it.** We wanted a bridge to *delegate* to a pattern — `INVOKE` it rather
+than restate its labels — so the neutral vocabulary would live in exactly one place. As things stand a
+bridge cannot express the binding at all, so the labels are duplicated across two `.mf` files and we
+check for drift ourselves (`strider.lift.vocabulary_drift`).
+
+**The feature request behind the bug:** some way to write parameter bindings in `.mf` — even
+`INVOKE R(out) as_iteration it=F(f) seq=R(s) var=R(v) body=R(b)`. That would make one microfunction
+composable from another in the authored surface, which today it is not.
+
+---
+
+## 7. Small API papercuts
 
 **`function` has `param_types` but no `param_names`.** We wanted the second parameter's name to bind a
 two-argument call and ended up with `function.load(g, name)[0][1]`, which reads like an index into
