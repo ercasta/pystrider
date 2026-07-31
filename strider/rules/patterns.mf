@@ -1,0 +1,34 @@
+# The pattern library. Each function here is ONE authored description serving BOTH halves:
+# called, it constructs the construct; read back by `establishes`, it recognizes one.
+#
+# ⚠ AUTHORING RULE (slice 0, finding #1): a pattern is a CAST, never a minting function. Its subject
+# must be a PARAMETER, so that every effect carries `subject=<param>` and the effects can be joined
+# into one description. `NEW R(x)` puts the subject in a register, the roles come back None, and the
+# pattern silently stops being a pattern — three orphan facts about unrelated nodes.
+#
+# ⚠ AUTHORING RULE (slice 0, finding #3): every label and key must be a LITERAL. A label read from a
+# register cannot be recovered statically, `establishes` reports `unknown`, and recognition abstains
+# rather than match on an incomplete description.
+
+# ITERATION — "for each element of a sequence, do something".
+# Says nothing about what the body does, where the loop sits, or how its statements are ordered: those
+# are the consuming pipeline's business, and leaving them out is what lets one description serve a
+# pipeline that sequences differently.
+fn as_iteration(it, seq, var, body) -> iteration:
+    LINK F(it) "repeats_over" F(seq)
+    LINK F(it) "element" F(var)
+    LINK F(it) "each_does" F(body)
+
+# APPLICATION — "this function, applied to this value".
+# Deliberately a different SHAPE from iteration: a container of one thing rather than of a body, so the
+# machinery is exercised against two genuinely different descriptions rather than one twice.
+fn as_application(ap, func, arg) -> application:
+    LINK F(ap) "applies" F(func)
+    LINK F(ap) "to" F(arg)
+
+# CONDITIONAL — "if this holds, do that; otherwise do the other".
+# The branch bodies may run NO times, which is why reachability is OBSERVED and never derived here.
+fn as_conditional(c, test, then_body, else_body) -> conditional:
+    LINK F(c) "tests" F(test)
+    LINK F(c) "then_does" F(then_body)
+    LINK F(c) "else_does" F(else_body)
