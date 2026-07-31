@@ -27,7 +27,9 @@ def test_patterns_and_bridges_are_kept_apart_by_the_FILE_they_live_in():
     something. The file draws the line — not a naming convention, and not a hand-kept list."""
     lib = load()
     assert set(lib.bridge_names) == {"as_iteration_from_for_stmt", "as_application_from_call",
-                                     "as_conditional_from_if_stmt"}
+                                     "as_conditional_from_if_stmt",
+                                     "as_for_stmt_from_iteration", "as_call_from_application",
+                                     "as_if_stmt_from_conditional"}
     assert not set(lib.patterns) & set(lib.bridge_names)
 
 

@@ -45,7 +45,7 @@ from .library import Library
 #: `Compare` and `BinOp` are here deliberately: the old intake never modelled them, which is why
 #: `experiments/first_principles_repair.py` had to reify comparisons through a separate probe path.
 MODELLED = ("Module", "FunctionDef", "arguments", "arg", "For", "If", "Call", "Return", "Assign",
-            "Compare", "BinOp", "Name", "Constant", "Expr", "Attribute")
+            "Compare", "BinOp", "Name", "Constant", "Expr", "Attribute", "Pass")
 
 class _Nowhere:
     """A stand-in for an empty block, which has no statement to take a line number from."""
@@ -53,6 +53,26 @@ class _Nowhere:
 
 
 _NOWHERE = _Nowhere()
+
+#: What each handler consumes. Everything else on a node is refused by `unconsumed`.
+_CONSUMES = {
+    "Module": {"body"},
+    "FunctionDef": {"name", "args", "body", "returns"},   # decorators deliberately NOT here
+    "arguments": {"args"},
+    "arg": {"arg", "annotation"},
+    "For": {"target", "iter", "body", "orelse"},
+    "If": {"test", "body", "orelse"},
+    "Call": {"func", "args", "keywords"},
+    "Return": {"value"},
+    "Assign": {"targets", "value"},
+    "Compare": {"left", "ops", "comparators"},
+    "BinOp": {"left", "op", "right"},
+    "Name": {"id", "ctx"},
+    "Constant": {"value", "kind"},
+    "Attribute": {"value", "attr", "ctx"},
+    "Expr": {"value"},
+    "Pass": set(),
+}
 
 _CMP = {ast.Eq: "eq", ast.NotEq: "ne", ast.Lt: "lt", ast.LtE: "le", ast.Gt: "gt", ast.GtE: "ge"}
 _BIN = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div",
@@ -113,6 +133,26 @@ class Intake:
         if parent is not None:
             self.g.put(parent, partial=True)
 
+    def unconsumed(self, tree, parent) -> None:
+        """⚠ Refuse any AST field this handler did not consume — the guard against SILENT DROPPING.
+
+        Found by a round-trip sweep, not by inspection: `def f(x: int) -> bool` was intaken with an empty
+        `unmodelled` list, reported COMPLETE, and emitted as `def f(x, y)`. Annotations, decorators and
+        defaults were all being read past without a word, which is precisely the confidently-wrong answer
+        the rest of this design exists to prevent.
+
+        Enumerating the fields to reject by hand would have fixed those three and left the next one to be
+        discovered the same way. Declaring what a handler CONSUMES and refusing everything else inverts
+        the default: a Python version that adds a field, or a handler that stops reading one, becomes an
+        honest gap rather than a silent omission."""
+        for field, value in ast.iter_fields(tree):
+            if field in _CONSUMES.get(type(tree).__name__, ()):
+                continue
+            if value is None or value == [] or field == "type_comment":
+                continue
+            self.unmodelled.append((f"{type(tree).__name__}.{field}", getattr(tree, "lineno", None)))
+            self.g.put(parent, partial=True)
+
     # --- the dispatch ----------------------------------------------------------------------------------
 
     def visit(self, tree, parent: str | None = None):
@@ -120,7 +160,10 @@ class Intake:
         if handler is None:
             self.refuse(tree, parent)
             return None
-        return handler(tree)
+        built = handler(tree)
+        if built is not None:
+            self.unconsumed(tree, built)
+        return built
 
     def block(self, statements, parent: str | None = None) -> str:
         """A statement list becomes ONE `block` node with ordered `stmt` edges.
@@ -147,7 +190,14 @@ class Intake:
     def _FunctionDef(self, t):
         n = self.node("function_def", t, name=t.name)
         for a in t.args.args:
-            self.part(n, "param", self.node("param", a, name=a.arg))
+            param = self.node("param", a, name=a.arg)
+            if a.annotation is not None:
+                self.part(param, "annotation", self.visit(a.annotation, param))
+            self.unconsumed(a, param)
+            self.part(n, "param", param)
+        self.unconsumed(t.args, n)          # *args, **kwargs, defaults, kw-only — none of them modelled
+        if t.returns is not None:
+            self.part(n, "returns", self.visit(t.returns, n))
         self.part(n, "does", self.block(t.body, n))
         return n
 
@@ -213,6 +263,13 @@ class Intake:
         self.part(n, "left", self.visit(t.left, n))
         self.part(n, "right", self.visit(t.right, n))
         return n
+
+    def _Pass(self, t):
+        """⚠ Modelled because EMIT WRITES ONE. An empty block renders as `pass`, so an intake that could
+        not read `pass` would break the round trip on its own output — caught by a round-trip pin, not by
+        inspection. Read and write capabilities are tracked separately, and this is the case that shows
+        why they must still be checked against each other."""
+        return self.node("pass_stmt", t)
 
     def _Name(self, t):
         return self.node("name", t, id=t.id)

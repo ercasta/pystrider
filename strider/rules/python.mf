@@ -51,3 +51,35 @@ fn as_conditional_from_if_stmt(i) -> conditional:
     LINK F(i) "tests" R(t)
     LINK F(i) "then_does" R(x)
     LINK F(i) "else_does" R(y)
+
+# --- LOWERING: the other direction, neutral description -> Python shape ------------------------------
+#
+# ⚠ A LOWERING IS NOT A LIFT, and the difference is structural rather than nominal: a lift READS what is
+# already there and casts the same node, so it takes one parameter. A lowering CONSTRUCTS a Python-shaped
+# node that did not exist, so it takes the fresh node as its subject plus the description to read. `lift`
+# applies the one-parameter bridges; `lower` applies these. Nothing is keyed on the name.
+#
+# This is what lets a description that was CONSTRUCTED rather than read become real Python text — the
+# write half of the bet reaching all the way out to an artifact.
+
+fn as_for_stmt_from_iteration(f, it) -> for_stmt:
+    GET R(s) F(it) "repeats_over"
+    GET R(v) F(it) "element"
+    GET R(b) F(it) "each_does"
+    LINK F(f) "over" R(s)
+    LINK F(f) "binds" R(v)
+    LINK F(f) "body" R(b)
+
+fn as_if_stmt_from_conditional(i, c) -> if_stmt:
+    GET R(t) F(c) "tests"
+    GET R(x) F(c) "then_does"
+    GET R(y) F(c) "else_does"
+    LINK F(i) "condition" R(t)
+    LINK F(i) "then" R(x)
+    LINK F(i) "otherwise" R(y)
+
+fn as_call_from_application(c, ap) -> call:
+    GET R(f) F(ap) "applies"
+    GET R(a) F(ap) "to"
+    LINK F(c) "callee" R(f)
+    LINK F(c) "arg" R(a)

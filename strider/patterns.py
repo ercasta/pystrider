@@ -48,9 +48,12 @@ def pattern_of(lib: Library, name: str) -> tuple:
     subject = params[0]
     required = tuple(sorted(e for e in effects if e[2] == subject))
     if not required:
-        raise Abstained(f"{name}: nothing is written onto its subject {subject!r} — this is a minting "
-                        "function, whose subject is a register, so its effects carry no join. Author a "
-                        "pattern as a CAST (see strider/rules/patterns.mf)")
+        raise Abstained(f"{name}: nothing is written onto its subject {subject!r}. This looks like a "
+                        "minting function, whose subject is a register. ugm now names a minted register "
+                        "as a '$'-prefixed subject, so the join is NOT lost upstream — but `strider` "
+                        "looks for its subject among the PARAMETERS, so this refusal is our restriction "
+                        "rather than the engine's. Author a pattern as a CAST "
+                        "(see strider/rules/patterns.mf), or lift that restriction deliberately.")
     return subject, required
 
 

@@ -271,3 +271,38 @@ def f(x):
     else_body = strider.recognizes(lib, node)["as_conditional"]["else_body"]
     assert lib.graph.kind(else_body) == "block"
     assert lib.graph.targets(else_body, "stmt") == ()
+
+
+# --- the silent-drop guard (found by a round-trip sweep, not by inspection) -----------------------------
+
+def test_a_field_the_handler_did_not_consume_is_REFUSED_not_dropped():
+    """⚠ THE BUG THIS GUARD EXISTS FOR. `def f(x: int) -> bool` was intaken with an empty `unmodelled`
+    list, reported COMPLETE, and emitted as `def f(x)`. Annotations, decorators, defaults and *args were
+    all read past in silence — a confidently wrong answer, which is worse than any gap."""
+    for source, expected in [("def f(x=1):\n    return x", "arguments.defaults"),
+                             ("@dec\ndef f(x):\n    return x", "FunctionDef.decorator_list"),
+                             ("def f(*a):\n    return 1", "arguments.vararg"),
+                             ("def f(**k):\n    return 1", "arguments.kwarg")]:
+        _lib, got = intaken(source)
+        assert expected in {kind for kind, _line in got.unmodelled}, (source, got.unmodelled)
+
+
+def test_the_guard_is_structural_so_a_NEW_field_would_also_be_caught():
+    """Enumerating fields to reject by hand would fix the four above and leave the next one to be found
+    the same way. The default is inverted: a handler declares what it consumes, everything else refuses."""
+    from strider.intake import _CONSUMES
+    assert "decorator_list" not in _CONSUMES["FunctionDef"]
+    assert _CONSUMES["arguments"] == {"args"}
+
+
+def test_annotations_are_MODELLED_and_survive_the_round_trip():
+    from strider.emit import emit
+    lib, got = intaken("def f(x: int, y: str) -> bool:\n    return x")
+    assert got.complete
+    assert emit(lib, got.module).strip() == "def f(x: int, y: str) -> bool:\n    return x"
+
+
+def test_control_a_plain_signature_is_still_complete():
+    """⚠ Vacuity control: the guard must not refuse ordinary code."""
+    _lib, got = intaken("def f(x, y):\n    return x")
+    assert got.complete, got.unmodelled

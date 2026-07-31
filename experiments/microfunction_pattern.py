@@ -17,13 +17,26 @@ anything is rewritten.
 
 **The four findings, each pinned in `tests/test_microfunction_pattern.py`:**
 
-1. **A MINTING function is not recognizable; a CAST is.** The obvious authoring — `make_iteration(seq,
-   var, body)` that `NEW`s a node and links the three parts onto it — produces effects whose subject role
-   is `None`, because the subject is a *register*, not a parameter. Three effects that all say "something
-   links to `seq`/`var`/`body`" have lost the very thing that makes them one pattern: that they hang off
-   ONE node. Written as a cast — `as_iteration(it, seq, var, body)`, subject a parameter — every effect
-   carries `subject='it'`, and the join is recoverable. This is not a workaround: it is their own
-   "mutation is a cast / a cast returns its subject" decision arriving from the other direction.
+1. **A MINTING function is not recognizable; a CAST is.** — **⚠ SUPERSEDED UPSTREAM 2026-07-31, and this
+   is the record of why.** As originally measured: the obvious authoring — `make_iteration(seq, var,
+   body)` that `NEW`s a node and links the three parts onto it — produced effects whose subject role was
+   `None`, because the subject is a *register*, not a parameter. Three effects all saying "something links
+   to `seq`/`var`/`body`" had lost the very thing that made them one pattern: that they hang off ONE node.
+   Written as a cast, every effect carried `subject='it'` and the join was recoverable.
+
+   We reported that (`docs/feedback_microfunctions.md` §2). **ugm fixed it**: a register holding something
+   the function MINTED is now a subject too, reported with a `$`-prefixed role (`$it`), distinguishable
+   from a parameter by inspection and never confusable with one. Their note: *"That forced patterns to be
+   authored as casts, which is a real expressive loss, so the join is restored here."*
+
+   `minting_is_not_recognizable()` below now measures the NEW behaviour and is renamed accordingly. The
+   original finding is kept here rather than deleted because it is the reason the fix exists, and because
+   `strider/` still authors patterns as casts — a choice that is now a preference rather than a
+   necessity, and one that should be revisited deliberately rather than by drift.
+
+   **⚠ Still open, and the half that matters more to us: NAVIGATION.** A register assigned by `GET R(s)
+   F(a) "over"` — rather than by `NEW` — still yields `object=None`, so a bridge between vocabularies
+   remains describable-but-not-recognizable. Measured after the fix, in `navigation_still_loses_roles()`.
 
 2. **The join survives.** `('link', 'each_does', 'it', 'body')` carries BOTH roles, so two effects naming
    the same parameter are joined on it. This is what `?f each_does ?b and ?b lowers_to ?pr` expressed.
@@ -89,10 +102,11 @@ def iteration_source(repeats_over=REPEATS_OVER, element=ELEMENT, each_does=EACH_
 def minting_source() -> str:
     """The SAME pattern, written the obvious way — and the reason finding #1 exists.
 
-    `NEW` puts the subject in a register. A register is not a parameter, so `establishes` cannot name it,
-    and all three effects come back with `subject=None`: 'something repeats over seq', 'something binds
-    var', 'something does body' — three orphan facts that have lost the claim that made them a pattern,
-    namely that the *same* node does all three."""
+    ⚠ AS ORIGINALLY MEASURED (superseded upstream 2026-07-31): `NEW` put the subject in a register, a
+    register was not a parameter, so all three effects came back with `subject=None` — three orphan facts
+    that had lost the claim that made them a pattern, namely that the *same* node does all three. We
+    reported it; ugm now names a minted register `$it`, and the join survives. Kept as the source this
+    probe still loads, because the fix is exactly what it measures."""
     return "\n".join([
         "fn make_iteration(seq, var, body) -> iteration:",
         '    NEW R(it) "iteration"',
@@ -141,7 +155,9 @@ def pattern_of(g, name: str = "as_iteration") -> tuple:
     required = tuple(sorted(e for e in effects if e[2] == subject))
     if not required:
         raise Abstained(f"{name}: nothing is written onto its subject `{subject}` — a minting function's "
-                        "subject is a register, and its effects cannot be joined (finding #1)")
+                        "subject is a register. ⚠ Upstream now names it `$`-prefixed, so the join "
+                        "survives there; this refusal is THIS layer looking for a parameter (finding #1, "
+                        "superseded upstream — see the module docstring)")
     return subject, required
 
 
@@ -186,7 +202,10 @@ def round_trip() -> dict:
 
 
 def minting_is_not_recognizable() -> dict:
-    """Finding #1 — the obvious authoring loses the join, and says so instead of half-working."""
+    """Finding #1, as it stands AFTER ugm's fix: a minted register is now a subject, so the join the
+    original measurement found missing is present — carried on a `$`-prefixed role rather than a
+    parameter name. `strider`'s `pattern_of` still refuses this shape, because it looks for a subject
+    among the PARAMETERS; that is now our restriction, not the engine's."""
     g = library(minting_source())
     effects, unknown = driver.establishes(g, "make_iteration")
     try:
@@ -195,9 +214,32 @@ def minting_is_not_recognizable() -> dict:
     except Abstained as exc:
         refused = str(exc)
     return {"effects": tuple(sorted(effects)),
-            "every_subject_role_is_lost": all(e[2] is None for e in effects),
+            "subject_roles": tuple(sorted({e[2] for e in effects})),
+            "the_join_is_now_present": all(e[2] is not None for e in effects),
+            "and_it_is_not_a_parameter": all(str(e[2]).startswith("$") for e in effects),
             "unknown": unknown,
-            "refused_with": refused}
+            "refused_by_strider_with": refused}
+
+
+def navigation_still_loses_roles() -> dict:
+    """⚠ The half of the register problem that is STILL OPEN, measured rather than assumed.
+
+    `NEW` now names its register as a subject. `GET` does not name what it navigated to, so a function
+    that reads a part and links it elsewhere still comes back with `object=None` — and a bridge between
+    two vocabularies is nothing but that. This is why `strider/rules/python.mf` documents bridges as
+    writable-but-not-readable, and it is item §2 of `docs/feedback_microfunctions.md`."""
+    g = library("\n".join([
+        "fn navigate(a, b) -> t:",
+        '    GET R(s) F(a) "over"',
+        '    LINK F(b) "seq" R(s)',
+        '    LINK F(b) "direct" F(a)',
+    ]))
+    effects, unknown = driver.establishes(g, "navigate")
+    by_label = {e[1]: e for e in effects}
+    return {"effects": tuple(sorted(effects)),
+            "a_parameter_operand_keeps_its_object_role": by_label["direct"][3] == "a",
+            "a_navigated_register_does_not": by_label["seq"][3] is None,
+            "unknown": unknown}
 
 
 def perturbation() -> dict:
@@ -288,6 +330,7 @@ def abstains_on_unknown() -> dict:
 def main() -> None:
     for name, result in (("round_trip", round_trip()),
                          ("minting_is_not_recognizable", minting_is_not_recognizable()),
+                         ("navigation_still_loses_roles", navigation_still_loses_roles()),
                          ("perturbation", perturbation()),
                          ("honest_refusal", honest_refusal()),
                          ("abstains_on_unknown", abstains_on_unknown())):

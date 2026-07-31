@@ -23,13 +23,41 @@ from .mf import function
 _PREFIX, _INFIX = "as_", "_from_"
 
 
-def bridges(lib: Library) -> dict:
-    """`{node_kind: bridge_name}`, derived from the bridge names themselves."""
+def _arity(lib: Library, name: str) -> int:
+    return len(function.load(lib.graph, name)[0])
+
+
+def bridges(lib: Library, *, lowering: bool = False) -> dict:
+    """`{source_kind: bridge_name}`, derived from the bridge names themselves.
+
+    ⚠ **Lifts and lowerings are told apart by ARITY, not by name.** A lift reads what is already on a node
+    and casts that same node, so it takes one parameter. A lowering constructs a Python-shaped node that
+    did not exist, so it takes the fresh subject *plus* the description to read from. That is a structural
+    difference, and keying on it means a new bridge lands in the right pass by virtue of what it is."""
     out = {}
-    for name in lib.names:
-        if name.startswith(_PREFIX) and _INFIX in name:
+    for name in lib.bridge_names:
+        if not (name.startswith(_PREFIX) and _INFIX in name):
+            continue
+        if (_arity(lib, name) == 2) == lowering:
             out[name.split(_INFIX, 1)[1]] = name
     return out
+
+
+def lower(lib: Library, description: str, pattern: str):
+    """Construct the Python-shaped node for a neutral `description`. Returns the new node.
+
+    The write half reaching an artifact: a description that was CONSTRUCTED (not read from code) becomes
+    a node `strider.emit` can render. The subject is minted here for the same reason `construct` mints
+    one — a lowering must stay a cast to stay readable."""
+    table = bridges(lib, lowering=True)
+    kind = pattern.removeprefix(_PREFIX)
+    name = next((n for k, n in table.items() if n.endswith(_INFIX + kind)), None)
+    if name is None:
+        raise KeyError(f"no lowering for {pattern!r}; have: {sorted(table.values())}")
+    node = lib.graph.mint(function.returns_of(lib.graph, name) or kind)
+    function.invoke(lib.graph, name, {function.load(lib.graph, name)[0][0]: node,
+                                      function.load(lib.graph, name)[0][1]: description})
+    return node
 
 
 def lift(lib: Library, root: str) -> dict:
@@ -65,4 +93,4 @@ def reachable(lib: Library, root: str) -> list:
     return order
 
 
-__all__ = ["lift", "bridges", "reachable"]
+__all__ = ["lift", "lower", "bridges", "reachable"]

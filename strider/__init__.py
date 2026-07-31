@@ -32,8 +32,9 @@ chose.
 """
 from .intake import Intaken, intake
 from .library import Library, load
-from .lift import bridges, lift
+from .emit import CannotEmit, emit
+from .lift import bridges, lift, lower
 from .patterns import Abstained, construct, pattern_of, recognize, recognizes
 
-__all__ = ["Library", "load", "intake", "Intaken", "lift", "bridges",
+__all__ = ["Library", "load", "intake", "Intaken", "lift", "lower", "bridges", "emit", "CannotEmit",
            "Abstained", "construct", "pattern_of", "recognize", "recognizes"]

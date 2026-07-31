@@ -8,8 +8,8 @@ import pytest
 
 from experiments.microfunction_pattern import (
     Abstained, EACH_DOES, abstains_on_unknown, honest_refusal, iteration_source, library,
-    minting_is_not_recognizable, minting_source, pattern_of, perturbation, recognize, round_trip,
-    write_iteration,
+    minting_is_not_recognizable, minting_source, navigation_still_loses_roles, pattern_of,
+    perturbation, recognize, round_trip, write_iteration,
 )
 
 
@@ -38,11 +38,28 @@ def test_recognition_returns_bindings_not_a_verdict():
 
 # --- finding #1: a minting function is not recognizable; a cast is ------------------------------------
 
-def test_minting_loses_the_subject_join_and_says_so():
+def test_a_minted_register_is_now_a_subject_upstream():
+    """⚠ THIS PIN CHANGED WHEN UGM CHANGED, which is what it is for. It originally asserted that a
+    minting function loses its subject join entirely. We reported that; ugm fixed it by naming a minted
+    register as a `$`-prefixed subject. The pin now measures the new behaviour, and the superseded
+    finding is recorded in the probe's docstring rather than deleted."""
     r = minting_is_not_recognizable()
-    assert r["every_subject_role_is_lost"], r["effects"]
-    assert r["refused_with"] is not None            # refused, not silently half-working
-    assert not r["unknown"]                         # and NOT because anything was unreadable
+    assert r["the_join_is_now_present"], r["effects"]
+    assert r["and_it_is_not_a_parameter"], r["subject_roles"]
+    assert not r["unknown"]
+
+
+def test_strider_still_refuses_a_minting_pattern_BY_ITS_OWN_CHOICE():
+    """The refusal is now ours, not the engine's: `pattern_of` looks for a subject among the PARAMETERS.
+    Worth keeping distinct from the finding above so nobody reads our restriction as a limitation."""
+    assert minting_is_not_recognizable()["refused_by_strider_with"] is not None
+
+
+def test_navigation_still_loses_the_object_role():
+    """The half that is still open — and the reason bridges are writable but not readable."""
+    r = navigation_still_loses_roles()
+    assert r["a_parameter_operand_keeps_its_object_role"], r["effects"]
+    assert r["a_navigated_register_does_not"], r["effects"]
 
 
 def test_the_cast_form_is_what_makes_it_readable():
