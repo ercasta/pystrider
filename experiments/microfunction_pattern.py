@@ -212,12 +212,16 @@ def minting_is_not_recognizable() -> dict:
 
 
 def navigation_still_loses_roles() -> dict:
-    """⚠ The half of the register problem that is STILL OPEN, measured rather than assumed.
+    """⚠ **CLOSED UPSTREAM 2026-07-31 — this now measures the FIX, and the name is kept as the record.**
 
-    `NEW` now names its register as a subject. `GET` does not name what it navigated to, so a function
-    that reads a part and links it elsewhere still comes back with `object=None` — and a bridge between
-    two vocabularies is nothing but that. This is why `strider/rules/python.mf` documents bridges as
-    writable-but-not-readable, and it is item §2 of `docs/feedback_microfunctions.md`."""
+    As measured before: a register assigned by `GET` (rather than `NEW`) yielded `object=None`, so a
+    function that reads a part and links it elsewhere lost the join — and a bridge between two
+    vocabularies is nothing but that. We reported it as `docs/feedback_microfunctions.md` §2 and gave the
+    argument that `R(s)` was not opaque, since `GET R(s) F(a) "over"` makes its provenance derivable.
+
+    ugm shipped exactly that: the role is now a **path**, `a.over` — "the `over` of parameter `a`". So a
+    navigating function keeps its joins, and the consequence for us is that BRIDGES ARE NOW READABLE as
+    descriptions, where `strider/rules/python.mf` still documents them as write-only."""
     g = library("\n".join([
         "fn navigate(a, b) -> t:",
         '    GET R(s) F(a) "over"',
@@ -228,7 +232,7 @@ def navigation_still_loses_roles() -> dict:
     by_label = {e[1]: e for e in effects}
     return {"effects": tuple(sorted(effects)),
             "a_parameter_operand_keeps_its_object_role": by_label["direct"][3] == "a",
-            "a_navigated_register_does_not": by_label["seq"][3] is None,
+            "a_navigated_register_now_carries_a_PATH": by_label["seq"][3] == "a.over",
             "unknown": unknown}
 
 
@@ -294,7 +298,7 @@ def abstains_on_unknown() -> dict:
         '    ATTR R(l) F(label) "name"',
         '    SET F(it) R(l) true',                 # the KEY comes from a register — unreadable statically
     ]))
-    _effects, unknown = driver.establishes(g, "as_tagged")
+    _effects, unknown = driver.establishes(g, "as_tagged")   # `unknown` is now a SET OF ROLES, not a bool
     try:
         pattern_of(g, "as_tagged")
         refused = None
@@ -313,7 +317,7 @@ def abstains_on_unknown() -> dict:
     _e2, unknown_control = driver.establishes(c, "as_tagged_literal")
 
     return {"unknown": unknown, "refused_with": refused, "abstained": refused is not None,
-            "control_literal_key_is_readable": unknown_control is False,
+            "control_literal_key_is_readable": not unknown_control,
             "control_still_recognizes": pattern_of(c, "as_tagged_literal")[1] != ()}
 
 

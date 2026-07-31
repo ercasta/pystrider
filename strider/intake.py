@@ -44,8 +44,11 @@ from .library import Library
 #: The modelled constructs. Everything else is named in `unmodelled` rather than silently dropped.
 #: `Compare` and `BinOp` are here deliberately: the old intake never modelled them, which is why
 #: `experiments/first_principles_repair.py` had to reify comparisons through a separate probe path.
-MODELLED = ("Module", "FunctionDef", "arguments", "arg", "For", "If", "Call", "Return", "Assign",
-            "Compare", "BinOp", "Name", "Constant", "Expr", "Attribute", "Pass")
+MODELLED = ("Module", "FunctionDef", "ClassDef", "arguments", "arg", "For", "If", "Call", "Return",
+            "Assign", "AugAssign", "AnnAssign", "Assert", "Import", "ImportFrom", "alias",
+            "Compare", "BinOp", "BoolOp", "UnaryOp", "IfExp", "Subscript", "Slice", "Starred",
+            "Tuple", "List", "Dict", "Set", "keyword",
+            "Name", "Constant", "Expr", "Attribute", "Pass")
 
 class _Nowhere:
     """A stand-in for an empty block, which has no statement to take a line number from."""
@@ -57,8 +60,26 @@ _NOWHERE = _Nowhere()
 #: What each handler consumes. Everything else on a node is refused by `unconsumed`.
 _CONSUMES = {
     "Module": {"body"},
-    "FunctionDef": {"name", "args", "body", "returns"},   # decorators deliberately NOT here
-    "arguments": {"args"},
+    "FunctionDef": {"name", "args", "body", "returns", "decorator_list"},
+    "ClassDef": {"name", "bases", "body", "decorator_list"},   # `keywords` NOT consumed: not visited
+    "Assert": {"test", "msg"},
+    "AugAssign": {"target", "op", "value"},
+    "AnnAssign": {"target", "annotation", "value", "simple"},
+    "Import": {"names"},
+    "ImportFrom": {"module", "names", "level"},
+    "alias": {"name", "asname"},
+    "BoolOp": {"op", "values"},
+    "UnaryOp": {"op", "operand"},
+    "IfExp": {"test", "body", "orelse"},
+    "Subscript": {"value", "slice", "ctx"},
+    "Slice": {"lower", "upper", "step"},
+    "Starred": {"value", "ctx"},
+    "Tuple": {"elts", "ctx"},
+    "List": {"elts", "ctx"},
+    "Set": {"elts"},
+    "Dict": {"keys", "values"},
+    "keyword": {"arg", "value"},
+    "arguments": {"args", "posonlyargs", "vararg", "kwonlyargs", "kw_defaults", "kwarg", "defaults"},
     "arg": {"arg", "annotation"},
     "For": {"target", "iter", "body", "orelse"},
     "If": {"test", "body", "orelse"},
@@ -74,9 +95,18 @@ _CONSUMES = {
     "Pass": set(),
 }
 
-_CMP = {ast.Eq: "eq", ast.NotEq: "ne", ast.Lt: "lt", ast.LtE: "le", ast.Gt: "gt", ast.GtE: "ge"}
+_BOOL = {ast.And: "and", ast.Or: "or"}
+_UNARY = {ast.Not: "not", ast.USub: "neg", ast.UAdd: "pos", ast.Invert: "invert"}
+
+_CMP = {ast.Eq: "eq", ast.NotEq: "ne", ast.Lt: "lt", ast.LtE: "le", ast.Gt: "gt", ast.GtE: "ge",
+        ast.Is: "is", ast.IsNot: "is_not", ast.In: "in", ast.NotIn: "not_in"}
 _BIN = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div",
-        ast.FloorDiv: "floordiv", ast.Mod: "mod", ast.Pow: "pow"}
+        ast.FloorDiv: "floordiv", ast.Mod: "mod", ast.Pow: "pow",
+        # ⚠ The bitwise ops were missing and it cost more than it looks: `str | None` is a BinOp with
+        # BitOr, so every modern union annotation was refused. Measured at 36 functions in our own repo,
+        # found by the reach sweep rather than by thinking about operators.
+        ast.BitOr: "bitor", ast.BitAnd: "bitand", ast.BitXor: "bitxor",
+        ast.LShift: "lshift", ast.RShift: "rshift", ast.MatMult: "matmul"}
 
 
 @dataclass
@@ -179,6 +209,22 @@ class Intake:
             self.g.put(parent, partial=True)
         return b
 
+    def signature(self, n, args) -> None:
+        """The parts of a signature beyond plain positional names. Defaults pair with the LAST args, and
+        `*a` / `**k` are their own nodes rather than flags, so emit can put them back in order."""
+        for a in args.posonlyargs:
+            self.part(n, "posonly", self.node("param", a, name=a.arg))
+        for a in args.kwonlyargs:
+            self.part(n, "kwonly", self.node("param", a, name=a.arg))
+        for d in args.defaults:
+            self.part(n, "default", self.visit(d, n))
+        for d in args.kw_defaults:
+            self.part(n, "kw_default", self.visit(d, n) if d is not None else self.node("no_default", n))
+        if args.vararg is not None:
+            self.part(n, "vararg", self.node("param", args.vararg, name=args.vararg.arg))
+        if args.kwarg is not None:
+            self.part(n, "kwarg", self.node("param", args.kwarg, name=args.kwarg.arg))
+
     # --- the modelled constructs -----------------------------------------------------------------------
 
     def _Module(self, t):
@@ -195,7 +241,9 @@ class Intake:
                 self.part(param, "annotation", self.visit(a.annotation, param))
             self.unconsumed(a, param)
             self.part(n, "param", param)
-        self.unconsumed(t.args, n)          # *args, **kwargs, defaults, kw-only — none of them modelled
+        self.signature(n, t.args)
+        for dec in t.decorator_list:
+            self.part(n, "decorator", self.visit(dec, n))
         if t.returns is not None:
             self.part(n, "returns", self.visit(t.returns, n))
         self.part(n, "does", self.block(t.body, n))
@@ -222,8 +270,8 @@ class Intake:
         self.part(n, "callee", self.visit(t.func, n))
         for a in t.args:
             self.part(n, "arg", self.visit(a, n))
-        for kw in t.keywords:              # keyword arguments are not modelled; the call becomes partial
-            self.refuse(kw, n)
+        for kw in t.keywords:
+            self.part(n, "kwarg", self.visit(kw, n))
         return n
 
     def _Return(self, t):
@@ -270,6 +318,130 @@ class Intake:
         inspection. Read and write capabilities are tracked separately, and this is the case that shows
         why they must still be checked against each other."""
         return self.node("pass_stmt", t)
+
+    def _ClassDef(self, t):
+        """⭐ The one that changes the population, not just the percentage: while `ClassDef` was
+        unmodelled nothing inside a class was ever REACHED, so ~134 methods in our own corpus were
+        invisible rather than refused."""
+        n = self.node("class_def", t, name=t.name)
+        for base in t.bases:
+            self.part(n, "base", self.visit(base, n))
+        for dec in t.decorator_list:
+            self.part(n, "decorator", self.visit(dec, n))
+        self.part(n, "does", self.block(t.body, n))
+        return n
+
+    def _Assert(self, t):
+        n = self.node("assert_stmt", t)
+        self.part(n, "test", self.visit(t.test, n))
+        if t.msg is not None:
+            self.part(n, "message", self.visit(t.msg, n))
+        return n
+
+    def _AugAssign(self, t):
+        op = _BIN.get(type(t.op))
+        if op is None:
+            self.refuse(t.op, None)
+            return self.node("aug_assign", t, partial=True)
+        n = self.node("aug_assign", t, op=op)
+        self.part(n, "target", self.visit(t.target, n))
+        self.part(n, "value", self.visit(t.value, n))
+        return n
+
+    def _AnnAssign(self, t):
+        n = self.node("ann_assign", t, simple=bool(t.simple))
+        self.part(n, "target", self.visit(t.target, n))
+        self.part(n, "annotation", self.visit(t.annotation, n))
+        if t.value is not None:            # `x: int` with no value is legal and means something different
+            self.part(n, "value", self.visit(t.value, n))
+        return n
+
+    def _Import(self, t):
+        n = self.node("import_stmt", t)
+        for a in t.names:
+            self.part(n, "alias", self.visit(a, n))
+        return n
+
+    def _ImportFrom(self, t):
+        n = self.node("import_from", t, module=t.module, level=t.level or 0)
+        for a in t.names:
+            self.part(n, "alias", self.visit(a, n))
+        return n
+
+    def _alias(self, t):
+        return self.node("alias", t, name=t.name, asname=t.asname)
+
+    def _BoolOp(self, t):
+        n = self.node("bool_op", t, op=_BOOL[type(t.op)])
+        for v in t.values:
+            self.part(n, "operand", self.visit(v, n))
+        return n
+
+    def _UnaryOp(self, t):
+        op = _UNARY.get(type(t.op))
+        if op is None:
+            self.refuse(t.op, None)
+            return self.node("unary_op", t, partial=True)
+        n = self.node("unary_op", t, op=op)
+        self.part(n, "operand", self.visit(t.operand, n))
+        return n
+
+    def _IfExp(self, t):
+        n = self.node("if_expr", t)
+        self.part(n, "condition", self.visit(t.test, n))
+        self.part(n, "then_value", self.visit(t.body, n))
+        self.part(n, "else_value", self.visit(t.orelse, n))
+        return n
+
+    def _Subscript(self, t):
+        n = self.node("subscript", t)
+        self.part(n, "of", self.visit(t.value, n))
+        self.part(n, "index", self.visit(t.slice, n))
+        return n
+
+    def _Slice(self, t):
+        n = self.node("slice", t)
+        for label, part in (("lower", t.lower), ("upper", t.upper), ("step", t.step)):
+            if part is not None:
+                self.part(n, label, self.visit(part, n))
+        return n
+
+    def _Starred(self, t):
+        n = self.node("starred", t)
+        self.part(n, "of", self.visit(t.value, n))
+        return n
+
+    def _Tuple(self, t):
+        return self._sequence("tuple", t, t.elts)
+
+    def _List(self, t):
+        return self._sequence("list", t, t.elts)
+
+    def _Set(self, t):
+        return self._sequence("set", t, t.elts)
+
+    def _sequence(self, kind, t, elements):
+        n = self.node(kind, t)
+        for e in elements:
+            self.part(n, "item", self.visit(e, n))
+        return n
+
+    def _Dict(self, t):
+        n = self.node("dict", t)
+        for key, value in zip(t.keys, t.values):
+            if key is None:                # `{**other}` — a different construct, not a key/value pair
+                self.refuse(t, n)
+                continue
+            pair = self.node("pair", t)
+            self.part(pair, "key", self.visit(key, pair))
+            self.part(pair, "value", self.visit(value, pair))
+            self.part(n, "pair", pair)
+        return n
+
+    def _keyword(self, t):
+        n = self.node("keyword_arg", t, name=t.arg)
+        self.part(n, "value", self.visit(t.value, n))
+        return n
 
     def _Name(self, t):
         return self.node("name", t, id=t.id)

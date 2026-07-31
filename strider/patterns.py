@@ -6,8 +6,10 @@ This is slice 0 promoted from probe to product. The reasoning lives in
 **WRITE** — `construct(lib, "as_iteration", seq=..., var=..., body=...)` calls the stored function.
 **READ** — `recognize(lib, node)` derives the description from that same stored body and matches it.
 
-Neither half names a predicate. `repeats_over` appears in `strider/rules/patterns.mf` and nowhere else in
-this package, which is the property that makes it one library instead of two that agree.
+Neither half names a predicate. `repeats_over` appears in `strider/rules/patterns.mf` and NOWHERE ELSE —
+not in this package, and (since bridges began delegating through `INVOKE`) not in `python.mf` either.
+That is the property that makes it one library instead of two that agree, and it is now structural rather
+than checked: there is no second copy to drift.
 
 **Recognition returns BINDINGS, not a verdict** — *which* sequence, *which* variable, *which* body. That
 is `experiments/understand_partial.py`'s result carried across: the useful unit is the partial
@@ -38,14 +40,21 @@ def pattern_of(lib: Library, name: str) -> tuple:
     if name not in lib.names:
         raise Abstained(f"{name!r} is not in the library; in repertoire: {', '.join(lib.names)}")
     effects, unknown = driver.establishes(lib.graph, name)
-    if unknown:
-        raise Abstained(f"{name}: the body writes something that cannot be read statically (a label or "
-                        "key from a register), so the description is incomplete and matching it would "
-                        "admit nodes that fail a requirement nobody could read")
     params, _program = function.load(lib.graph, name)
     if not params:
         raise Abstained(f"{name}: no parameters, so no subject to recognize")
     subject = params[0]
+
+    # ⭐ `unknown` used to be a bare bool, so ANY unreadable instruction darkened the whole description —
+    # including one writing to a node the description says nothing about. We reported that
+    # (`docs/feedback_microfunctions.md` §3) and ugm now returns the SET OF ROLES it could not resolve.
+    # So the abstention is exactly as wide as the ignorance: refuse when the SUBJECT is affected, and
+    # otherwise proceed on a description that is provably complete for what it claims.
+    if subject in unknown:
+        raise Abstained(f"{name}: the body writes something to its subject {subject!r} that cannot be "
+                        "read statically (a label or key from a register), so the description is "
+                        "incomplete exactly where it matters and matching it would admit nodes failing a "
+                        "requirement nobody could read")
     required = tuple(sorted(e for e in effects if e[2] == subject))
     if not required:
         raise Abstained(
@@ -135,15 +144,17 @@ def unreadable(lib: Library, *, describing_only: bool = True) -> dict:
 
     **⚠ `describing_only` defaults to True, and the default is the point.** A *pattern* that cannot be
     read is a defect: it is a description that describes nothing, and it will look exactly like a node
-    that failed to match. A *bridge* likewise has to stay legible, since `vocabulary_drift` reads it. An
-    **operation** is neither — `lower_threshold` navigates to the constant and writes there, so nothing
-    lands on its declared subject and it has no description to give. That is not a dark corner; it is an
-    action, and actions are not descriptions.
+    that failed to match.
 
-    Pass `describing_only=False` to see everything, which is how the distinction was found: the first
-    version scanned all three categories, and adding the first operation turned a green pin red for a
-    reason that was not a problem."""
-    considered = (lib.patterns + lib.bridge_names) if describing_only else lib.names
+    Nothing else in the library owes us a description. An **operation** navigates to a part and writes
+    there, so nothing lands on its declared subject. A **bridge** now DELEGATES — a lift `INVOKE`s the
+    pattern rather than restating its labels — which makes it opaque to `establishes` by construction.
+    Both are actions, and actions are not descriptions.
+
+    ⚠ Bridges were in this set until they started delegating, and the pin went red. That was the right
+    signal: it is the moment a bridge stopped being a thing you could read and became a thing that does
+    something. Pass `describing_only=False` to see everything."""
+    considered = lib.patterns if describing_only else lib.names
     out = {}
     for name in considered:
         try:

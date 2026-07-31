@@ -28,31 +28,30 @@ def test_patterns_and_bridges_are_kept_apart_by_the_FILE_they_live_in():
     lib = load()
     assert set(lib.bridge_names) == {"as_iteration_from_for_stmt", "as_application_from_call",
                                      "as_conditional_from_if_stmt",
-                                     "as_for_stmt_from_iteration", "as_call_from_application",
-                                     "as_if_stmt_from_conditional"}
+                                     "as_for_stmt", "as_call", "as_if_stmt"}
     assert not set(lib.patterns) & set(lib.bridge_names)
 
 
-def test_every_authored_pattern_and_bridge_is_readable():
+def test_every_authored_PATTERN_is_readable():
     """A dark pattern is a description that describes nothing, and it looks exactly like a node that
     failed to match. The shipped library must have none — the authoring rules in `patterns.mf` doing
     their job."""
     assert unreadable(load()) == {}
 
 
-def test_an_OPERATION_need_not_be_readable_as_a_description():
-    """⚠ Found by this pin going red when the first operation was added — for a reason that was not a
-    problem. `lower_threshold` navigates to the constant and writes THERE, so nothing lands on its
-    declared subject. An action is not a description, and demanding it be one would be demanding the
-    wrong thing.
+def test_ACTIONS_need_not_be_readable_as_descriptions():
+    """⚠ This pin has gone red twice, and both times said something true.
 
-    (It is unreadable for a second reason worth naming: a navigated register's role is exactly what
-    `establishes` cannot yet recover — the open half of `docs/feedback_microfunctions.md` §2, biting in
-    our own library rather than in a contrived repro.)"""
+    First when operations arrived: `lower_threshold` navigates to the constant and writes THERE, so
+    nothing lands on its declared subject. Then when bridges began DELEGATING: a lift `INVOKE`s the
+    pattern, so its effects happen inside the callee and `establishes` reports `unknown`.
+
+    Both are actions. Demanding a description from an action is demanding the wrong thing — and the
+    moment a bridge became opaque is exactly the moment it stopped being something you read."""
     lib = load()
     everything = unreadable(lib, describing_only=False)
-    assert set(everything) <= set(lib.operations)
-    assert "lower_threshold" in everything
+    assert set(everything) <= set(lib.operations) | set(lib.bridge_names)
+    assert not set(everything) & set(lib.patterns)
 
 
 def test_no_predicate_name_is_hardcoded_outside_the_mf_files():

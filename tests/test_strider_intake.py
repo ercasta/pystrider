@@ -10,7 +10,7 @@ import pytest
 
 import strider
 from strider.intake import MODELLED, intake
-from strider.lift import bridges, lift, reachable, vocabulary_drift
+from strider.lift import bridges, lift, lowering_for, reachable
 
 LOOP = """
 def totals(rows):
@@ -85,14 +85,17 @@ def test_source_line_is_recorded_for_attribution():
 # --- the reach membrane --------------------------------------------------------------------------------
 
 def test_an_unmodelled_construct_is_named_not_dropped():
-    lib, got = intaken("xs = [1, 2, 3]\n")
-    assert "List" in {kind for kind, _line in got.unmodelled}
+    """⚠ The example has to come from what is STILL OUTSIDE the membrane. This pin originally used a list
+    literal; slice 5 modelled lists and the pin went red — the pin was right and its example had gone
+    stale. Widening a membrane invalidates the examples, never the invariant."""
+    lib, got = intaken("xs = [y for y in z]\n")
+    assert "ListComp" in {kind for kind, _line in got.unmodelled}
     assert not got.complete
 
 
 def test_the_unmodelled_report_carries_line_numbers():
-    _lib, got = intaken("\n\nxs = [1]\n")
-    assert ("List", 3) in got.unmodelled
+    _lib, got = intaken('\n\nxs = f"{y}"\n')
+    assert ("JoinedStr", 3) in got.unmodelled
 
 
 def test_an_unmodelled_construct_makes_its_CONTAINER_partial():
@@ -101,7 +104,7 @@ def test_an_unmodelled_construct_makes_its_CONTAINER_partial():
     lib, got = intaken("""
 def f(xs):
     for x in xs:
-        y = [x]
+        y = f"{x}"
 """)
     loop = find(lib, got.module, "for_stmt")[0]
     assert lib.graph.attr(loop, "partial") is True
@@ -112,7 +115,7 @@ def test_a_partial_loop_is_REFUSED_by_the_pattern_layer():
     lib, got = intaken("""
 def f(xs):
     for x in xs:
-        y = [x]
+        y = f"{x}"
 """)
     lift(lib, got.module)
     loop = find(lib, got.module, "for_stmt")[0]
@@ -137,7 +140,7 @@ def test_partial_propagates_up_through_a_block():
 def f(xs):
     for x in xs:
         a = 1
-        y = {1: 2}
+        y = {k for k in x}
 """)
     assert lib.graph.attr(find(lib, got.module, "for_stmt")[0], "partial") is True
 
@@ -278,21 +281,35 @@ def f(x):
 def test_a_field_the_handler_did_not_consume_is_REFUSED_not_dropped():
     """⚠ THE BUG THIS GUARD EXISTS FOR. `def f(x: int) -> bool` was intaken with an empty `unmodelled`
     list, reported COMPLETE, and emitted as `def f(x)`. Annotations, decorators, defaults and *args were
-    all read past in silence — a confidently wrong answer, which is worse than any gap."""
-    for source, expected in [("def f(x=1):\n    return x", "arguments.defaults"),
-                             ("@dec\ndef f(x):\n    return x", "FunctionDef.decorator_list"),
-                             ("def f(*a):\n    return 1", "arguments.vararg"),
-                             ("def f(**k):\n    return 1", "arguments.kwarg")]:
+    all read past in silence — a confidently wrong answer, which is worse than any gap.
+
+    ⚠ Slice 5 then MODELLED all four of those, so the examples moved to fields still outside the
+    membrane. The guard is the invariant; the examples are just whatever is currently beyond it."""
+    for source, expected in [("class A(metaclass=M):\n    pass", "ClassDef.keywords"),
+                             ("def f[T](x):\n    return x", "FunctionDef.type_params")]:
         _lib, got = intaken(source)
         assert expected in {kind for kind, _line in got.unmodelled}, (source, got.unmodelled)
+
+
+def test_control_the_now_MODELLED_signature_fields_round_trip():
+    """⚠ The other half of the pin above: what used to be refused must now genuinely work, or widening
+    the membrane would just have moved the silence somewhere else."""
+    from strider.emit import emit
+    for source in ("def f(x=1):\n    return x", "@dec\ndef f(x):\n    return x",
+                   "def f(*a, **k):\n    return 1"):
+        lib, got = intaken(source)
+        assert got.complete, (source, got.unmodelled)
+        assert emit(lib, got.module).strip() == source.strip()
 
 
 def test_the_guard_is_structural_so_a_NEW_field_would_also_be_caught():
     """Enumerating fields to reject by hand would fix the four above and leave the next one to be found
     the same way. The default is inverted: a handler declares what it consumes, everything else refuses."""
     from strider.intake import _CONSUMES
-    assert "decorator_list" not in _CONSUMES["FunctionDef"]
-    assert _CONSUMES["arguments"] == {"args"}
+    # Every handler declares what it consumes; `unconsumed` refuses the rest. Pinned on a construct we
+    # DO model, so this stays meaningful as the membrane widens.
+    assert "type_params" not in _CONSUMES["FunctionDef"]
+    assert "keys" in _CONSUMES["Dict"] and "values" in _CONSUMES["Dict"]
 
 
 def test_annotations_are_MODELLED_and_survive_the_round_trip():
@@ -308,23 +325,53 @@ def test_control_a_plain_signature_is_still_complete():
     assert got.complete, got.unmodelled
 
 
-# --- the two vocabularies must keep meeting ------------------------------------------------------------
+# --- ⭐ one vocabulary, one file — structural now, not checked --------------------------------------------
 
-def test_no_bridge_writes_a_label_no_pattern_READS():
-    """⚠ The neutral labels live in two files — `patterns.mf` declares them, `python.mf`'s bridges write
-    them — because a bridge cannot yet delegate to a pattern (`INVOKE` needs a dict of bindings and `.mf`
-    has no dict literal). Rename a label in one file and lifted code just stops being recognized: no
-    error, simply less understanding than yesterday. Both sides are derived from the stored bodies here,
-    so this cannot itself go stale."""
-    assert vocabulary_drift(strider.load()) == {}
+def test_NO_neutral_label_appears_in_the_bridge_file():
+    """⭐⭐ This replaces `vocabulary_drift`, and the replacement is the point.
+
+    The neutral labels used to live in two files: `patterns.mf` declared them and `python.mf`'s bridges
+    restated them, so a rename in one silently stopped lifted code being recognized. We could only CHECK
+    for that, because a bridge had no way to delegate — `INVOKE` takes a mapping and `.mf` could not write
+    one. We reported it (§6), ugm shipped named bindings, and now a lift INVOKES the pattern while a
+    lowering is handed its parts by `lower`.
+
+    So the labels exist in exactly one place and drift is IMPOSSIBLE rather than detected — which is why
+    the check went. Per ugm's own rule: a test guarding a mechanism that exists for lack of the structural
+    answer is a smell; delete the mechanism and the test goes too. This pin guards the structure itself."""
+    from strider.library import RULES
+    from strider.patterns import pattern_of
+
+    lib = strider.load()
+    neutral = {label for name in lib.patterns for _k, label, _s, _o in pattern_of(lib, name)[1]}
+    assert neutral, "no pattern labels found — this check would pass vacuously"
+
+    bridge_text = RULES.joinpath("python.mf").read_text(encoding="utf-8")
+    code = "\n".join(line for line in bridge_text.splitlines() if not line.lstrip().startswith("#"))
+    leaked = sorted(label for label in neutral if f'"{label}"' in code)
+    assert not leaked, f"{leaked} appear in python.mf; the vocabulary has two homes again"
 
 
-def test_control_the_drift_check_BITES():
-    """⚠ Vacuity control. An empty result proves nothing unless a real drift turns it non-empty."""
-    from strider.library import RULES, Library, load as load_lib
-    text = "\n".join(f.read_text(encoding="utf-8") for f in sorted(RULES.glob("*.mf")))
-    drifted = load_lib(text.replace('"each_does"', '"each_doez"', 1))
-    split = Library(drifted.graph,
-                    tuple(n for n in drifted.names if "_from_" not in n),
-                    tuple(n for n in drifted.names if "_from_" in n))
-    assert vocabulary_drift(split) == {"as_iteration_from_for_stmt": ["each_does"]}
+def test_control_the_leak_check_BITES():
+    """⚠ Vacuity control: a pattern label planted in bridge-shaped text must be caught."""
+    from strider.patterns import pattern_of
+    lib = strider.load()
+    neutral = {label for name in lib.patterns for _k, label, _s, _o in pattern_of(lib, name)[1]}
+    planted = 'fn x(a) -> t:\n    LINK F(a) "%s" F(a)' % sorted(neutral)[0]
+    code = "\n".join(l for l in planted.splitlines() if not l.lstrip().startswith("#"))
+    assert any('"%s"' % label in code for label in neutral)
+
+
+def test_a_lowering_is_derived_from_its_LIFTS_name():
+    """No second table: `as_iteration_from_for_stmt` already says a `for_stmt` is an `iteration`, so the
+    lowering is `as_for_stmt`."""
+    lib = strider.load()
+    assert lowering_for(lib, "as_iteration") == "as_for_stmt"
+    assert lowering_for(lib, "as_conditional") == "as_if_stmt"
+
+
+def test_a_pattern_with_no_bridge_is_refused_by_name():
+    lib = strider.load()
+    with pytest.raises(KeyError) as exc:
+        lowering_for(lib, "as_comprehension")
+    assert "as_comprehension" in str(exc.value)

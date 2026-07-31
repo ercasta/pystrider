@@ -55,11 +55,15 @@ def test_strider_still_refuses_a_minting_pattern_BY_ITS_OWN_CHOICE():
     assert minting_is_not_recognizable()["refused_by_strider_with"] is not None
 
 
-def test_navigation_still_loses_the_object_role():
-    """The half that is still open — and the reason bridges are writable but not readable."""
+def test_navigation_roles_are_now_carried_as_a_PATH():
+    """⚠ THIS PIN CHANGED WHEN UGM CHANGED — the second time that has happened, and again the right
+    outcome. It pinned that a navigated register lost its object role; we reported that as §2 with the
+    argument that the provenance was derivable, and ugm shipped it: the role is now `a.over`.
+
+    The consequence for `strider` is real and not yet taken up: bridges are now readable as descriptions."""
     r = navigation_still_loses_roles()
     assert r["a_parameter_operand_keeps_its_object_role"], r["effects"]
-    assert r["a_navigated_register_does_not"], r["effects"]
+    assert r["a_navigated_register_now_carries_a_PATH"], r["effects"]
 
 
 def test_the_cast_form_is_what_makes_it_readable():

@@ -33,15 +33,24 @@ import ast
 
 from .library import Library
 
-_CMP = {"eq": ast.Eq, "ne": ast.NotEq, "lt": ast.Lt, "le": ast.LtE, "gt": ast.Gt, "ge": ast.GtE}
+_BOOL = {"and": ast.And, "or": ast.Or}
+_UNARY = {"not": ast.Not, "neg": ast.USub, "pos": ast.UAdd, "invert": ast.Invert}
+
+_CMP = {"eq": ast.Eq, "ne": ast.NotEq, "lt": ast.Lt, "le": ast.LtE, "gt": ast.Gt, "ge": ast.GtE,
+        "is": ast.Is, "is_not": ast.IsNot, "in": ast.In, "not_in": ast.NotIn}
 _BIN = {"add": ast.Add, "sub": ast.Sub, "mul": ast.Mult, "div": ast.Div,
-        "floordiv": ast.FloorDiv, "mod": ast.Mod, "pow": ast.Pow}
+        "floordiv": ast.FloorDiv, "mod": ast.Mod, "pow": ast.Pow,
+        "bitor": ast.BitOr, "bitand": ast.BitAnd, "bitxor": ast.BitXor,
+        "lshift": ast.LShift, "rshift": ast.RShift, "matmul": ast.MatMult}
 
 #: What emit can render. The mirror of `intake.MODELLED`, and deliberately a separate list: reading a
 #: construct and writing one are different capabilities, and pretending one implies the other is how a
 #: gap goes unnoticed until it produces wrong code.
-RENDERABLE = ("module", "function_def", "block", "for_stmt", "if_stmt", "call", "return_stmt",
-              "assign", "compare", "binop", "name", "constant", "attribute", "pass_stmt")
+RENDERABLE = ("module", "function_def", "class_def", "block", "for_stmt", "if_stmt", "call",
+              "return_stmt", "assign", "aug_assign", "ann_assign", "assert_stmt",
+              "import_stmt", "import_from", "alias", "compare", "binop", "bool_op", "unary_op",
+              "if_expr", "subscript", "slice", "starred", "tuple", "list", "set", "dict", "pair",
+              "keyword_arg", "name", "constant", "attribute", "pass_stmt")
 
 
 class CannotEmit(Exception):
@@ -93,10 +102,27 @@ class Emit:
         returns = self.g.target(n, "returns")
         return ast.FunctionDef(
             name=self.g.attr(n, "name"),
-            args=ast.arguments(posonlyargs=[], args=params, kwonlyargs=[],
-                               kw_defaults=[], defaults=[]),
-            body=self.stmts(self.g.target(n, "does")), decorator_list=[],
+            args=self.signature(n, params),
+            body=self.stmts(self.g.target(n, "does")),
+            decorator_list=[self.node(d) for d in self.g.targets(n, "decorator")],
             returns=self.node(returns) if returns else None)
+
+    def signature(self, n, params):
+        """Rebuild the full signature. `no_default` is a real node rather than `None` because a keyword-only
+        argument without a default is positionally significant in `kw_defaults`."""
+        def named(label):
+            return [ast.arg(arg=self.g.attr(p, "name")) for p in self.g.targets(n, label)]
+
+        def defaults(label):
+            return [None if self.g.kind(d) == "no_default" else self.node(d)
+                    for d in self.g.targets(n, label)]
+
+        vararg, kwarg = self.g.target(n, "vararg"), self.g.target(n, "kwarg")
+        return ast.arguments(
+            posonlyargs=named("posonly"), args=params, kwonlyargs=named("kwonly"),
+            kw_defaults=defaults("kw_default"), defaults=defaults("default"),
+            vararg=ast.arg(arg=self.g.attr(vararg, "name")) if vararg else None,
+            kwarg=ast.arg(arg=self.g.attr(kwarg, "name")) if kwarg else None)
 
     def _block(self, n):
         raise CannotEmit("a block is a statement list, not an expression — emit its container")
@@ -119,7 +145,8 @@ class Emit:
 
     def _call(self, n):
         return ast.Call(func=self.node(self.g.target(n, "callee")),
-                        args=[self.node(a) for a in self.g.targets(n, "arg")], keywords=[])
+                        args=[self.node(a) for a in self.g.targets(n, "arg")],
+                        keywords=[self.node(k) for k in self.g.targets(n, "kwarg")])
 
     def _return_stmt(self, n):
         value = self.g.target(n, "value")
@@ -141,6 +168,91 @@ class Emit:
 
     def _pass_stmt(self, n):
         return ast.Pass()
+
+    def _class_def(self, n):
+        return ast.ClassDef(
+            name=self.g.attr(n, "name"),
+            bases=[self.node(b) for b in self.g.targets(n, "base")],
+            keywords=[],
+            body=self.stmts(self.g.target(n, "does")),
+            decorator_list=[self.node(d) for d in self.g.targets(n, "decorator")])
+
+    def _assert_stmt(self, n):
+        msg = self.g.target(n, "message")
+        return ast.Assert(test=self.node(self.g.target(n, "test")),
+                          msg=self.node(msg) if msg else None)
+
+    def _aug_assign(self, n):
+        return ast.AugAssign(target=self.store(self.node(self.g.target(n, "target"))),
+                             op=_BIN[self.g.attr(n, "op")](),
+                             value=self.node(self.g.target(n, "value")))
+
+    def _ann_assign(self, n):
+        value = self.g.target(n, "value")
+        return ast.AnnAssign(target=self.store(self.node(self.g.target(n, "target"))),
+                             annotation=self.node(self.g.target(n, "annotation")),
+                             value=self.node(value) if value else None,
+                             simple=int(bool(self.g.attr(n, "simple"))))
+
+    def _import_stmt(self, n):
+        return ast.Import(names=[self.node(a) for a in self.g.targets(n, "alias")])
+
+    def _import_from(self, n):
+        return ast.ImportFrom(module=self.g.attr(n, "module"),
+                              names=[self.node(a) for a in self.g.targets(n, "alias")],
+                              level=self.g.attr(n, "level") or 0)
+
+    def _alias(self, n):
+        return ast.alias(name=self.g.attr(n, "name"), asname=self.g.attr(n, "asname"))
+
+    def _bool_op(self, n):
+        return ast.BoolOp(op=_BOOL[self.g.attr(n, "op")](),
+                          values=[self.node(v) for v in self.g.targets(n, "operand")])
+
+    def _unary_op(self, n):
+        return ast.UnaryOp(op=_UNARY[self.g.attr(n, "op")](),
+                           operand=self.node(self.g.target(n, "operand")))
+
+    def _if_expr(self, n):
+        return ast.IfExp(test=self.node(self.g.target(n, "condition")),
+                         body=self.node(self.g.target(n, "then_value")),
+                         orelse=self.node(self.g.target(n, "else_value")))
+
+    def _subscript(self, n):
+        return ast.Subscript(value=self.node(self.g.target(n, "of")),
+                             slice=self.node(self.g.target(n, "index")), ctx=ast.Load())
+
+    def _slice(self, n):
+        def part(label):
+            target = self.g.target(n, label)
+            return self.node(target) if target else None
+        return ast.Slice(lower=part("lower"), upper=part("upper"), step=part("step"))
+
+    def _starred(self, n):
+        return ast.Starred(value=self.node(self.g.target(n, "of")), ctx=ast.Load())
+
+    def _tuple(self, n):
+        return ast.Tuple(elts=self.items(n), ctx=ast.Load())
+
+    def _list(self, n):
+        return ast.List(elts=self.items(n), ctx=ast.Load())
+
+    def _set(self, n):
+        return ast.Set(elts=self.items(n))
+
+    def items(self, n):
+        return [self.node(e) for e in self.g.targets(n, "item")]
+
+    def _dict(self, n):
+        pairs = self.g.targets(n, "pair")
+        return ast.Dict(keys=[self.node(self.g.target(p, "key")) for p in pairs],
+                        values=[self.node(self.g.target(p, "value")) for p in pairs])
+
+    def _pair(self, n):
+        raise CannotEmit("a dict pair is not an expression — emit its dict")
+
+    def _keyword_arg(self, n):
+        return ast.keyword(arg=self.g.attr(n, "name"), value=self.node(self.g.target(n, "value")))
 
     def _name(self, n):
         return ast.Name(id=self.g.attr(n, "id"), ctx=ast.Load())

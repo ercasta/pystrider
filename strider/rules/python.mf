@@ -1,85 +1,76 @@
-# BRIDGES — Python's vocabulary lifted into the patterns' neutral one.
+# BRIDGES — Python's vocabulary lifted into the patterns' neutral one, and back down.
 #
 # `strider/intake.py` reflects real Python in ITS OWN names (`for_stmt`, `over`, `binds`, `body`). The
 # patterns in `patterns.mf` speak a neutral vocabulary that names no language. Each bridge is the one
 # place those two namings are negotiated — which is why adding a second front end costs one bridge, not
 # a rewrite of every pattern (O(N) bridges, not O(N²) agreements).
 #
-# ⚠ A BRIDGE IS A CAST ON THE SOURCE NODE ITSELF. It adds the neutral edges to the very node intake
+# ⚠ A BRIDGE IS A CAST ON THE SOURCE NODE ITSELF. A lift adds the neutral edges to the very node intake
 # minted, so `from_code` and `source_line` still hold: what a consumer then recognizes is the ARTIFACT,
 # not a copy of it that has lost its provenance.
 #
-# ⚠ A BRIDGE WRITES; THE PATTERN READS. Navigation goes through registers (`GET R(x) F(f) "over"`), and
-# a register is not a parameter, so `establishes` recovers the SUBJECT role but not the OBJECT roles —
-# measured, not assumed. A bridge is therefore describable (you can ask what it establishes) but is not
-# itself a recognizer. That is the right division anyway: after a bridge runs, the node carries the
-# neutral edges and `as_iteration` recognizes it WITH bindings.
+# ⭐⭐ **NO NEUTRAL LABEL APPEARS IN THIS FILE, and that is now structural rather than checked.**
+#
+# It used to. A lift wrote `LINK F(f) "repeats_over" R(seq)` — restating what `patterns.mf` already
+# declared — so the neutral vocabulary lived in two files and could drift: rename a label in one and
+# lifted code silently stopped being recognized. We wrote `vocabulary_drift` to catch that, and reported
+# the underlying cause as `docs/feedback_microfunctions.md` §6: a bridge could not DELEGATE, because
+# `INVOKE` takes a mapping and the `.mf` surface had no way to write one.
+#
+# ugm shipped named bindings. So a lift now INVOKES the pattern, and a lowering is handed its parts by
+# `strider.lift.lower`, which gets them from `recognize` — i.e. from the pattern's own description. The
+# labels exist in exactly one place, `patterns.mf`, and drift is impossible rather than merely detected.
+# Per ugm's own rule: a test guarding a mechanism that exists for lack of the structural answer is a
+# smell — the mechanism went, and `vocabulary_drift` went with it.
+#
+# ⚠ THE PRICE, stated: a delegating bridge is OPAQUE to `establishes` (`unknown = {None}`), because its
+# effects happen inside the function it calls. That is the right trade here — static describability was
+# only ever wanted in order to police the duplication that is now gone — but it does mean a bridge is an
+# ACTION, not a description, and `strider.patterns` treats it as one.
 
-# A Python `for` is an iteration over the thing it iterates, binding its target, doing its body.
+# --- LIFTS: Python shape -> neutral description. One parameter; casts the node it is given. -----------
+
 fn as_iteration_from_for_stmt(f) -> iteration:
     GET R(seq) F(f) "over"
     GET R(v) F(f) "binds"
     GET R(b) F(f) "body"
-    LINK F(f) "repeats_over" R(seq)
-    LINK F(f) "element" R(v)
-    LINK F(f) "each_does" R(b)
+    INVOKE R(out) as_iteration it=F(f) seq=R(seq) var=R(v) body=R(b)
 
-# A Python call is an application of its callee to its first argument.
-# ⚠ Deliberately the FIRST argument only. The neutral `application` pattern describes one function and
-# one value; a multi-argument call is a different construct, and describing it by its first argument
-# would be the "quietly describing it by part of itself" mistake `block` exists to avoid. Multi-argument
-# application wants its own pattern, and does not have one yet.
 fn as_application_from_call(c) -> application:
     GET R(fn) F(c) "callee"
     GET R(a) F(c) "arg"
-    LINK F(c) "applies" R(fn)
-    LINK F(c) "to" R(a)
+    INVOKE R(out) as_application ap=F(c) func=R(fn) arg=R(a)
 
-# ⚠ Intake calls the test `condition`, NOT `tests`. The neutral pattern uses `tests`, and if intake used
-# the same word the bridge would be doing nothing for that part while LOOKING like it worked — and the
-# perturbation pin would not bite there, because renaming the pattern's label would leave intake's
-# identically-named edge behind to satisfy it. Coincidental agreement between two vocabularies is exactly
-# what a bridge exists to make explicit.
-#
-# A Python `if` is a conditional over its test and its two blocks.
-# An absent `else` is intaken as an EMPTY block rather than as a missing edge, because a branch that does
-# nothing is what an absent else means — not an unknown.
+# ⚠ Intake calls the test `condition`, NOT `tests` — deliberately, so the two vocabularies cannot agree
+# by coincidence. If they shared the word, the bridge would be doing nothing for that part while looking
+# like it worked.
 fn as_conditional_from_if_stmt(i) -> conditional:
     GET R(t) F(i) "condition"
     GET R(x) F(i) "then"
     GET R(y) F(i) "otherwise"
-    LINK F(i) "tests" R(t)
-    LINK F(i) "then_does" R(x)
-    LINK F(i) "else_does" R(y)
+    INVOKE R(out) as_conditional c=F(i) test=R(t) then_body=R(x) else_body=R(y)
 
-# --- LOWERING: the other direction, neutral description -> Python shape ------------------------------
+# --- LOWERINGS: neutral description -> Python shape. -------------------------------------------------
 #
 # ⚠ A LOWERING IS NOT A LIFT, and the difference is structural rather than nominal: a lift READS what is
-# already there and casts the same node, so it takes one parameter. A lowering CONSTRUCTS a Python-shaped
-# node that did not exist, so it takes the fresh node as its subject plus the description to read. `lift`
-# applies the one-parameter bridges; `lower` applies these. Nothing is keyed on the name.
+# already on a node and casts that same node. A lowering CONSTRUCTS a Python-shaped node that did not
+# exist, so it takes the fresh node as its subject plus the parts to hang on it. `lift` applies the
+# one-parameter bridges; `lower` applies these. Nothing is keyed on the name.
 #
-# This is what lets a description that was CONSTRUCTED rather than read become real Python text — the
-# write half of the bet reaching all the way out to an artifact.
+# The parts arrive already extracted — `strider.lift.lower` recognizes the description through the
+# PATTERN and passes the bindings — so these functions never name a neutral label either. They are pure
+# casts in Python's vocabulary, exactly mirroring `patterns.mf`'s casts in the neutral one.
 
-fn as_for_stmt_from_iteration(f, it) -> for_stmt:
-    GET R(s) F(it) "repeats_over"
-    GET R(v) F(it) "element"
-    GET R(b) F(it) "each_does"
-    LINK F(f) "over" R(s)
-    LINK F(f) "binds" R(v)
-    LINK F(f) "body" R(b)
+fn as_for_stmt(f, seq, var, body) -> for_stmt:
+    LINK F(f) "over" F(seq)
+    LINK F(f) "binds" F(var)
+    LINK F(f) "body" F(body)
 
-fn as_if_stmt_from_conditional(i, c) -> if_stmt:
-    GET R(t) F(c) "tests"
-    GET R(x) F(c) "then_does"
-    GET R(y) F(c) "else_does"
-    LINK F(i) "condition" R(t)
-    LINK F(i) "then" R(x)
-    LINK F(i) "otherwise" R(y)
+fn as_if_stmt(i, test, then_body, else_body) -> if_stmt:
+    LINK F(i) "condition" F(test)
+    LINK F(i) "then" F(then_body)
+    LINK F(i) "otherwise" F(else_body)
 
-fn as_call_from_application(c, ap) -> call:
-    GET R(f) F(ap) "applies"
-    GET R(a) F(ap) "to"
-    LINK F(c) "callee" R(f)
-    LINK F(c) "arg" R(a)
+fn as_call(c, func, arg) -> call:
+    LINK F(c) "callee" F(func)
+    LINK F(c) "arg" F(arg)

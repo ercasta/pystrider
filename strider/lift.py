@@ -27,69 +27,57 @@ def _arity(lib: Library, name: str) -> int:
     return len(function.load(lib.graph, name)[0])
 
 
-def bridges(lib: Library, *, lowering: bool = False) -> dict:
-    """`{source_kind: bridge_name}`, derived from the bridge names themselves.
+def bridges(lib: Library) -> dict:
+    """`{source_kind: lift_name}` — the LIFTS, derived from their own names.
 
-    ⚠ **Lifts and lowerings are told apart by ARITY, not by name.** A lift reads what is already on a node
-    and casts that same node, so it takes one parameter. A lowering constructs a Python-shaped node that
-    did not exist, so it takes the fresh subject *plus* the description to read from. That is a structural
-    difference, and keying on it means a new bridge lands in the right pass by virtue of what it is."""
-    out = {}
-    for name in lib.bridge_names:
-        if not (name.startswith(_PREFIX) and _INFIX in name):
-            continue
-        if (_arity(lib, name) == 2) == lowering:
-            out[name.split(_INFIX, 1)[1]] = name
-    return out
+    ⚠ **A lift is told from a lowering by ARITY, not by name.** A lift reads what is already on a node and
+    casts that same node, so it takes exactly one parameter. A lowering is handed its parts and so takes
+    several. Structural, so a new bridge lands in the right pass by virtue of what it is."""
+    return {name.split(_INFIX, 1)[1]: name for name in lib.bridge_names
+            if name.startswith(_PREFIX) and _INFIX in name and _arity(lib, name) == 1}
 
 
-def vocabulary_drift(lib: Library) -> dict:
-    """Labels a lift-bridge WRITES that no pattern READS. Empty means the two vocabularies still meet.
+def lowering_for(lib: Library, pattern: str) -> str:
+    """The lowering that builds the Python shape for `pattern`, derived rather than tabulated.
 
-    **⚠ Why this check has to exist.** The neutral labels appear in two files: `patterns.mf` declares
-    them, and `python.mf`'s bridges write them. Ideally a bridge would *delegate* — `INVOKE` the pattern
-    rather than restate its labels — and then there would be one place and nothing to drift. That is not
-    expressible today: `INVOKE` takes a dict of parameter bindings and the `.mf` surface has no dict
-    literal, so a bridge has no way to say which pattern parameter each register fills.
-
-    Given that, the duplication is forced. What is NOT forced is it drifting silently: rename a label in
-    `patterns.mf` and the bridges keep writing the old one, so lifted code simply stops being recognized —
-    no error, just less understanding than yesterday. This turns that into a fact anyone can ask for, and
-    a pin asserts it is empty.
-
-    Derived, never declared: both sides are read from the stored bodies, so it cannot itself go stale."""
-    from .patterns import Abstained, pattern_of
-
-    wanted = set()
-    for name in lib.patterns:
-        try:
-            wanted |= {label for _kind, label, _s, _o in pattern_of(lib, name)[1]}
-        except Abstained:
-            continue
-
-    out = {}
-    for name in bridges(lib).values():                     # lifts only; lowerings write Python's names
-        effects, _unknown = driver.establishes(lib.graph, name)
-        stray = {label for _kind, label, _s, _o in effects} - wanted
-        if stray:
-            out[name] = sorted(stray)
-    return out
+    The LIFT's name already records the correspondence — `as_iteration_from_for_stmt` says that a
+    `for_stmt` is an `iteration` — so the lowering is `as_<that kind>`. No second table, and nothing to
+    keep in step."""
+    kind = next((k for k, lift in bridges(lib).items()
+                 if lift.startswith(pattern + _INFIX)), None)
+    if kind is None:
+        raise KeyError(f"no bridge relates {pattern!r} to any Python construct; "
+                       f"lifts: {sorted(bridges(lib).values())}")
+    name = _PREFIX + kind
+    if name not in lib.bridge_names:
+        raise KeyError(f"{pattern!r} lifts from {kind!r} but there is no lowering {name!r}")
+    return name
 
 
 def lower(lib: Library, description: str, pattern: str):
     """Construct the Python-shaped node for a neutral `description`. Returns the new node.
 
-    The write half reaching an artifact: a description that was CONSTRUCTED (not read from code) becomes
-    a node `strider.emit` can render. The subject is minted here for the same reason `construct` mints
-    one — a lowering must stay a cast to stay readable."""
-    table = bridges(lib, lowering=True)
-    kind = pattern.removeprefix(_PREFIX)
-    name = next((n for k, n in table.items() if n.endswith(_INFIX + kind)), None)
-    if name is None:
-        raise KeyError(f"no lowering for {pattern!r}; have: {sorted(table.values())}")
-    node = lib.graph.mint(function.returns_of(lib.graph, name) or kind)
-    function.invoke(lib.graph, name, {function.load(lib.graph, name)[0][0]: node,
-                                      function.load(lib.graph, name)[0][1]: description})
+    The write half reaching an artifact: a description CONSTRUCTED rather than read from code becomes a
+    node `strider.emit` can render.
+
+    ⭐ **The parts come from `recognize`, which reads them off the PATTERN.** That is what keeps every
+    neutral label in one file: this function does not know what `repeats_over` is called, and neither does
+    `python.mf`. The pattern's binding names and the lowering's parameter names line up by construction —
+    both describe the same three parts — so a mismatch is a real authoring error and says so."""
+    from .patterns import recognize
+
+    name = lowering_for(lib, pattern)
+    bound = recognize(lib, description, pattern)
+    if bound is None:
+        raise ValueError(f"{description} is not a {pattern}, so there is nothing to lower")
+
+    params, _program = function.load(lib.graph, name)
+    subject, expected = params[0], set(params[1:])
+    if set(bound) != expected:
+        raise KeyError(f"{name}() wants {sorted(expected)} but {pattern} binds {sorted(bound)} — the "
+                       "pattern and its lowering disagree about the parts")
+    node = lib.graph.mint(function.returns_of(lib.graph, name) or name.removeprefix(_PREFIX))
+    function.invoke(lib.graph, name, {subject: node, **bound})
     return node
 
 
@@ -126,4 +114,4 @@ def reachable(lib: Library, root: str) -> list:
     return order
 
 
-__all__ = ["lift", "lower", "bridges", "reachable", "vocabulary_drift"]
+__all__ = ["lift", "lower", "bridges", "lowering_for", "reachable"]

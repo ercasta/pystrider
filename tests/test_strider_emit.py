@@ -12,7 +12,7 @@ import pytest
 
 import strider
 from strider.emit import RENDERABLE, CannotEmit, emit
-from strider.lift import bridges, lift, lower, reachable
+from strider.lift import bridges, lift, lower, lowering_for, reachable
 
 SOURCE = """def totals(rows):
     acc = 0
@@ -128,7 +128,7 @@ def test_control_the_read_back_graph_shares_NOTHING_with_the_written_one():
 def test_a_partial_node_is_REFUSED_rather_than_emitted_incomplete():
     """We did not read all of it, so we cannot write all of it. Emitting the part we understood would
     produce code that is confidently missing a statement."""
-    lib, got = read("def f(xs):\n    for x in xs:\n        y = [x]\n")
+    lib, got = read('def f(xs):\n    for x in xs:\n        y = f"{x}"\n')
     with pytest.raises(CannotEmit) as exc:
         emit(lib, find(lib, got.module, "for_stmt")[0])
     assert "partial" in str(exc.value)
@@ -172,7 +172,7 @@ def test_lifts_and_lowerings_are_told_apart_by_ARITY_not_by_name():
     assert bridges(lib) == {"for_stmt": "as_iteration_from_for_stmt",
                             "call": "as_application_from_call",
                             "if_stmt": "as_conditional_from_if_stmt"}
-    assert set(bridges(lib, lowering=True)) == {"iteration", "conditional", "application"}
+    assert lowering_for(lib, "as_iteration") == "as_for_stmt"
 
 
 def test_lift_never_applies_a_lowering():
@@ -180,7 +180,7 @@ def test_lift_never_applies_a_lowering():
     quietly cast the wrong node."""
     lib, got = read(SOURCE)
     applied = lift(lib, got.module)
-    assert not any(name in applied for name in bridges(lib, lowering=True).values())
+    assert not any(name in applied for name in ("as_for_stmt", "as_if_stmt", "as_call"))
 
 
 def test_lower_refuses_an_unknown_pattern_by_name():
@@ -203,3 +203,88 @@ def test_a_conditional_round_trips_through_the_lowering():
                              then_body=then, else_body=otherwise)
     text = emit(lib, lower(lib, desc, "as_conditional"))
     assert text.strip() == "if x:\n    a = 1\nelse:\n    a = 2"
+
+
+# --- slice 5: the widened membrane -----------------------------------------------------------------------
+
+WIDENED = [
+    ("imports",     "import os\nfrom x import y as z"),
+    ("class",       "@dec\nclass A(Base):\n    n: int = 1\n\n    def m(self):\n        return self.n"),
+    ("assert",      "def f(a):\n    assert a in (1, 2), 'bad'"),
+    ("kwargs",      "def f():\n    return g(1, *a, k=2, **b)"),
+    ("subscript",   "def f(d):\n    d['k'][0] = d[1:2]"),
+    ("collections", "def f():\n    return ([1], {'a': 2}, {3})"),
+    ("boolop",      "def f(a, b):\n    return a and b or a is None"),
+    ("ifexp",       "def f(a):\n    return 1 if a else 2"),
+    ("augassign",   "def f(a):\n    a += 1\n    return a"),
+    ("signature",   "def f(a, /, b=1, *rest, c=2, **kw):\n    return a"),
+    ("union annot", "def f(x: str | None) -> int | None:\n    return x"),
+]
+
+
+@pytest.mark.parametrize("label,source", WIDENED, ids=[w[0] for w in WIDENED])
+def test_the_widened_membrane_round_trips_byte_exactly(label, source):
+    """Slice 5. Every construct is added to BOTH halves in one pass — the `pass` bug showed that modelling
+    something in intake without rendering it in emit breaks the round trip on our own output."""
+    lib, got = read(source)
+    assert got.complete, got.unmodelled
+    assert emit(lib, got.module).strip() == source.strip()
+
+
+NORMALISED = [
+    # (source, what emit produces) — semantically identical, textually not. All STABLE on a second pass.
+    ("def f():\n    return g(1, k=2, *a, **b)", "def f():\n    return g(1, *a, k=2, **b)"),
+    ("def f(a, b):\n    return a and not b", "def f(a, b):\n    return a and (not b)"),
+    ("def f():\n    return 1, 2", "def f():\n    return (1, 2)"),
+]
+
+
+@pytest.mark.parametrize("source,expected", NORMALISED)
+def test_some_constructs_are_NORMALISED_and_that_is_named_not_hidden(source, expected):
+    """⚠ `intake -> emit` is not byte-identical for EVERY input, and pretending otherwise would be the
+    kind of overclaim this project exists to avoid.
+
+    Three known normalisations, each semantically identical and each STABLE (a second pass changes
+    nothing, so nothing compounds): `ast.unparse` parenthesises a unary operand and a bare tuple, and our
+    intake stores a call's positional and keyword arguments separately, so their original INTERLEAVING is
+    not recoverable — `g(1, k=2, *a)` comes back as `g(1, *a, k=2)`.
+
+    The last one is a real if minor information loss, recorded rather than glossed: if source-order
+    fidelity ever matters, that is the place it is missing."""
+    lib, got = read(source)
+    assert got.complete, got.unmodelled
+    once = emit(lib, got.module)
+    assert once.strip() == expected.strip()
+
+    lib2, got2 = read(once)
+    assert emit(lib2, got2.module) == once            # stable: nothing compounds
+
+
+def test_a_bare_tuple_return_is_NORMALISED_not_broken():
+    """⚠ Predicted in `docs/slice5_predictions.md` P6 and it happened: `return 1, 2` comes back as
+    `return (1, 2)`. Structurally identical and STABLE on the second pass, so it is a normalisation
+    rather than an instability — but it does mean `intake -> emit` is not byte-identical for every input,
+    which is worth knowing before anyone relies on textual equality."""
+    lib, got = read("def f():\n    return 1, 2")
+    once = emit(lib, got.module)
+    assert once.strip() == "def f():\n    return (1, 2)"
+    lib2, got2 = read(once)
+    assert emit(lib2, got2.module) == once            # stable: the second pass changes nothing
+
+
+def test_bitwise_ops_are_modelled_because_MODERN_ANNOTATIONS_USE_THEM():
+    """`str | None` is a BinOp with BitOr. Missing it refused every modern union annotation — 36 functions
+    in our own repo — and it was found by the reach sweep, not by thinking about operators."""
+    lib, got = read("def f(x: int | str) -> bool:\n    return True")
+    assert got.complete
+    assert "int | str" in emit(lib, got.module)
+
+
+def test_class_keywords_are_REFUSED_because_they_are_not_visited():
+    """⚠ A bug I introduced and the guard caught: `keywords` was declared consumed in `_CONSUMES` while
+    `_ClassDef` never visited it, so `class A(metaclass=M)` silently lost its metaclass. **Declaring a
+    consumption you do not perform is worse than not modelling the construct** — it switches the guard off
+    for that field."""
+    lib, got = read("class A(metaclass=M):\n    pass")
+    assert not got.complete
+    assert "ClassDef.keywords" in {kind for kind, _line in got.unmodelled}
