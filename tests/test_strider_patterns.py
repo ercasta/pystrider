@@ -33,10 +33,26 @@ def test_patterns_and_bridges_are_kept_apart_by_the_FILE_they_live_in():
     assert not set(lib.patterns) & set(lib.bridge_names)
 
 
-def test_every_authored_pattern_is_readable():
-    """A dark pattern is not a failure of this layer, but it IS something a consumer must be told about.
-    The shipped library must have none — that is the authoring rules in `patterns.mf` doing their job."""
+def test_every_authored_pattern_and_bridge_is_readable():
+    """A dark pattern is a description that describes nothing, and it looks exactly like a node that
+    failed to match. The shipped library must have none — the authoring rules in `patterns.mf` doing
+    their job."""
     assert unreadable(load()) == {}
+
+
+def test_an_OPERATION_need_not_be_readable_as_a_description():
+    """⚠ Found by this pin going red when the first operation was added — for a reason that was not a
+    problem. `lower_threshold` navigates to the constant and writes THERE, so nothing lands on its
+    declared subject. An action is not a description, and demanding it be one would be demanding the
+    wrong thing.
+
+    (It is unreadable for a second reason worth naming: a navigated register's role is exactly what
+    `establishes` cannot yet recover — the open half of `docs/feedback_microfunctions.md` §2, biting in
+    our own library rather than in a contrived repro.)"""
+    lib = load()
+    everything = unreadable(lib, describing_only=False)
+    assert set(everything) <= set(lib.operations)
+    assert "lower_threshold" in everything
 
 
 def test_no_predicate_name_is_hardcoded_outside_the_mf_files():

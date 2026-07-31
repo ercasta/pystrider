@@ -48,12 +48,14 @@ def pattern_of(lib: Library, name: str) -> tuple:
     subject = params[0]
     required = tuple(sorted(e for e in effects if e[2] == subject))
     if not required:
-        raise Abstained(f"{name}: nothing is written onto its subject {subject!r}. This looks like a "
-                        "minting function, whose subject is a register. ugm now names a minted register "
-                        "as a '$'-prefixed subject, so the join is NOT lost upstream — but `strider` "
-                        "looks for its subject among the PARAMETERS, so this refusal is our restriction "
-                        "rather than the engine's. Author a pattern as a CAST "
-                        "(see strider/rules/patterns.mf), or lift that restriction deliberately.")
+        raise Abstained(
+            f"{name}: nothing is written onto its subject {subject!r}, so there is no description here. "
+            "Two ways that happens, and they are different: it MINTS its subject (a `NEW` puts it in a "
+            "register — ugm names those `$`-prefixed now, so the join survives upstream and this "
+            "refusal is `strider` looking for a PARAMETER), or it writes through a NAVIGATED register "
+            "(`GET` then `SET`), whose role `establishes` cannot yet recover at all — the open half of "
+            "docs/feedback_microfunctions.md §2. A pattern must be a CAST onto its subject; an "
+            "operation need not be a description at all.")
     return subject, required
 
 
@@ -127,14 +129,23 @@ def recognizes(lib: Library, node) -> dict:
     return out
 
 
-def unreadable(lib: Library) -> dict:
-    """Which patterns cannot be read, and why. The honest companion to `recognizes` skipping them.
+def unreadable(lib: Library, *, describing_only: bool = True) -> dict:
+    """Which functions cannot be read as descriptions, and why — the honest companion to `recognizes`
+    skipping them.
 
-    A library where this is non-empty is not broken — `establishes` is conservative and some legitimate
-    body will defeat it — but it IS a library with dark corners, and a consumer deserves to be told which
-    rather than discovering it as a silent non-match."""
+    **⚠ `describing_only` defaults to True, and the default is the point.** A *pattern* that cannot be
+    read is a defect: it is a description that describes nothing, and it will look exactly like a node
+    that failed to match. A *bridge* likewise has to stay legible, since `vocabulary_drift` reads it. An
+    **operation** is neither — `lower_threshold` navigates to the constant and writes there, so nothing
+    lands on its declared subject and it has no description to give. That is not a dark corner; it is an
+    action, and actions are not descriptions.
+
+    Pass `describing_only=False` to see everything, which is how the distinction was found: the first
+    version scanned all three categories, and adding the first operation turned a green pin red for a
+    reason that was not a problem."""
+    considered = (lib.patterns + lib.bridge_names) if describing_only else lib.names
     out = {}
-    for name in lib.names:                      # bridges included: a dark bridge matters just as much
+    for name in considered:
         try:
             pattern_of(lib, name)
         except Abstained as exc:

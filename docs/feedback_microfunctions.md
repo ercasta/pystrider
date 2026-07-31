@@ -72,6 +72,36 @@ pattern reads) and we are not blocked. But if register provenance is cheap, it w
 from "reads simple functions" into "reads functions", and we suspect the driver's own ranking would get
 sharper for the same reason ours would.
 
+**⭐ UPDATE — it now bites in real code rather than a repro, and on the ranking side, not ours.** We wrote
+a repair operation your driver plans with:
+
+```
+fn lower_threshold(c: comparison) -> comparison:
+    GET R(rhs) F(c) "right"
+    ATTR R(v) R(rhs) "value"
+    ADD R(v2) R(v) -1
+    SET R(rhs) "value" R(v2)
+```
+
+`establishes` reports **no effect on `c` at all** — the write lands on `R(rhs)`, navigated rather than
+minted, so its role is unrecoverable. This is an operation whose entire purpose is to change the
+comparison, and statically it appears to change nothing.
+
+`driver.pursue` still finds it (relevance ranks, never filters, so a function that appears to establish
+nothing is merely unranked, not excluded) — which is your design working exactly as documented. But it is
+found essentially *unguided*. Measured on our repair, guided against `guided=False`:
+
+```
+guided : 5 imagined states     ('lower_threshold', 'evaluate_case')
+blind  : 6 imagined states     ('lower_threshold', 'evaluate_case')
+```
+
+One state of difference on a two-step plan — the guidance has almost nothing to work with, because the
+operation that solves the goal reports no effect on its subject. Compare your blocks-world figure, where
+`unmet`-driven ranking gave 3 states against 55. **We think this is the case that makes register
+provenance worth it for the driver's own sake**, since "read a part, write to that part" is what most
+operations on structured data look like, and those are exactly the ones ranking currently cannot see.
+
 ---
 
 ## 3. `unknown` is whole-function, so an unreadable instruction darkens effects it cannot possibly affect

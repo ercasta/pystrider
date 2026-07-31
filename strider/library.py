@@ -29,26 +29,39 @@ RULES = Path(__file__).resolve().parent / "rules"
 #: The file whose functions are bridges rather than neutral descriptions.
 BRIDGE_FILE = "python.mf"
 
+#: Files whose functions are OPERATIONS — things a planner may DO to code, plus the evaluators that judge
+#: the result. A third category because they are neither of the other two: an operation is not a
+#: description of what a construct *is* (so `recognizes` must never offer one as an answer), and it is not
+#: a translation between vocabularies. It is an action, and the driver proposes it.
+OPERATION_FILES = ("repair.mf",)
+
 
 class Library:
-    """A loaded library: the graph, plus which functions are patterns and which are bridges.
+    """A loaded library: the graph, plus what each function IS.
 
-    Held as an object rather than a bare graph because a consumer almost always wants both, and because
-    `names` is the honest answer to "what is in repertoire" — the question a refusal must answer."""
+    Three categories, drawn by the file a function was loaded from rather than by a naming convention or
+    a hand-kept list — so putting a function in the wrong file is a real error and looks like one.
 
-    def __init__(self, graph: Graph, patterns: tuple, bridges: tuple):
+    * `patterns`   — neutral descriptions. Recognizing one tells a consumer something it did not put there.
+    * `bridge_names` — translations between a front end's vocabulary and the neutral one.
+    * `operations` — actions a planner may take, and the evaluators that judge them.
+    """
+
+    def __init__(self, graph: Graph, patterns: tuple, bridges: tuple, operations: tuple = ()):
         self.graph = graph
         self.patterns = patterns
         self.bridge_names = bridges
+        self.operations = operations
 
     @property
     def names(self) -> tuple:
-        """Everything defined, patterns and bridges alike."""
-        return tuple(sorted(self.patterns + self.bridge_names))
+        """Everything defined, of every category."""
+        return tuple(sorted(self.patterns + self.bridge_names + self.operations))
 
     def __repr__(self) -> str:
         return (f"Library({len(self.patterns)} patterns: {', '.join(self.patterns)}"
-                f" | {len(self.bridge_names)} bridges: {', '.join(self.bridge_names) or '—'})")
+                f" | {len(self.bridge_names)} bridges"
+                f" | {len(self.operations)} operations: {', '.join(self.operations) or '—'})")
 
 
 def load(source: str | None = None, *, path: Path | None = None) -> Library:
@@ -62,7 +75,10 @@ def load(source: str | None = None, *, path: Path | None = None) -> Library:
         return Library(g, tuple(sorted(asm.load_text(g, source))), ())
 
     root = path or RULES
-    patterns, bridges = [], []
+    patterns, bridges, operations = [], [], []
     for f in sorted(Path(root).glob("*.mf")):
-        (bridges if f.name == BRIDGE_FILE else patterns).extend(asm.load_file(g, f))
-    return Library(g, tuple(sorted(patterns)), tuple(sorted(bridges)))
+        bucket = (bridges if f.name == BRIDGE_FILE
+                  else operations if f.name in OPERATION_FILES
+                  else patterns)
+        bucket.extend(asm.load_file(g, f))
+    return Library(g, tuple(sorted(patterns)), tuple(sorted(bridges)), tuple(sorted(operations)))
