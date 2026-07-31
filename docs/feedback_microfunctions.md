@@ -227,6 +227,54 @@ like to know before we build more on it.
 
 ---
 
+## 8. A USAGE NOTE, not a request — how a consumer reads a *failed* search, and what we nearly got wrong
+
+**This is not a gap.** We came close to filing it as one and it would have been wrong, so the near-miss is
+the useful part.
+
+**The context.** We adopted the goal-driven approach for a piece that used to be forward chaining: three
+independently-authored vocabularies (business, UX, widget toolkit) plus one bridge. That works, and better
+than it did — a rule's condition becomes its parameter type, so the dependency the old engine found by
+firing to fixpoint, `pursue` finds by chaining return types, and **the plan it returns *is* the derivation**,
+which is the audit trail we previously had to reconstruct.
+
+**What surprised us.** On a *failure*, all the reasoning is on workbench copies that get discarded, so the
+world afterwards looks exactly as it did before. Forward chaining had saturated the real graph, so a
+failure left its diagnosis lying there. Our first reading was "the failure path tells you nothing".
+
+**That reading was wrong, twice over.**
+
+1. The report *does* carry `unmet` and `why`. We read `how` (`None` on failure), stopped, and missed them.
+   The honest criticism is much narrower: for a single-constraint goal `unmet` restates the goal, so it
+   says *what* was not achieved and never *why* — which is all it can say, since the reason we wanted was
+   domain knowledge our own bridge chose to record.
+2. **The report hands back `workbench`, and everything we needed was reachable from it.** `W.frames`,
+   `W.mappings`, `W.resolve`, `W.image_of` — public surface, about fifteen lines — and a refusal that said
+   "no plan found" became one that names the cause and discriminates between causes (the toolkit lacks
+   `modal_confirm`, versus the cart never qualified).
+
+**So the note, for whoever writes the docs.** `workbench` in the failure report is doing real work, and it
+is not obvious that it is there *for this*. Two things would have saved us an hour and a wrong conclusion:
+
+- a line in `pursue` saying the workbench is returned on failure **so the explored frames can be
+  interrogated**, since a refusal's reason lives there and nowhere else;
+- the corollary for authors, which took us a while to state: **an operation that wants to explain itself
+  must record its reason where the frames are.** A microfunction that quietly does nothing when a
+  precondition fails is unexplainable after a failed search, whereas one that writes
+  `unsupported_confirmation_step` is diagnosable. That is a real authoring rule on this substrate and we
+  have not seen it written down.
+
+**And one piece of context rather than a request.** Forward chaining answered an open question
+(`who admitted_for cart`) from a saturated graph: one pass, then a lookup. `goal.py` constrains *named
+individuals* and has no quantifier — deliberately, and your reasoning for why link constraints cannot fold
+into schemas is convincing — so an open question becomes **one search per candidate**. For us: 2 searches,
+22 imagined states, against one saturation. That is affordable and we are not asking for quantifiers; we
+have no evidence that would be the right answer, and it is a research-scale change. **We mention it only
+because "enumerate what holds" is a shape consumers will keep bringing**, and you may want a considered
+position on it before someone asks for it as a feature.
+
+---
+
 ## What worked well, since a feedback file that only lists problems misleads
 
 - **`asm` refusing at the boundary with a file and line number.** We load a directory of `.mf` and a typo
@@ -241,3 +289,13 @@ like to know before we build more on it.
 - **"For every green, ask what would make it vacuous."** We adopted this wholesale. It has caught four
   would-be-vacuous pins in `strider/` so far, including two where the control was the entire value of the
   test.
+- **The goal-driven substitution for forward chaining is a genuine improvement, not a workaround.** We
+  expected losing ambient rule firing to cost us; instead a rule's condition became its parameter type,
+  the planner rediscovered the dependency order for free, and the returned plan *is* the derivation —
+  auditable by construction rather than by reconstruction. Three vocabularies plus a bridge, and nothing
+  orders the blocks but the types.
+- **`dispatch.service` refusing an imagined target decided a design for us, correctly.** It means a
+  candidate repair can never be evaluated by running the patched code, which forced evaluation to be
+  derivation over structure and left execution as an independent final gate. We had reached the same split
+  on the old engine as a *principle*; here it falls out of the architecture, which is a better place for
+  it to live.

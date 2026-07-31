@@ -1,0 +1,27 @@
+# THE BRIDGE — the ONLY crosswalk between the three vocabularies.
+#
+# A required UX feature is ADMITTED only if the library actually supports its realizer. That is what
+# makes the toolkit swappable: change which capabilities the library node offers and the same business
+# and UX blocks retarget, or honestly fail to.
+
+fn admit_highlight(c: wants_highlight) -> admitted_cart:
+    GET R(lib) F(c) "library"
+    ATTR R(cap) R(lib) "styled_label"
+    JMPNOT R(cap) .unsupported
+    SET F(c) "admitted_highlighted_discount" true
+    JMP .done
+.unsupported:
+    SET F(c) "unsupported_highlighted_discount" true
+.done:
+    SET F(c) "highlight_considered" true
+
+fn admit_confirmation(c: wants_confirmation) -> admitted_cart:
+    GET R(lib) F(c) "library"
+    ATTR R(cap) R(lib) "modal_confirm"
+    JMPNOT R(cap) .unsupported
+    SET F(c) "admitted_confirmation_step" true
+    JMP .done
+.unsupported:
+    SET F(c) "unsupported_confirmation_step" true
+.done:
+    SET F(c) "confirmation_considered" true

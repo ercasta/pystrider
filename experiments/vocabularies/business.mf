@@ -1,0 +1,29 @@
+# THE BUSINESS VOCABULARY — knows about carts, tiers and money. Knows nothing of screens or widgets.
+#
+# ⚠ These were CNL rules that FIRED wherever the world matched:
+#     ?cart grants_discount yes when ?cart customer_tier premium and ?cart order_qualifies yes
+# Microfunctions are POINTED, so nothing fires. What replaces the rule's condition is its PARAMETER
+# TYPE: `grant_discount(c: qualified_cart)` is proposable only against a cart that already qualifies.
+# The chain the old engine found by saturation, the planner finds by chaining types.
+
+fn qualify_order(c: priced_cart) -> checked_cart:
+    ATTR R(a) F(c) "amount"
+    GET R(p) F(c) "policy"
+    ATTR R(t) R(p) "threshold"
+    LT R(under) R(a) R(t)
+    JMPIF R(under) .no
+    SET F(c) "order_qualifies" true
+    JMP .done
+.no:
+    SET F(c) "order_qualifies" false
+.done:
+    SET F(c) "order_checked" true
+
+fn grant_discount(c: qualified_cart) -> discounting_cart:
+    ATTR R(tier) F(c) "customer_tier"
+    EQ R(premium) R(tier) "premium"
+    JMPNOT R(premium) .done
+    SET F(c) "grants_discount" true
+    SET F(c) "has_benefit_discount" true
+.done:
+    SET F(c) "tier_checked" true
