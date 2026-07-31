@@ -30,7 +30,10 @@ chose.
    and is conservative by design; an incomplete effect set is safe there and a false-positive generator
    here. Same value, opposite safety.
 """
+from .intake import Intaken, intake
 from .library import Library, load
+from .lift import bridges, lift
 from .patterns import Abstained, construct, pattern_of, recognize, recognizes
 
-__all__ = ["Library", "load", "Abstained", "construct", "pattern_of", "recognize", "recognizes"]
+__all__ = ["Library", "load", "intake", "Intaken", "lift", "bridges",
+           "Abstained", "construct", "pattern_of", "recognize", "recognizes"]

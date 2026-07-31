@@ -74,6 +74,13 @@ def recognize(lib: Library, node, name: str) -> dict | None:
     """Is `node` an instance of this pattern? Returns the bindings, or `None` for an honest refusal."""
     _subject, required = pattern_of(lib, name)
     g = lib.graph
+    # ⚠ THE ONE PLACE the partial rule is enforced. `strider.intake` marks a node partial when it contains
+    # a construct we could not model. Recognizing one would hand a consumer a description that is missing
+    # something it has no way to ask about — a `for` loop understood by two-thirds of its body, presented
+    # as a complete iteration. Same shape as abstaining on an incomplete effect set: an incomplete
+    # description must not be matched, whichever end the incompleteness came from.
+    if g.attr(node, "partial"):
+        return None
     bindings: dict = {}
     for kind, label, _subj, obj in required:
         if kind == "link":
@@ -103,8 +110,11 @@ def recognizes(lib: Library, node) -> dict:
 
     ⚠ A pattern that cannot be read is SKIPPED, not silently treated as unmatched — the two are different
     answers and conflating them would hide a broken pattern behind a plausible negative."""
+    # ⚠ `lib.patterns`, NOT `lib.names`. A bridge writes the edges it would then match, so recognizing a
+    # node as one reports our own intention back to us — no information, and actively misleading next to
+    # the real recognitions. See `strider/library.py` for why the file is what draws the line.
     out = {}
-    for name in lib.names:
+    for name in lib.patterns:
         try:
             got = recognize(lib, node, name)
         except Abstained:
@@ -121,7 +131,7 @@ def unreadable(lib: Library) -> dict:
     body will defeat it — but it IS a library with dark corners, and a consumer deserves to be told which
     rather than discovering it as a silent non-match."""
     out = {}
-    for name in lib.names:
+    for name in lib.names:                      # bridges included: a dark bridge matters just as much
         try:
             pattern_of(lib, name)
         except Abstained as exc:

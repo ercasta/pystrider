@@ -1,0 +1,53 @@
+# BRIDGES — Python's vocabulary lifted into the patterns' neutral one.
+#
+# `strider/intake.py` reflects real Python in ITS OWN names (`for_stmt`, `over`, `binds`, `body`). The
+# patterns in `patterns.mf` speak a neutral vocabulary that names no language. Each bridge is the one
+# place those two namings are negotiated — which is why adding a second front end costs one bridge, not
+# a rewrite of every pattern (O(N) bridges, not O(N²) agreements).
+#
+# ⚠ A BRIDGE IS A CAST ON THE SOURCE NODE ITSELF. It adds the neutral edges to the very node intake
+# minted, so `from_code` and `source_line` still hold: what a consumer then recognizes is the ARTIFACT,
+# not a copy of it that has lost its provenance.
+#
+# ⚠ A BRIDGE WRITES; THE PATTERN READS. Navigation goes through registers (`GET R(x) F(f) "over"`), and
+# a register is not a parameter, so `establishes` recovers the SUBJECT role but not the OBJECT roles —
+# measured, not assumed. A bridge is therefore describable (you can ask what it establishes) but is not
+# itself a recognizer. That is the right division anyway: after a bridge runs, the node carries the
+# neutral edges and `as_iteration` recognizes it WITH bindings.
+
+# A Python `for` is an iteration over the thing it iterates, binding its target, doing its body.
+fn as_iteration_from_for_stmt(f) -> iteration:
+    GET R(seq) F(f) "over"
+    GET R(v) F(f) "binds"
+    GET R(b) F(f) "body"
+    LINK F(f) "repeats_over" R(seq)
+    LINK F(f) "element" R(v)
+    LINK F(f) "each_does" R(b)
+
+# A Python call is an application of its callee to its first argument.
+# ⚠ Deliberately the FIRST argument only. The neutral `application` pattern describes one function and
+# one value; a multi-argument call is a different construct, and describing it by its first argument
+# would be the "quietly describing it by part of itself" mistake `block` exists to avoid. Multi-argument
+# application wants its own pattern, and does not have one yet.
+fn as_application_from_call(c) -> application:
+    GET R(fn) F(c) "callee"
+    GET R(a) F(c) "arg"
+    LINK F(c) "applies" R(fn)
+    LINK F(c) "to" R(a)
+
+# ⚠ Intake calls the test `condition`, NOT `tests`. The neutral pattern uses `tests`, and if intake used
+# the same word the bridge would be doing nothing for that part while LOOKING like it worked — and the
+# perturbation pin would not bite there, because renaming the pattern's label would leave intake's
+# identically-named edge behind to satisfy it. Coincidental agreement between two vocabularies is exactly
+# what a bridge exists to make explicit.
+#
+# A Python `if` is a conditional over its test and its two blocks.
+# An absent `else` is intaken as an EMPTY block rather than as a missing edge, because a branch that does
+# nothing is what an absent else means — not an unknown.
+fn as_conditional_from_if_stmt(i) -> conditional:
+    GET R(t) F(i) "condition"
+    GET R(x) F(i) "then"
+    GET R(y) F(i) "otherwise"
+    LINK F(i) "tests" R(t)
+    LINK F(i) "then_does" R(x)
+    LINK F(i) "else_does" R(y)

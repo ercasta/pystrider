@@ -19,7 +19,16 @@ def parts(lib, *kinds):
 
 def test_the_library_loads_from_real_mf_files():
     lib = load()
-    assert set(lib.names) == {"as_iteration", "as_application", "as_conditional"}
+    assert set(lib.patterns) == {"as_iteration", "as_application", "as_conditional"}
+
+
+def test_patterns_and_bridges_are_kept_apart_by_the_FILE_they_live_in():
+    """A bridge writes the edges it would then match, so it must never be offered as a description of
+    something. The file draws the line — not a naming convention, and not a hand-kept list."""
+    lib = load()
+    assert set(lib.bridge_names) == {"as_iteration_from_for_stmt", "as_application_from_call",
+                                     "as_conditional_from_if_stmt"}
+    assert not set(lib.patterns) & set(lib.bridge_names)
 
 
 def test_every_authored_pattern_is_readable():
