@@ -30,16 +30,40 @@
 
 # --- LIFTS: Python shape -> neutral description. One parameter; casts the node it is given. -----------
 
+# ⚠ `COPY R(out) F(f)` IS NOT DECORATION — it is how a lift says it cast, and it has to be written by
+# hand because `INVOKE` does not do it for us. ugm's own rule is that *a cast returns its subject*, and
+# `plan.py` and `execution.py` both implement it (`out.get("result") or args[subject]`) — but `INVOKE`
+# writes `out.get("result")` alone, so a stored cast invoked from the ISA answers `None` where the very
+# same cast invoked by the planner answers its subject. Two routes, one rule, one of them missing it.
+# Reported as `docs/feedback_microfunctions.md` §11; until it moves, every lift says so itself.
 fn as_iteration_from_for_stmt(f) -> iteration:
     GET R(seq) F(f) "over"
     GET R(v) F(f) "binds"
     GET R(b) F(f) "body"
-    INVOKE R(out) as_iteration it=F(f) seq=R(seq) var=R(v) body=R(b)
+    INVOKE R(x) as_iteration it=F(f) seq=R(seq) var=R(v) body=R(b)
+    COPY R(out) F(f)
 
+# ⚠⚠ A BRIDGE ABSTAINS WHEN A PART IT NEEDS IS ABSENT, and this one had to learn it the hard way.
+#
+# `f()` is a call with no `arg` edge — nothing dropped, nothing unreadable, the part is simply not there.
+# The bridge used to hand the unset register straight to `as_application`, which `LINK`ed it, and ugm
+# minted AN EDGE WHOSE TARGET WAS `None`. So `targets(c, "to")` came back non-empty, every "is this part
+# present?" test answered yes, and `f()` was described as **applying `f` to nothing** — a confidently
+# wrong reading of code that plainly says otherwise, and the same shape as the placeholder finding in
+# `strider/intake.py`. We reported the null edge (`docs/feedback_microfunctions.md` §10); ugm now refuses
+# the write, so the defect surfaced here as a RuntimeError instead of a lie. ⭐ The refusal is the fix
+# working: it converted a silent wrong answer into a loud one, at the instruction that caused it.
+#
+# ⚠ An ABSENT part is not a GAP. Intake records a gap where it could not read something; here there is
+# nothing to read, so the honest answer is that this call is not an application and no cast happens.
+# The convention `strider.lift` reads: a bridge that cast leaves `out` set; one that abstained does not.
 fn as_application_from_call(c) -> application:
     GET R(fn) F(c) "callee"
     GET R(a) F(c) "arg"
-    INVOKE R(out) as_application ap=F(c) func=R(fn) arg=R(a)
+    JMPNOT R(a) ".no_argument"
+    INVOKE R(x) as_application ap=F(c) func=R(fn) arg=R(a)
+    COPY R(out) F(c)
+    .no_argument:
 
 # ⚠ Intake calls the test `condition`, NOT `tests` — deliberately, so the two vocabularies cannot agree
 # by coincidence. If they shared the word, the bridge would be doing nothing for that part while looking
@@ -48,7 +72,8 @@ fn as_conditional_from_if_stmt(i) -> conditional:
     GET R(t) F(i) "condition"
     GET R(x) F(i) "then"
     GET R(y) F(i) "otherwise"
-    INVOKE R(out) as_conditional c=F(i) test=R(t) then_body=R(x) else_body=R(y)
+    INVOKE R(done) as_conditional c=F(i) test=R(t) then_body=R(x) else_body=R(y)
+    COPY R(out) F(i)
 
 # --- LOWERINGS: neutral description -> Python shape. -------------------------------------------------
 #

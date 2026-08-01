@@ -33,7 +33,18 @@ BRIDGE_FILE = "python.mf"
 #: the result. A third category because they are neither of the other two: an operation is not a
 #: description of what a construct *is* (so `recognizes` must never offer one as an answer), and it is not
 #: a translation between vocabularies. It is an action, and the driver proposes it.
-OPERATION_FILES = ("repair.mf", "app.mf")
+#: ⚠ `world.mf` is an operation file too, and a separate one on purpose: its two functions are the only
+#: ones in the library that DISPATCH, so they are the only ones whose effects leave the graph. Same
+#: category, because a planner treats them identically; different file, because a reader should not have
+#: to check each function to find out which ones can touch the world.
+OPERATION_FILES = ("repair.mf", "app.mf", "world.mf")
+
+#: Files whose functions are MONITORS — judgements about the system's own computation rather than about
+#: code. A fourth category, and the reason it is one is that all three of the others would be wrong:
+#: `recognizes` must not offer a monitor as an account of what a construct IS, it translates no
+#: vocabulary, and the planner must never propose one. ⭐ The last is structural, not policed — a monitor
+#: declares no return type, so `function.producers` never offers it and nothing can want it.
+MONITOR_FILES = ("watch.mf",)
 
 
 class Library:
@@ -45,23 +56,27 @@ class Library:
     * `patterns`   — neutral descriptions. Recognizing one tells a consumer something it did not put there.
     * `bridge_names` — translations between a front end's vocabulary and the neutral one.
     * `operations` — actions a planner may take, and the evaluators that judge them.
+    * `monitors`   — judgements about the system's own computation, watching a task while it runs.
     """
 
-    def __init__(self, graph: Graph, patterns: tuple, bridges: tuple, operations: tuple = ()):
+    def __init__(self, graph: Graph, patterns: tuple, bridges: tuple, operations: tuple = (),
+                 monitors: tuple = ()):
         self.graph = graph
         self.patterns = patterns
         self.bridge_names = bridges
         self.operations = operations
+        self.monitors = monitors
 
     @property
     def names(self) -> tuple:
         """Everything defined, of every category."""
-        return tuple(sorted(self.patterns + self.bridge_names + self.operations))
+        return tuple(sorted(self.patterns + self.bridge_names + self.operations + self.monitors))
 
     def __repr__(self) -> str:
         return (f"Library({len(self.patterns)} patterns: {', '.join(self.patterns)}"
                 f" | {len(self.bridge_names)} bridges"
-                f" | {len(self.operations)} operations: {', '.join(self.operations) or '—'})")
+                f" | {len(self.operations)} operations: {', '.join(self.operations) or '—'}"
+                f" | {len(self.monitors)} monitors: {', '.join(self.monitors) or '—'})")
 
 
 def load(source: str | None = None, *, path: Path | None = None) -> Library:
@@ -75,10 +90,12 @@ def load(source: str | None = None, *, path: Path | None = None) -> Library:
         return Library(g, tuple(sorted(asm.load_text(g, source))), ())
 
     root = path or RULES
-    patterns, bridges, operations = [], [], []
+    patterns, bridges, operations, monitors = [], [], [], []
     for f in sorted(Path(root).glob("*.mf")):
         bucket = (bridges if f.name == BRIDGE_FILE
                   else operations if f.name in OPERATION_FILES
+                  else monitors if f.name in MONITOR_FILES
                   else patterns)
         bucket.extend(asm.load_file(g, f))
-    return Library(g, tuple(sorted(patterns)), tuple(sorted(bridges)), tuple(sorted(operations)))
+    return Library(g, tuple(sorted(patterns)), tuple(sorted(bridges)), tuple(sorted(operations)),
+                   tuple(sorted(monitors)))

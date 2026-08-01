@@ -81,18 +81,30 @@ def lower(lib: Library, description: str, pattern: str):
     return node
 
 
+#: The register a bridge leaves its cast in. ⚠ An AUTHORING CONVENTION, not a mechanism ugm enforces:
+#: a bridge that cast sets it, a bridge that abstained leaves it unset. See `rules/python.mf`.
+_OUT = "out"
+
+
 def lift(lib: Library, root: str) -> dict:
     """Walk everything reachable from `root` and apply whichever bridge matches each node's kind.
 
     Returns `{bridge_name: [nodes lifted]}` — a record of what was touched, not a count, because the
-    useful question afterwards is *which* nodes now speak the neutral vocabulary."""
+    useful question afterwards is *which* nodes now speak the neutral vocabulary.
+
+    ⚠ **A node a bridge ABSTAINED on is not in that record**, and the distinction is not cosmetic. `f()`
+    is a `call`, so the bridge is invoked at it, and there is no argument for `as_application` to bind —
+    so nothing is cast and the node still speaks only Python. Counting it as lifted would make this record
+    a claim about which bridges RAN rather than about which nodes now carry the neutral vocabulary, and
+    the second is the only question anybody asks it. Read off `out`, per the convention above."""
     g, table, applied = lib.graph, bridges(lib), {}
     for node in reachable(lib, root):
         name = table.get(g.kind(node))
         if name is None:
             continue
-        function.invoke(g, name, {function.load(g, name)[0][0]: node})
-        applied.setdefault(name, []).append(node)
+        _focus, regs = function.invoke(g, name, {function.load(g, name)[0][0]: node})
+        if regs.get(_OUT) is not None:
+            applied.setdefault(name, []).append(node)
     return applied
 
 

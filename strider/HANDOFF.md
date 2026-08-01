@@ -1,8 +1,72 @@
-# Handoff — `strider/`, 2026-07-31
+# Handoff — `strider/`, 2026-08-01
 
 **Read this first if you are picking this up cold.** Two sessions: `../ugm` replaced its engine, we
 evaluated migrating, decided to rewrite rather than port, and built **seven** slices. `pystrider/` is
 untouched — nothing was deleted here.
+
+## 0. Latest first — slice 9, and what the upstream sync cost (2026-08-01)
+
+```
+python -m pytest tests/test_strider_*.py tests/test_microfunction_pattern.py -q   # 183 passed, ~210s
+```
+
+⚠ **The suite is four times slower than it was**, and all of it is `tests/test_strider_agenda.py` (~180s
+of the 210): three of its pins run an **unguided** search — 24 imagined states with a workbench copy
+each — and then drive a real Textual app. The cost is ugm's search, not ours, and it is the price of
+watching a computation slow enough to be watchable (see below).
+
+**We were red on arrival, and the failure was ours.** ugm shipped `feedback` §10's fix — a write through
+an unset register now refuses instead of minting an edge to `None`. That exposed a real defect: `f()` has
+no `arg` edge, so `as_application_from_call` handed an unset register to the pattern, the null edge made
+`targets(c, "to")` non-empty, and **a no-argument call was described as "applies `f` to nothing"**. The
+bridge now abstains. ⭐ A wrong answer became a loud one at the instruction that caused it, which is the
+whole value of the refusal — and `⚠ AN ABSENT PART IS NOT A GAP`: nothing was dropped and nothing is
+unreadable, so the honest answer is that this call is not an application.
+
+Fixing it surfaced `feedback` §11: **`INVOKE` writes `out.get("result")` alone**, while `plan.py:145` and
+`execution.py:301` both apply *a cast returns its subject*. The same stored cast answers its subject to
+the planner and `None` to a `.mf` program. Worked around with an explicit `COPY R(out) F(subject)` in
+every lift — boilerplate a forgetful author omits silently, which is why it is filed.
+
+### Slice 9 — the generation pipeline on ONE agenda
+
+`experiments/strider_agenda.py`, `strider/rules/world.mf`, `strider/rules/watch.mf`, 12 pins. Four tasks
+on one rotating agenda: the pursuit, a render, a drive, and a watcher.
+
+**⭐⭐ The irreversible step is now DECLARED.** `render_app` is registered `observes=True` and `drive_app`
+is not, so `loop.verb_of` answers `look` and `act` **before** either is taken. The loop takes the render
+and stops before the drive — **holding a complete, valid app that has never executed**, which is the last
+moment the whole generation could still be thrown away for free. The control is the render: if the driver
+were declining *any* boundary crossing there would be no source at the pause.
+
+**⭐⭐ A watcher authored as TEXT stops our own search mid-flight.** `watch.mf` reads the live search's
+`steps` against a budget and writes `stop`; the refusal that comes back is honest — no plan, no source,
+never ran. Everything it needs was already data. ⚠ It is a **fourth category** (`library.py`), and the
+reason the planner can never propose one is *structural, not policed*: a monitor declares no return type,
+so `function.producers` never offers it and **nothing can want it**.
+
+**⚠⚠ THE FINDING: `verb_of` has ONE WORD for TWO LINES of irreversibility** (`feedback` §12). A replay's
+verb is the constant `act`, so ugm's line falls before anything exists to look at; ours declines an `act`
+that is also an `activation`, i.e. one sitting on a `DISPATCH`. Pinned from both sides, because a
+Python-side policy re-deriving a distinction the vocabulary could carry is exactly the thing that goes
+quietly wrong later.
+
+**⭐⭐ AND THE MEASUREMENT NOBODY ASKED FOR: A SAMPLING MONITOR CANNOT JUDGE A FAST COMPUTATION.** The
+guided search settles this app in **7** imagined states and the watcher cannot bite it at *any* budget —
+its first poll lands after the search is over. Everything about the mechanism is fine and it is still
+useless there. Hence the unguided search (24 states, stopped at 18). ⚠ The general form: **self-monitoring
+on a shared agenda has a resolution, and a computation faster than that resolution is unwatchable by it.**
+Trapping — a check inside the search's own step — is the other design, and it costs a seam.
+
+**⚠ The prediction missed, and the miss is the useful part.** Predicted overshoot `budget + 0..8`;
+measured `+10`. The assumption it named: the polling cycle is 8 instructions, not 7 — jumping back to
+`.again` spends a tick like anything else — so with four tasks rotating, one poll costs 32 ticks and the
+search advances 8 states inside it. Not a small correction to the band but a different shape of answer.
+
+**Still Python:** the `while` around `tick` (which is what `loop.run`'s docstring says a driver is for),
+and the world setup from slice 7. The pipeline's *coordination* is not — the render and the drive poll
+for the state that makes them applicable, and the failure path is an authored flag (`abandoned`) on the
+build node rather than a Python `if`.
 
 ## ⚠⚠ READ THIS BEFORE RUNNING ANYTHING: the old suite no longer runs, and not because of us
 
@@ -14,9 +78,18 @@ document used to cite — **cannot be collected at all**. Nothing in `pystrider/
 This was discovered in slice 7 and is unrelated to any change here. It matters more than it looks:
 `strider/__init__.py` names the old suite as *"the only oracle for whether this does what that did, so it
 stays"* — **that oracle is gone**, and the retire-`pystrider` bar in §5 has to be re-thought rather than
-just re-run. Options, none of them taken yet: vendor the last `ugm/` from its git history, pin
-`../ugm` to a pre-`3d7d996` commit for the legacy suite only, or accept the loss and declare the reach
-measurement the sole bar. **That is a decision for the user, not a cleanup task.**
+just re-run.
+
+**✅ DECIDED 2026-08-01 (the user): ACCEPT THE LOSS.** The strider reach measurement is the sole bar; the
+old suite is not being revived and `../ugm` is not being pinned.
+
+⚠ **But the scope is bigger than it was reported as, so nothing has been deleted yet.** ugm's handoff
+names two dead files; the real count is **44** — every ugm-era test module fails collection on
+`import ugm`, which is the whole of `pystrider/`'s and `grammapy/`'s coverage. Deleting them does not
+tidy up around a decision, it *makes* the retirement decision, and that one is explicitly gated on the
+reach measurement being re-derived on `strider`. **Do the measurement first, then delete the suite and
+the packages together in one honest commit.** Verify the count before acting:
+`python -m pytest tests/ -q --collect-only`.
 
 Verify the state in one command:
 
@@ -45,7 +118,8 @@ across 7 modules and 3 `.mf` files, beside `pystrider/` rather than replacing it
 | 5 | `docs/slice5_predictions.md` | how reach is measured, predicted-then-checked (slices 5, 6, 7) |
 | 6 | `experiments/strider_app.py` | slice 7 — a goal derives a Textual app; the drive is the trust |
 | 7 | `experiments/strider_unknown.py` | slice 8 — what ugm's deliberation work buys us, measured (4.9%) |
-| 8 | `docs/feedback_microfunctions.md` | what we asked ugm for, and what came back |
+| 8 | `experiments/strider_agenda.py` | slice 9 — the pipeline on one agenda; the stop, the watcher, the two lines |
+| 9 | `docs/feedback_microfunctions.md` | what we asked ugm for, and what came back |
 
 ## 3. What exists and works
 
@@ -61,6 +135,8 @@ across 7 modules and 3 `.mf` files, beside `pystrider/` rather than replacing it
 | `rules/python.mf` | bridges, which now DELEGATE rather than restate |
 | `rules/repair.mf` | operations a planner may apply, plus the evaluator that judges them |
 | `rules/app.mf` | operations that BUILD an app — a condition-as-parameter-type in its purest form |
+| `rules/world.mf` | the only two functions that DISPATCH — rendering the app, and running it |
+| `rules/watch.mf` | monitors: judgements about our own computation, not about code |
 
 Four probes carry the arguments: `microfunction_pattern.py` (the bet), `strider_repair.py` (a goal
 driving a code repair), `strider_vocabularies.py` (three vocabularies composing without forward chaining),
@@ -191,8 +267,9 @@ but names our `.mf` domain actions and the `INVOKE` surface as things that shoul
 
 ## 5. What to do next
 
-**Decide what to do about the missing `ugm/` package** (see the warning at the top). This gates the
-retire-`pystrider` question and is a call for the user, not a cleanup.
+**Re-derive the reach measurement on `strider`** — `experiments/reach_curve.py` runs on the deleted old
+engine. It is now the *sole* bar (see the decision at the top), and it gates deleting the 44 dead test
+modules and the packages they cover, which should happen together.
 
 **Comprehensions** are now unambiguously the biggest lever and still the hardest — they bind variables and
 open a scope, so they are the first genuinely semantic construct rather than a container to walk.

@@ -236,6 +236,31 @@ def test_lift_reports_which_nodes_it_touched():
     assert applied["as_iteration_from_for_stmt"] == find(lib, got.module, "for_stmt")
 
 
+def test_a_bridge_ABSTAINS_when_a_part_it_needs_is_simply_absent():
+    """⚠⚠ `f()` was described as *applying `f` to nothing* — a confidently wrong reading, not a gap.
+
+    The bridge handed `as_application` an unset register, ugm minted an edge whose target was `None`, and
+    `targets(c, "to")` came back non-empty — so every "is this part present?" test answered yes. We
+    reported the null edge (`docs/feedback_microfunctions.md` §10); ugm now REFUSES the write, which is
+    the fix working: it turned a silent wrong answer into a loud one at the instruction that caused it,
+    and this suite went red for a reason that was entirely ours.
+
+    ⚠ An ABSENT part is not a GAP. Nothing was dropped and nothing is unreadable — a call with no
+    arguments is not an application, so no cast happens and the node keeps speaking only Python."""
+    lib, got = intaken("def f():\n    g()\n")
+    applied = lift(lib, got.module)
+    call = find(lib, got.module, "call")[0]
+    assert lib.graph.targets(call, "to") == ()
+    assert set(strider.recognizes(lib, call)) == set()
+    assert "as_application_from_call" not in applied
+    # ⚠ THE VACUITY CONTROL, and it is the whole test: a bridge that abstained on EVERY call would pass
+    # every line above. One argument is the difference between "not an application" and "not lifting".
+    lib2, got2 = intaken("def f():\n    g(1)\n")
+    applied2 = lift(lib2, got2.module)
+    assert find(lib2, got2.module, "call") == applied2["as_application_from_call"]
+    assert set(strider.recognizes(lib2, find(lib2, got2.module, "call")[0])) == {"as_application"}
+
+
 def test_recognizes_reports_PATTERNS_and_never_bridges():
     """A bridge writes the edges it would then match, so recognizing a node as one reports our own
     intention back to us."""

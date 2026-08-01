@@ -9,7 +9,10 @@ nothing else in `strider` had to know it ever existed.
 """
 from __future__ import annotations
 
-from microfunctions import asm, conflict, driver, function, goal, types
+from microfunctions import asm, conflict, dispatch, driver, function, goal, loop, types
+from microfunctions.focus import Focus
 from microfunctions.graph import Graph, new_graph
+from microfunctions.isa import Machine
 
-__all__ = ["asm", "conflict", "driver", "function", "goal", "types", "Graph", "new_graph"]
+__all__ = ["asm", "conflict", "dispatch", "driver", "function", "goal", "loop", "types",
+           "Focus", "Graph", "Machine", "new_graph"]

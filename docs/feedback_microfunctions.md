@@ -336,7 +336,82 @@ explicit sentinel would at least make it *sayable*; silently minting a null edge
 graph stops being able to tell "no part" from "a part that is nothing", which is the distinction
 `graph.UNKNOWN` was just built to protect one slot over.
 
-## 11. A NOTE OF THANKS, and one request about timing
+> **✅ FIXED upstream 2026-08-01, and the fix is what we asked for**: `LINK`, `LINK_AT`, `UNLINK`, `DROP`,
+> `SETREF` and `SET`'s subject now raise, naming the opcode and the operand, and `run` rolls back. It cost
+> us one red test and the bug it exposed was entirely ours — `f()` has no `arg` edge, so our bridge was
+> describing a no-argument call as *applying `f` to nothing*, with a null edge making every "is this part
+> present?" test answer yes. ⭐ **That is a wrong answer becoming a loud one at the instruction that
+> caused it**, which is the whole value of the refusal. Our bridge now abstains (`rules/python.mf`).
+
+## 11. ⭐ NEW — `INVOKE` does not apply the cast-returns-its-subject rule that `plan` and `execution` do
+
+Found 2026-08-01, immediately downstream of §10's fix: having made a bridge abstain, we needed to ask
+*afterwards* whether it had cast, and the obvious answer — read the `INVOKE`'s destination register —
+turns out to be `None` for **every** cast, including the ones that ran.
+
+`isa.py`'s `INVOKE` writes `out.get("result")` alone. But *a cast returns its subject* is the design's own
+rule, and two other call sites implement it:
+
+```python
+# execution.py:301
+result = out.get("result") or args.get(fn.subject_param(g, name))
+# plan.py:145
+last = out.get("result") or args.get(first_param)
+```
+
+So the same stored cast answers its subject when the planner runs it and `None` when a `.mf` program runs
+it. Neither is wrong in isolation; **the divergence is the defect**, and it is the shape your own §6d
+notes call out — one rule, two routes, kept in step by hand. A `.mf` author who never invokes casts from
+Python will not see it, which is what makes it worth a line rather than a shrug.
+
+**Our workaround, so the cost is visible:** every lift in `rules/python.mf` now ends with an explicit
+`COPY R(out) F(subject)`. It works, and it is boilerplate that a forgetful author omits silently — the
+lift still casts, and only the record of *what was lifted* goes quietly wrong.
+
+**Suggestion:** apply the same fallback in the `INVOKE` handler, or — if the ISA should stay literal about
+registers — say so in `function.invoke`'s docstring, since that is where a consumer reads what a call
+answers.
+
+## 12. ⭐ NEW — `verb_of` has one word for two lines of irreversibility, and a generator needs both
+
+Found 2026-08-01 putting our whole generation pipeline on `loop.py`'s agenda, which worked on the first
+try and is the most immediately useful thing you have shipped us. This is the one place it did not fit.
+
+`verb_of` answers `act` for a `replay` **unconditionally**, without consulting what the plan's operations
+do. For your world that is right and safe — a replay writes to the real graph and nothing is undone. But
+`strider`'s operations only rearrange an AST we own, and our irreversible step is `exec`ing the source we
+just wrote. So the two lines fall in different places:
+
+| | `verb_of` says | what it costs us |
+|---|---|---|
+| the replay carries out the plan | `act` | stopping here leaves **no source** — nothing to look at |
+| a `DISPATCH` runs the emitted app | `act` | stopping here leaves a complete app that has never run |
+
+Both are `act`, and only the second is irreversible *in the world* — `dispatch.py`'s own claim is that it
+is the one place an effect leaves the graph. Pinned from both sides
+(`tests/test_strider_agenda.py::test_THE_TWO_LINES_OF_IRREVERSIBILITY…`): under your line the loop stops
+mid-plan with `source is None`, which is a pause that can tell its author nothing.
+
+**Our workaround, and we are not comfortable with it:** our driver declines a step that is `act` *and* an
+`activation`, i.e. one sitting on a `DISPATCH`. It is a Python-side policy re-deriving a distinction the
+vocabulary could carry, and it is exactly the shape of thing that goes quietly wrong later.
+
+**Suggestion, in preference order.** (1) Let a replay's verb depend on its next operation — `act` if that
+operation can dispatch, otherwise something weaker; the information is in the stored program. (2) Failing
+that, a fifth verb distinguishing *irreversible inside the graph* from *irreversible in the world*, so a
+caller states which line it is stopping at instead of re-deriving one. ⚠ We are aware (1) is an
+over-approximation in the other direction — a program *containing* a `DISPATCH` need not reach it — and
+that erring toward `act` is your stated default. A verb that is a constant is still a verb nobody can
+learn anything from.
+
+**One measurement you may want, since it is about your guidance and not about us.** A watcher on the
+shared agenda **samples**: it polls at one instruction per tick, so its resolution here is ~8 imagined
+states. The *guided* search settles our app in **7**, so a budget monitor cannot bite it at any budget —
+the first poll lands after the search is done. Guidance is so effective on this goal that it removes the
+condition under which self-monitoring means anything, which is a good problem and worth knowing you have.
+(Our probe watches an unguided search, 24 states, and stops it at 18.)
+
+## 13. A NOTE OF THANKS, and one request about timing
 
 `graph.UNKNOWN`'s framing — NOT LOOKED as distinct from NOT THERE — transferred to us directly and
 usefully, one level up: our `partial` bit was the same conflation, and naming it let us narrow an

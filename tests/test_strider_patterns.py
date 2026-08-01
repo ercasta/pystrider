@@ -40,17 +40,23 @@ def test_every_authored_PATTERN_is_readable():
 
 
 def test_ACTIONS_need_not_be_readable_as_descriptions():
-    """⚠ This pin has gone red twice, and both times said something true.
+    """⚠ This pin has gone red THREE times, and every time it said something true.
 
     First when operations arrived: `lower_threshold` navigates to the constant and writes THERE, so
     nothing lands on its declared subject. Then when bridges began DELEGATING: a lift `INVOKE`s the
     pattern, so its effects happen inside the callee and `establishes` reports `unknown`.
 
     Both are actions. Demanding a description from an action is demanding the wrong thing — and the
-    moment a bridge became opaque is exactly the moment it stopped being something you read."""
+    moment a bridge became opaque is exactly the moment it stopped being something you read.
+
+    ⭐ **Third, 2026-08-01 (slice 9): MONITORS.** `watch_generating` spends its whole body reading a
+    search node and writing one attribute on it, so there is nothing about a *construct* to establish. It
+    is an action too, and about the most action-shaped thing in the library — its subject is a
+    computation that is still running. The set widened; the invariant did not move, and the line that
+    carries it is the second assertion, which has never changed: **no pattern is ever in here.**"""
     lib = load()
     everything = unreadable(lib, describing_only=False)
-    assert set(everything) <= set(lib.operations) | set(lib.bridge_names)
+    assert set(everything) <= set(lib.operations) | set(lib.bridge_names) | set(lib.monitors)
     assert not set(everything) & set(lib.patterns)
 
 
