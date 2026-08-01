@@ -88,18 +88,37 @@ def recognize(lib: Library, node, name: str) -> dict | None:
     """Is `node` an instance of this pattern? Returns the bindings, or `None` for an honest refusal."""
     _subject, required = pattern_of(lib, name)
     g = lib.graph
-    # ⚠ THE ONE PLACE the partial rule is enforced. `strider.intake` marks a node partial when it contains
-    # a construct we could not model. Recognizing one would hand a consumer a description that is missing
-    # something it has no way to ask about — a `for` loop understood by two-thirds of its body, presented
-    # as a complete iteration. Same shape as abstaining on an incomplete effect set: an incomplete
-    # description must not be matched, whichever end the incompleteness came from.
-    if g.attr(node, "partial"):
+    # ⚠ THE ONE PLACE the gap rule is enforced. `strider.intake` records a construct it could not model as
+    # a gap on whatever contains it. Recognizing past one would hand a consumer a description that is
+    # missing something it has no way to ask about — a `for` loop understood by two-thirds of its body,
+    # presented as a complete iteration. Same shape as abstaining on an incomplete effect set: an
+    # incomplete description must not be matched, whichever end the incompleteness came from.
+    #
+    # ⭐ **The abstention is as wide as the ignorance, and no wider** — the third incarnation of one fix.
+    # ugm narrowed `establishes`' `unknown` from a bool to a set of roles at our request; `intake.part`
+    # now names WHICH part went dark; and here that becomes: refuse when the gap is in something this
+    # description NAMES, not when it is anywhere below. A gap in a part the description never mentions
+    # cannot make the description wrong, and refusing on it was abstaining on an unrelated fact.
+    #
+    # ⚠ `own_gap` is the honest floor. Where intake could not place a gap — an operator it cannot name, an
+    # AST field nobody visited — nothing can say the description is unaffected, so it abstains as before.
+    if g.attr(node, "own_gap"):
         return None
     bindings: dict = {}
     for kind, label, _subj, obj in required:
         if kind == "link":
             targets = g.targets(node, label)
-            if not targets:
+            if not targets or targets[0] is None:
+                # ⚠ `targets[0] is None` is not defensive noise. A bridge `GET`s a label and `INVOKE`s the
+                # pattern with what it found; when the label is absent the register holds nothing and the
+                # pattern's `LINK` still runs, so the graph gains an edge whose TARGET IS None and
+                # `targets` comes back non-empty. Caught by a binding that read `{'seq': None}`.
+                # Reported upstream — `docs/feedback_microfunctions.md` §10.
+                return None
+            # ⚠ A BOUND part must be whole, and `partial` is exactly the right question to ask of it: it
+            # is the propagated bit, so it covers a gap anywhere in that part's subtree. Handing back a
+            # binding to a half-read block is the same lie as recognizing a half-read loop.
+            if g.attr(targets[0], "partial") or g.attr(targets[0], "own_gap"):
                 return None
             if obj is not None:
                 bindings[obj] = targets[0]

@@ -50,7 +50,8 @@ RENDERABLE = ("module", "function_def", "class_def", "block", "for_stmt", "if_st
               "return_stmt", "assign", "aug_assign", "ann_assign", "assert_stmt",
               "import_stmt", "import_from", "alias", "compare", "binop", "bool_op", "unary_op",
               "if_expr", "subscript", "slice", "starred", "tuple", "list", "set", "dict", "pair",
-              "keyword_arg", "fstring", "interpolation", "name", "constant", "attribute", "pass_stmt")
+              "keyword_arg", "fstring", "interpolation", "yield_expr",
+              "name", "constant", "attribute", "pass_stmt")
 
 
 class CannotEmit(Exception):
@@ -94,24 +95,30 @@ class Emit:
         return ast.Module(body=[self.as_stmt(d) for d in self.g.targets(n, "defines")], type_ignores=[])
 
     def _function_def(self, n):
-        params = []
-        for p in self.g.targets(n, "param"):
-            annotation = self.g.target(p, "annotation")
-            params.append(ast.arg(arg=self.g.attr(p, "name"),
-                                  annotation=self.node(annotation) if annotation else None))
         returns = self.g.target(n, "returns")
         return ast.FunctionDef(
             name=self.g.attr(n, "name"),
-            args=self.signature(n, params),
+            args=self.signature(n, [self.arg(p) for p in self.g.targets(n, "param")]),
             body=self.stmts(self.g.target(n, "does")),
             decorator_list=[self.node(d) for d in self.g.targets(n, "decorator")],
             returns=self.node(returns) if returns else None)
+
+    def arg(self, p):
+        """One parameter, with its annotation. ⚠ ONE helper for EVERY kind, mirroring `intake.param`.
+
+        The write half of the same bug: `signature` built keyword-only, positional-only, `*a` and `**k`
+        arguments as `ast.arg(arg=name)`, dropping any annotation. Read and write are tracked as separate
+        capabilities here precisely so a gap in one is not assumed absent from the other — and this one was
+        in both, which is exactly why fixing only the side you noticed would have left it silent."""
+        annotation = self.g.target(p, "annotation")
+        return ast.arg(arg=self.g.attr(p, "name"),
+                       annotation=self.node(annotation) if annotation else None)
 
     def signature(self, n, params):
         """Rebuild the full signature. `no_default` is a real node rather than `None` because a keyword-only
         argument without a default is positionally significant in `kw_defaults`."""
         def named(label):
-            return [ast.arg(arg=self.g.attr(p, "name")) for p in self.g.targets(n, label)]
+            return [self.arg(p) for p in self.g.targets(n, label)]
 
         def defaults(label):
             return [None if self.g.kind(d) == "no_default" else self.node(d)
@@ -121,8 +128,8 @@ class Emit:
         return ast.arguments(
             posonlyargs=named("posonly"), args=params, kwonlyargs=named("kwonly"),
             kw_defaults=defaults("kw_default"), defaults=defaults("default"),
-            vararg=ast.arg(arg=self.g.attr(vararg, "name")) if vararg else None,
-            kwarg=ast.arg(arg=self.g.attr(kwarg, "name")) if kwarg else None)
+            vararg=self.arg(vararg) if vararg else None,
+            kwarg=self.arg(kwarg) if kwarg else None)
 
     def _block(self, n):
         raise CannotEmit("a block is a statement list, not an expression — emit its container")
@@ -262,6 +269,10 @@ class Emit:
         return ast.FormattedValue(value=self.node(self.g.target(n, "value")),
                                   conversion=self.g.attr(n, "conversion"),
                                   format_spec=self.node(spec) if spec else None)
+
+    def _yield_expr(self, n):
+        value = self.g.target(n, "value")
+        return ast.Yield(value=self.node(value) if value else None)
 
     def _name(self, n):
         return ast.Name(id=self.g.attr(n, "id"), ctx=ast.Load())

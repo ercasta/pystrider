@@ -275,6 +275,80 @@ position on it before someone asks for it as a feature.
 
 ---
 
+## 9. ⭐ NEW — a declared parameter TYPE is not enforced at the call site, only at proposal time
+
+`function.invoke` checks that every parameter is *bound*, and nothing else. It never consults
+`function.param_types`, so this succeeds:
+
+```python
+# fn install_direct_finish(b: reversible_build) -> finishing_build:
+function.invoke(g, "install_direct_finish", {"b": irreversible_build_node})   # runs, no complaint
+```
+
+The type is enforced by `driver.proposals`, which is the right place for *planning* — but the signature
+reads like a precondition and is written like one, and a consumer will reasonably assume it holds wherever
+the function is called.
+
+**How we hit it.** `strider/rules/app.mf` carries a safety property entirely in a parameter type: an
+irreversible checkout cannot be bound to the operation that finishes without a confirmation gate, so no
+plan reaches the unsafe app. We wrote a pin asserting that invoking it directly would raise. It did not.
+We had documented the guarantee as "the unsafe app is unbuildable" — it was only ever "no plan builds it".
+
+**What we did:** added `CHECK F(b) "reversible_build"` as the first instruction of each such operation.
+That works, and it means the declared type and the enforced type are now two separate things an author has
+to keep in step by hand — which is the shape of defect the rest of the ISA design is careful to avoid
+(cf. `lift.py` deriving the bridge table from names rather than tabulating it).
+
+**Suggestion, in order of how much we would want it:** (a) have `invoke` check declared parameter types by
+default, with an opt-out for the hot path; or (b) if that is too expensive, make it loud that a signature
+type is advisory outside the planner — because "silent acceptance of a plausible-looking wrong call" is
+exactly the failure mode `asm.py`'s docstring says it exists to prevent, arriving one layer up.
+
+⚠ Not urgent for us — the `CHECK` workaround is one line and we would keep it anyway for documentation
+value. Filed because the gap is invisible until something depends on it.
+
+## 10. ⭐ NEW — an absent register still `LINK`s, and the graph gains an edge whose TARGET IS `None`
+
+Found 2026-08-01 while narrowing our own abstention (`experiments/strider_unknown.py`). A delegating
+bridge does `GET R(seq) F(f) "over"` and then `INVOKE`s the pattern with `seq=R(seq)`. When the node has
+no `over` edge — which is now a normal case for us, since an unreadable construct leaves a part missing —
+the register holds nothing, and the pattern's `LINK F(it) "repeats_over" F(seq)` **still runs**.
+
+The result is not an error and not a no-op: the graph gets an edge, and `g.targets(it, "repeats_over")`
+comes back `["None"]` — non-empty, so every "is this part present?" test in a consumer answers *yes*, and
+whatever reads the target gets `None` handed to it as though it were a node.
+
+```python
+# a for_stmt whose `over` part could not be read
+recognize(lib, loop, "as_iteration")
+# {'body': 'block#901', 'var': 'name#900', 'seq': None}
+#                                          ^^^^^^^^^^ a binding to nothing, reported as a match
+```
+
+**Why it matters more than it looks.** It converts a missing part into a *present but null* one, so the
+failure surfaces arbitrarily far away from the `LINK` that caused it, in whatever consumer eventually
+dereferences the binding. We guard on our side now (`targets[0] is None` is an abstention in
+`strider/patterns.py`), but the guard is at the reader, and every future reader has to remember it.
+
+**Suggestion:** `LINK` with an unset register should refuse at run time, the way `asm` refuses a malformed
+instruction at load time — same discipline, one layer in. If linking-to-nothing is meant to be legal, an
+explicit sentinel would at least make it *sayable*; silently minting a null edge is the case where the
+graph stops being able to tell "no part" from "a part that is nothing", which is the distinction
+`graph.UNKNOWN` was just built to protect one slot over.
+
+## 11. A NOTE OF THANKS, and one request about timing
+
+`graph.UNKNOWN`'s framing — NOT LOOKED as distinct from NOT THERE — transferred to us directly and
+usefully, one level up: our `partial` bit was the same conflation, and naming it let us narrow an
+abstention that was refusing on facts no description mentioned. Measured, the lever is small (4.9% of
+blocked recognitions), but the invariant is better and the migration was hours, not days.
+
+⚠ The request: `types.attrs_of` changed shape mid-session (a bare value became `AttrReq`) while we were
+working against it, so one of our pins went red for a reason unrelated to anything we were doing. Not a
+complaint — the richer form is a real gain and re-pointing the pin took one edit — but a line in
+`CHANGELOG.md` for return-shape changes would let a consumer tell "upstream grew a capability" from "we
+broke something" without bisecting.
+
 ## What worked well, since a feedback file that only lists problems misleads
 
 - **`asm` refusing at the boundary with a file and line number.** We load a directory of `.mf` and a typo

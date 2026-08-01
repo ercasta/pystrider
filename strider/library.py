@@ -33,7 +33,7 @@ BRIDGE_FILE = "python.mf"
 #: the result. A third category because they are neither of the other two: an operation is not a
 #: description of what a construct *is* (so `recognizes` must never offer one as an answer), and it is not
 #: a translation between vocabularies. It is an action, and the driver proposes it.
-OPERATION_FILES = ("repair.mf",)
+OPERATION_FILES = ("repair.mf", "app.mf")
 
 
 class Library:

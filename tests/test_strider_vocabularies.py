@@ -37,10 +37,18 @@ def test_the_PLAN_is_the_derivation_so_the_reasoning_is_auditable(full):
 
 def test_a_rules_CONDITION_is_now_its_PARAMETER_TYPE(full):
     """The old CNL body `when ?cart order_qualifies yes` is `grant_discount(c: qualified_cart)`. Pinned
-    against the types, because this is the substitution the whole slice rests on."""
+    against the types, because this is the substitution the whole slice rests on.
+
+    ⚠ **RE-POINTED 2026-08-01, and the supersession is the record.** This asserted the bare value `is
+    True`. `../ugm` grew comparison operators on attribute requirements, so `attrs_of` now answers an
+    `AttrReq(op, value, hi)` — an equality demand is one case of a family that also has `<`, `between`,
+    and (via `types.Rel`) demands relating two places inside the subgraph. Nothing about our claim
+    changed; what a type can SAY got wider, so the pin reads the same demand through the richer form. The
+    old assertion is kept here in prose because it is the reason this key exists."""
     lib, _cart = full
-    assert types.attrs_of(lib.graph, "qualified_cart")["order_qualifies"] is True
-    assert types.attrs_of(lib.graph, "wants_confirmation")["requires_confirmation_step"] is True
+    assert types.attrs_of(lib.graph, "qualified_cart")["order_qualifies"] == types.AttrReq("==", True)
+    assert (types.attrs_of(lib.graph, "wants_confirmation")["requires_confirmation_step"]
+            == types.AttrReq("==", True))
 
 
 def test_an_unqualified_cart_does_not_satisfy_the_downstream_type():

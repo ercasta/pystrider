@@ -139,3 +139,69 @@ schedule. Re-pointed at `Lambda`, which sits well clear of the widening backlog.
 **Remaining blockers, by functions:** `ListComp` 183, `GeneratorExp` 163, `SetComp` 86, `DictComp` 34,
 `Raise` 28, `With` 25. Comprehensions are now unambiguously the next lever and also the hardest — they
 bind variables and introduce a scope, so they are not a container that can simply be walked.
+
+---
+
+# Slice 7 — the app-generation ending (2026-07-31)
+
+**⚠ NO REACH PREDICTION WAS MADE, and that is deliberate rather than an omission.** Slices 5 and 6 chose
+their constructs to move reach and predicted the move in advance. This slice chose its construct to unblock
+a *capability* — the README's ending, a real Textual app derived by a goal and verified by driving it — so
+predicting reach would have been predicting something the slice was not aiming at. What it did predict, and
+what is recorded below, is that **the reach gain would be near zero and the slice would still be worth
+doing**.
+
+## The construct: `Yield`
+
+A Textual `compose` method is a generator. One unmodelled expression made **every** Textual app partial, so
+the entire app-generation ending was blocked by `yield` and nothing else.
+
+| | measured |
+|---|---|
+| reach WITH `Yield` | **64.1%** (710/1107) |
+| reach WITHOUT `Yield`, same corpus, same day | **64.1%** (710/1107) |
+| difference | **0.0pp — not one function** |
+
+Our corpus contains no generator functions at all. So `Yield` is worth **literally nothing** for reach and
+was worth the whole slice.
+
+**⭐ THE LESSON, and it generalises past this construct: REACH IS THE WRONG METRIC FOR CHOOSING A CONSTRUCT
+WHEN THE GOAL IS A CAPABILITY.** Slice 5's P5 gestured at this — decorators were "worth little for reach
+and are in scope anyway", +3.2pp, included because `@on(Button.Pressed)` was unavoidable. `Yield` is the
+same argument at its limit: +0.0pp, and without it there is no app. A slice plan that ranked candidates by
+predicted reach would have put this construct last forever, and the README's ending would never have
+shipped. **Reach measures the membrane against a corpus; it does not measure what a construct unlocks.**
+
+## ⚠ A silent-wrong bug that two reach measurements missed
+
+`unstable` came back **6**, not 0 — the invariant slice 5 called "the prediction I would be most troubled
+to lose".
+
+`intake.signature` minted keyword-only, positional-only, `*a` and `**k` parameters as name-only nodes: it
+never read `annotation`, and never called `unconsumed`. So
+
+    def intake(lib, source, *, origin: str = '<unknown>') -> Intaken:
+
+was intaken with an EMPTY `unmodelled` list, reported **complete**, and emitted as `origin='<unknown>'`.
+Six functions in our own repo, silently wrong, with nothing to indicate it. `emit` had the identical gap on
+the write side.
+
+**This is the `_CONSUMES["ClassDef"]["keywords"]` failure repeating**, and repeating in the same shape:
+the `unconsumed` guard exists to catch exactly this class of omission and was bypassed by *never being
+called at that site*. Both sides now go through one helper — `Intake.param` and `Emit.arg` — because a
+guard that has to be remembered at each site is a guard that will be forgotten at one of them. Fixed;
+`unstable` is back to **0**, and the six functions account for the 63.5% → 64.1% move.
+
+**⭐ WHY TWO PREVIOUS SLICES MEASURED `unstable = 0` AND MEANT IT: STABILITY IS NOT FIDELITY.** A round trip
+that compares emit against emit reports a clean fixpoint on code that has *already* lost the annotation —
+the second pass has nothing left to drop. Only comparing against the ORIGINAL SOURCE catches a silent
+deletion. Pinned in `test_the_annotation_bug_was_INVISIBLE_to_a_stability_check`, which asserts that the
+weaker check passes on the very input the stronger one fails. **Any future reach sweep must compare against
+the source**, or the headline invariant is measuring the wrong thing.
+
+## Where reach now stands
+
+710/1107 = **64.1%**, unstable **0**. Blockers by refusal events: `ListComp` 188, `GeneratorExp` 177,
+`SetComp` 92, `DictComp` 35, `With` 26, `Try` 24, `Raise` 23, `Continue` 21, `Lambda` 10. ⚠ Those are
+*events*, not functions blocked — the correction slice 6 had to make. Comprehensions remain the next lever
+by functions, and `Continue` is new to the list and cheap.

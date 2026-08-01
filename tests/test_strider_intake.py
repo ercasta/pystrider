@@ -375,3 +375,45 @@ def test_a_pattern_with_no_bridge_is_refused_by_name():
     with pytest.raises(KeyError) as exc:
         lowering_for(lib, "as_comprehension")
     assert "as_comprehension" in str(exc.value)
+
+
+# --- annotations on every kind of parameter (slice 7, found by measuring) --------------------------------
+
+@pytest.mark.parametrize("source", [
+    "def f(*, origin: str='x') -> None:\n    pass",          # keyword-only, the one that surfaced
+    "def f(a: int, /, b: str) -> None:\n    pass",           # positional-only
+    "def f(*args: int, **kw: str) -> None:\n    pass",       # vararg and kwarg
+    "def f(a: int, *b: str, c: bool=True, **d: float) -> None:\n    pass",   # all of them at once
+])
+def test_every_kind_of_parameter_keeps_its_annotation(source):
+    """⚠ SILENTLY WRONG, and found by a round trip against the SOURCE rather than by inspection.
+
+    `intake.signature` minted keyword-only, positional-only, `*a` and `**k` parameters as name-only nodes:
+    it never read `annotation` and never called `unconsumed`. So `def f(*, origin: str='x')` was reported
+    COMPLETE and emitted as `def f(*, origin='x')` — the annotation gone, with nothing to indicate it. Six
+    functions in our own repo, and `emit` had the identical gap on the write side.
+
+    This is the `_CONSUMES["ClassDef"]["keywords"]` failure repeating: the `unconsumed` guard exists for
+    exactly this and was bypassed by not being called. Both sides now go through ONE helper
+    (`Intake.param`, `Emit.arg`), because a guard that must be remembered per site gets forgotten at one."""
+    lib = strider.load()
+    got = strider.intake(lib, source, origin="t")
+    assert got.complete, got.unmodelled
+    assert strider.emit(lib, got.module) == source
+
+
+def test_the_annotation_bug_was_INVISIBLE_to_a_stability_check():
+    """⭐ The control, and the reason the bug survived two reach measurements: STABILITY IS NOT FIDELITY.
+
+    Emitting twice agrees with itself — the second pass has nothing left to drop. A round trip that
+    compares emit-to-emit reports a clean fixpoint on code that has already lost the annotation. Only
+    comparing against the ORIGINAL SOURCE catches it, which is what this pins: the weaker check passes on
+    the very input the stronger one fails."""
+    lib = strider.load()
+    source = "def f(*, origin: str='x') -> None:\n    pass"
+    once = strider.emit(lib, strider.intake(lib, source, origin="t").module)
+
+    lib2 = strider.load()
+    twice = strider.emit(lib2, strider.intake(lib2, once, origin="t").module)
+    assert once == twice, "the fixpoint check is stable either way — that is the point"
+    assert once == source, "and only the comparison against the source can tell the two apart"
