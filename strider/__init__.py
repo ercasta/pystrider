@@ -3,6 +3,11 @@
 A new folder beside `pystrider/`, mirroring what ugm itself did when `microfunctions/` superseded `ugm/`:
 nothing is deleted, and both run side by side until the new one has earned the old one's ground.
 
+⚠ Upstream finished that move on 2026-08-02: the retired engine was deleted and `microfunctions/` was
+**renamed back to `ugm/`**, so "the microfunctions engine" is now simply what `import ugm` gives you. The
+word still names the unit — a microfunction is the imperative program described below — but it is no
+longer a package path. `mf.py` is the only file here that ever knew the difference.
+
 **Why a rewrite rather than a port.** The old engine's execution model was pattern matching, and
 pystrider's central bet rode on it — one authored description read as a rule BODY recognizes a construct,
 read as a rule HEAD constructs one. The new engine deletes pattern matching: a microfunction is an

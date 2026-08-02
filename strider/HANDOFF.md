@@ -75,6 +75,14 @@ upstream. So `import ugm` fails, and the 44 ugm-era test modules — roughly 400
 document used to cite — **cannot be collected at all**. Nothing in `pystrider/` runs either; its
 `semantics.py` imports `ugm` at module level.
 
+**⚠ UPDATED 2026-08-02 — the name came back, the package did not.** ugm's `2a7589b "wip restructuring"`
+**renamed `microfunctions/` to `ugm/`**, the old engine of that name having been retired for good. So
+`import ugm` now succeeds and imports *the new engine*. The 44 ugm-era modules are still dead, and are now
+dead in the more dangerous way: they fail on missing **attributes** (`AttrGraph`, `load_machine_rules`,
+`ask_goal`) rather than on a missing module, so the traceback no longer says "the engine you were written
+for is gone." Nothing above changes — the decision to accept the loss stands, and the count is still 44 —
+but do not read a collection error there as a new breakage.
+
 This was discovered in slice 7 and is unrelated to any change here. It matters more than it looks:
 `strider/__init__.py` names the old suite as *"the only oracle for whether this does what that did, so it
 stays"* — **that oracle is gone**, and the retire-`pystrider` bar in §5 has to be re-thought rather than
@@ -94,8 +102,11 @@ the packages together in one honest commit.** Verify the count before acting:
 Verify the state in one command:
 
 ```
-python -m pytest tests/test_strider_*.py tests/test_microfunction_pattern.py -q   # 157 passed, ~100s
+python -m pytest tests/test_strider_*.py tests/test_microfunction_pattern.py -q   # 183 passed, ~9min
 ```
+
+⚠ Slower than the ~100s this used to cite because slice 9's unguided generation is now run once as a
+module fixture rather than inline; the count is 183 after slices 8 and 9 landed.
 
 ---
 
@@ -125,7 +136,7 @@ across 7 modules and 3 `.mf` files, beside `pystrider/` rather than replacing it
 
 | module | role |
 |---|---|
-| `mf.py` | the single import surface onto `microfunctions` |
+| `mf.py` | the single import surface onto ugm's engine — it absorbed the 2026-08-02 rename in 4 lines |
 | `library.py` | loads `rules/*.mf`; **three categories drawn by FILE** — patterns, bridges, operations |
 | `patterns.py` | `construct` / `recognize` / `recognizes` — the bet, both directions |
 | `intake.py` | Python → graph, with provenance, and gaps named rather than dropped |

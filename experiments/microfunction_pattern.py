@@ -64,8 +64,7 @@ from __future__ import annotations
 # `microfunctions` imports plainly since ugm added it to `packages` — reported as
 # `docs/feedback_microfunctions.md` §1, fixed, and verified upstream against a real wheel. This file
 # previously carried a `sys.path` fix; it is gone.
-from microfunctions import asm, driver, function as fn
-from microfunctions.graph import new_graph
+from strider.mf import asm, driver, function as fn, new_graph
 
 
 # --- THE PATTERN, authored once, as ONE microfunction -------------------------------------------------

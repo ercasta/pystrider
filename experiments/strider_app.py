@@ -276,7 +276,7 @@ def build_goal(g, build):
 
 def derive(cart: Cart = Cart(), **kw) -> dict:
     """Pursue the goal by imagining, then replay the winning plan against the real graph and emit."""
-    from microfunctions import execution as E, thread as T
+    from strider.mf import execution as E, thread as T
 
     lib, build, module = setup(cart)
     g = lib.graph

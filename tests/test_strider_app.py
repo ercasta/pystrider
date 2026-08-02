@@ -13,7 +13,7 @@ import pytest
 import strider
 from experiments import strider_app as A
 from strider.lift import reachable
-from strider.mf import driver, function, types
+from strider.mf import driver, function, goal as GG, thread as T, types, workbench as W
 
 textual = pytest.importorskip("textual", reason="the drive needs the real toolkit")
 
@@ -90,14 +90,12 @@ def test_the_goal_never_mentions_a_feature():
     lib, build, _module = A.setup()
     g = lib.graph
     goal = A.build_goal(g, build)
-    described = " ".join(G_describe(g, c) for c in __import__(
-        "microfunctions.goal", fromlist=["constraints"]).constraints(g, goal))
+    described = " ".join(G_describe(g, c) for c in GG.constraints(g, goal))
     for feature in ("discount", "gate", "confirm", "highlight"):
         assert feature not in described.lower(), f"the goal names {feature!r}: {described}"
 
 
 def G_describe(g, c):
-    from microfunctions import goal as GG
     return GG.describe_constraint(g, c)
 
 
@@ -261,7 +259,6 @@ def test_the_unsafe_app_is_unreachable_while_the_type_holds():
     assert not types.is_a(g, build, "reversible_build")
 
     # 1. NO PLAN reaches it: the operation is not among the proposals for this build.
-    from microfunctions import workbench as W
     frame = W.root_frame(g, W.open_workbench(g, build, label="proposal probe"))
     offered = {name for name, _bindings in driver.proposals(g, frame)}
     assert "install_gated_finish" in offered, "the safe route must still be available"
@@ -281,7 +278,6 @@ def test_a_missing_operation_refuses_rather_than_emitting_a_half_app():
     lib, build, module = A.setup(A.Cart("premium", 150, 100, True))
     g = lib.graph
     goal = A.build_goal(g, build)
-    from microfunctions import thread as T
 
     report = driver.pursue(g, goal, T.open_thread(g, "crippled"), build,
                            allow=lambda name: name != "install_gated_finish")

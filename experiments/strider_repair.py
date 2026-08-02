@@ -124,7 +124,7 @@ def repair(source: str = BUGGY, cases=CASES, **kw) -> dict:
 
 def _thread(g):
     from strider.mf import asm  # noqa: F401  (kept local: thread lives beside the driver, not the library)
-    from microfunctions import thread as T
+    from strider.mf import thread as T
     return T.open_thread(g, "repair")
 
 
@@ -134,7 +134,7 @@ def adopt(out: dict) -> str:
     `execution.execute` was written for workbench plans long before this existed and replays this one
     unchanged — the plan is not a value our planner returned, it is the frame path, which already *is*
     replayable."""
-    from microfunctions import execution as E
+    from strider.mf import execution as E
     lib, report = out["lib"], out["report"]
     # ⚠ `execute` takes the winning LEAF FRAME, not the frame path. Passing the path silently replayed
     # nothing and returned a clean-looking report — caught only by the gate below noticing the emitted

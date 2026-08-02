@@ -114,7 +114,23 @@ def test_PLANTED_BUG_a_verb_of_that_always_says_imagine_and_the_app_runs_anyway(
 WATCHABLE = {"guided": False}
 
 
-def test_a_watcher_authored_as_TEXT_stops_our_own_generation_MID_FLIGHT():
+@pytest.fixture(scope="module")
+def unwatched():
+    """The same generation with a budget nothing can hit — so `imagined` is WHAT THE END ACTUALLY WAS.
+
+    ⚠ Measured here rather than written as a literal, and that is the repair of a real brittleness. Both
+    tests below used to name `24`: the control asserted `== 24` and the mid-flight pin asserted `< 24`.
+    ugm's 2026-08-02 restructuring made the unguided search settle in **20** states instead — a search
+    that got *better*, changing no claim either test makes — and the control went red while the mid-flight
+    pin silently weakened, its `< 24` now true of runs that had gone all the way to 20 and stopped
+    nothing. A literal cannot tell those apart. Deriving the end means 'stopped early' stays a comparison
+    against the end, which is what the sentence was always claiming.
+
+    ⚠ Module-scoped because the pair must be the SAME search, and it is the slow one."""
+    return generate(open_generation(budget=400, **WATCHABLE), allow_the_drive=True)
+
+
+def test_a_watcher_authored_as_TEXT_stops_our_own_generation_MID_FLIGHT(unwatched):
     """⭐⭐ `strider/rules/watch.mf` reads the live search's `steps` against a budget and writes `stop`.
 
     Everything it needs was already data — the state of a running computation, the agenda that lets it
@@ -129,19 +145,19 @@ def test_a_watcher_authored_as_TEXT_stops_our_own_generation_MID_FLIGHT():
     assert out["source"] is None and out["ran"] is False
     assert out["abandoned"], "the render task saw there was nothing to render and said so"
     # ⚠ It stopped it EARLY, not at the end — a verdict delivered after the search finished would be a
-    # post-mortem wearing the same words. The control below says what "the end" would have been.
-    assert out["imagined"] < 24
+    # post-mortem wearing the same words. The `unwatched` control says what "the end" actually was.
+    assert out["imagined"] < unwatched["imagined"]
 
 
-def test_and_the_SAME_generation_with_a_generous_budget_SUCCEEDS():
+def test_and_the_SAME_generation_with_a_generous_budget_SUCCEEDS(unwatched):
     """⚠ THE VACUITY CONTROL, and without it the pin above measures only that a search can fail. The
-    budget is the single difference; the app is built, driven and works."""
-    out = generate(open_generation(budget=400, **WATCHABLE), allow_the_drive=True)
+    budget is the single difference; the app is built, driven and works.
 
-    assert out["stop_why"] is None
-    assert out["report"]["done"] is True
-    assert out["imagined"] == 24
-    assert out["ran"] is True and any(e.startswith("completed") for e in out["events"])
+    ⚠ The count itself is deliberately not pinned to a literal — see `unwatched`. What must hold is that
+    this run reached the end under a budget it could not hit, which is what makes it the control."""
+    assert unwatched["stop_why"] is None
+    assert unwatched["report"]["done"] is True
+    assert unwatched["ran"] is True and any(e.startswith("completed") for e in unwatched["events"])
 
 
 def test_PLANTED_BUG_the_judgement_is_reached_and_IGNORED_so_the_app_is_built_anyway(monkeypatch):

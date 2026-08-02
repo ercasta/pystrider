@@ -106,7 +106,7 @@ def register_tools(lib) -> None:
 
 def open_generation(cart: Cart = Cart(), *, budget: int | None = None, **kw) -> dict:
     """Everything scheduled, nothing done. Four tasks, one agenda, in the order they were asked for."""
-    from microfunctions import thread as T
+    from strider.mf import thread as T
 
     lib, build, module = setup(cart)
     g = lib.graph

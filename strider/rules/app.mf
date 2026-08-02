@@ -96,11 +96,17 @@ fn install_plain_display(b: unqualified_build) -> displaying_build:
 # directly, because `function.invoke` does not check parameter types at all. Caught by a pin that asserted
 # the invocation would raise and watched it succeed.
 #
-# So the guarantee is stated in two parts, and the `CHECK` below is the second one:
+# So the guarantee is stated in two parts, and the `NATIVE "check"` below is the second one:
 #
 #   * NO PLAN builds the unsafe app — carried by the parameter type, at proposal time.
-#   * NO CALL builds it either — carried by `CHECK`, at invocation time, which is the only thing that
+#   * NO CALL builds it either — carried by the check, at invocation time, which is the only thing that
 #     makes the declared type binding on someone who bypasses the planner.
+#
+# ⚠ This was the `CHECK` opcode until ugm's 2026-08-02 restructuring retired `PLAN`/`STEP`/`CHECK`: the
+# instruction set imported `driver` and `types` to serve them, so the kernel knew what a plan and a type
+# were, and a port would have had to port both to implement three instructions. They are now primitives
+# reached BY NAME through `native.py`, which the kernel does not populate. Same semantics — it still
+# answers by raising, not by returning, which is why there is no destination register here.
 #
 # And both together are still only as good as what the types SAY. Which is why driving the emitted app
 # through Pilot is not a formality: it is the independent observation that the derivation was right about
@@ -108,7 +114,7 @@ fn install_plain_display(b: unqualified_build) -> displaying_build:
 # have caught what the derivation stopped preventing.
 
 fn install_direct_finish(b: reversible_build) -> finishing_build:
-    CHECK F(b) "reversible_build"
+    NATIVE "check" F(b) "reversible_build"
     GET R(f) F(b) "direct_finish"
     GET R(blk) F(b) "class_block"
     LINK R(blk) "stmt" R(f)
@@ -118,7 +124,7 @@ fn install_direct_finish(b: reversible_build) -> finishing_build:
 # The gate brings its own screen, and the screen goes on the MODULE rather than in the class — the one
 # operation here that writes to two places, because a confirmation gate is genuinely two pieces of code.
 fn install_gated_finish(b: irreversible_build) -> finishing_build:
-    CHECK F(b) "irreversible_build"
+    NATIVE "check" F(b) "irreversible_build"
     GET R(f) F(b) "gated_finish"
     GET R(blk) F(b) "class_block"
     LINK R(blk) "stmt" R(f)
