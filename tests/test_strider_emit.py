@@ -1,4 +1,4 @@
-"""Pins for `strider/emit.py` and the lowering bridges — graph data becoming real Python, and the bet
+"""Pins for `pystrider/emit.py` and the lowering bridges — graph data becoming real Python, and the bet
 closed end to end THROUGH AN ARTIFACT.
 
 The pin that matters most is `test_a_constructed_description_survives_the_whole_loop`: a description
@@ -10,9 +10,9 @@ import ast
 
 import pytest
 
-import strider
-from strider.emit import RENDERABLE, CannotEmit, emit
-from strider.lift import bridges, lift, lower, lowering_for, reachable
+import pystrider
+from pystrider.emit import RENDERABLE, CannotEmit, emit
+from pystrider.lift import bridges, lift, lower, lowering_for, reachable
 
 SOURCE = """def totals(rows):
     acc = 0
@@ -25,8 +25,8 @@ SOURCE = """def totals(rows):
 
 
 def read(source, origin="test"):
-    lib = strider.load()
-    return lib, strider.intake(lib, source, origin=origin)
+    lib = pystrider.load()
+    return lib, pystrider.intake(lib, source, origin=origin)
 
 
 def find(lib, root, kind):
@@ -76,22 +76,22 @@ def build_description(lib):
     g.link(stmt, "target", g.mint("name", id="acc"))
     g.link(stmt, "value", g.mint("constant", value=1))
     g.link(block, "stmt", stmt)
-    return strider.construct(lib, "as_iteration", seq=seq, var=var, body=block)
+    return pystrider.construct(lib, "as_iteration", seq=seq, var=var, body=block)
 
 
 def test_a_constructed_description_survives_the_whole_loop():
     """⭐ construct -> lower -> emit -> intake (FRESH library) -> lift -> recognize.
 
     The description at the end came from PARSED TEXT, not from the graph we wrote it on."""
-    lib = strider.load()
+    lib = pystrider.load()
     text = emit(lib, lower(lib, build_description(lib), "as_iteration"))
     assert text.strip() == "for r in rows:\n    acc = 1"
 
-    fresh = strider.load()                       # has never seen anything we built
-    got = strider.intake(fresh, text, origin="emitted")
+    fresh = pystrider.load()                       # has never seen anything we built
+    got = pystrider.intake(fresh, text, origin="emitted")
     lift(fresh, got.module)
     loop = find(fresh, got.module, "for_stmt")[0]
-    bound = strider.recognizes(fresh, loop)["as_iteration"]
+    bound = pystrider.recognizes(fresh, loop)["as_iteration"]
     assert fresh.graph.attr(bound["seq"], "id") == "rows"
     assert fresh.graph.attr(bound["var"], "id") == "r"
 
@@ -99,10 +99,10 @@ def test_a_constructed_description_survives_the_whole_loop():
 def test_what_is_recognized_at_the_end_carries_from_code():
     """The point of routing through text. `from_code` is what makes this a claim about the ARTIFACT
     rather than about what we meant to emit — a check that reads its own intention proves nothing."""
-    lib = strider.load()
+    lib = pystrider.load()
     text = emit(lib, lower(lib, build_description(lib), "as_iteration"))
-    fresh = strider.load()
-    got = strider.intake(fresh, text, origin="emitted")
+    fresh = pystrider.load()
+    got = pystrider.intake(fresh, text, origin="emitted")
     lift(fresh, got.module)
     loop = find(fresh, got.module, "for_stmt")[0]
     assert fresh.graph.attr(loop, "from_code") is True
@@ -111,13 +111,13 @@ def test_what_is_recognized_at_the_end_carries_from_code():
 def test_control_the_read_back_graph_shares_NOTHING_with_the_written_one():
     """⚠ Vacuity control. If the loop above could reach the original nodes, recognizing them would prove
     nothing at all. Two graphs, no shared node ids in the recognized bindings."""
-    lib = strider.load()
+    lib = pystrider.load()
     description = build_description(lib)
     written = set(reachable(lib, description))
     text = emit(lib, lower(lib, description, "as_iteration"))
 
-    fresh = strider.load()
-    got = strider.intake(fresh, text, origin="emitted")
+    fresh = pystrider.load()
+    got = pystrider.intake(fresh, text, origin="emitted")
     lift(fresh, got.module)
     read_back = set(reachable(fresh, got.module))
     assert not (written & read_back)
@@ -141,7 +141,7 @@ def test_control_the_same_loop_without_the_gap_DOES_emit():
 
 
 def test_an_unrenderable_kind_is_refused_BY_NAME_with_what_we_can_render():
-    lib = strider.load()
+    lib = pystrider.load()
     with pytest.raises(CannotEmit) as exc:
         emit(lib, lib.graph.mint("comprehension"))
     assert "comprehension" in str(exc.value)
@@ -150,7 +150,7 @@ def test_an_unrenderable_kind_is_refused_BY_NAME_with_what_we_can_render():
 
 def test_renderable_is_pinned_to_the_handlers_that_exist():
     """⚠ RENDERABLE is documentation, and documentation drifts."""
-    from strider.emit import Emit
+    from pystrider.emit import Emit
     handled = {n[1:] for n in dir(Emit) if n.startswith("_") and not n.startswith("__")
                and n[1:] in RENDERABLE}
     assert handled == set(RENDERABLE)
@@ -159,7 +159,7 @@ def test_renderable_is_pinned_to_the_handlers_that_exist():
 def test_reading_and_writing_are_tracked_as_SEPARATE_capabilities():
     """Intake models constructs emit cannot render (`Expr`, `arg`). Pretending one implies the other is
     how a gap goes unnoticed until it produces wrong code."""
-    from strider.intake import MODELLED
+    from pystrider.intake import MODELLED
     assert set(RENDERABLE) != {m.lower() for m in MODELLED}
 
 
@@ -168,7 +168,7 @@ def test_reading_and_writing_are_tracked_as_SEPARATE_capabilities():
 def test_lifts_and_lowerings_are_told_apart_by_ARITY_not_by_name():
     """A lift reads what is there and casts the same node (one parameter). A lowering constructs a node
     that did not exist (subject plus description). Structural, so a new bridge lands in the right pass."""
-    lib = strider.load()
+    lib = pystrider.load()
     assert bridges(lib) == {"for_stmt": "as_iteration_from_for_stmt",
                             "call": "as_application_from_call",
                             "if_stmt": "as_conditional_from_if_stmt"}
@@ -184,14 +184,14 @@ def test_lift_never_applies_a_lowering():
 
 
 def test_lower_refuses_an_unknown_pattern_by_name():
-    lib = strider.load()
+    lib = pystrider.load()
     with pytest.raises(KeyError) as exc:
         lower(lib, lib.graph.mint("whatever"), "as_comprehension")
     assert "as_comprehension" in str(exc.value)
 
 
 def test_a_conditional_round_trips_through_the_lowering():
-    lib = strider.load()
+    lib = pystrider.load()
     g = lib.graph
     then, otherwise = g.mint("block"), g.mint("block")
     for block, value in ((then, 1), (otherwise, 2)):
@@ -199,7 +199,7 @@ def test_a_conditional_round_trips_through_the_lowering():
         g.link(stmt, "target", g.mint("name", id="a"))
         g.link(stmt, "value", g.mint("constant", value=value))
         g.link(block, "stmt", stmt)
-    desc = strider.construct(lib, "as_conditional", test=g.mint("name", id="x"),
+    desc = pystrider.construct(lib, "as_conditional", test=g.mint("name", id="x"),
                              then_body=then, else_body=otherwise)
     text = emit(lib, lower(lib, desc, "as_conditional"))
     assert text.strip() == "if x:\n    a = 1\nelse:\n    a = 2"

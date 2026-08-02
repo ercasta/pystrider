@@ -8,7 +8,7 @@ RETRIEVED from imagination, because the real graph never sees it.
 import pytest
 
 import experiments.strider_vocabularies as V
-from strider.mf import types
+from pystrider.mf import types
 
 
 @pytest.fixture(scope="module")

@@ -1,5 +1,15 @@
 # pystrider
 
+> **⚠ 2026-08-02 — THIS README DESCRIBES THE RETIRED GENERATION AND HAS NOT BEEN RE-AUTHORED.**
+> The `pystrider` package it documents (CNL rules, `grammapy`, the browser playgrounds, the whole
+> `ugm`-classic engine) was **deleted**, and the rewrite that was living in `strider/` took the name.
+> The thesis below still holds; the mechanisms named in it largely do not — the new generation authors
+> ugm **microfunctions** (`pystrider/rules/*.mf`) rather than CNL, and there is no `grammapy` half.
+> The live site is frozen at its last deploy for the same reason.
+>
+> **Current front door: [`pystrider/HANDOFF.md`](pystrider/HANDOFF.md).** Verify with
+> `python -m pytest tests/ -q` (216 passing).
+
 **Bring your own rules — business, UX, your favorite Python library — keep them in separate files,
 bridge them, and brew a _working, verified_ UI.** No wizards, no hardcoded engine, no LLMs: every
 line is derived by reasoning on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine),

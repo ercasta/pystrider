@@ -12,11 +12,11 @@ from __future__ import annotations
 
 import pytest
 
-from strider.emit import emit, CannotEmit
-from strider.intake import intake, UNREADABLE
-from strider.library import load
-from strider.lift import lift, reachable
-from strider.patterns import recognize
+from pystrider.emit import emit, CannotEmit
+from pystrider.intake import intake, UNREADABLE
+from pystrider.library import load
+from pystrider.lift import lift, reachable
+from pystrider.patterns import recognize
 
 
 def prepared(source: str):
@@ -174,7 +174,7 @@ def test_visit_answers_UNREADABLE_rather_than_None_for_something_it_cannot_model
     would silently restore the container-wide rule — turns a key red rather than a number grey."""
     import ast
 
-    from strider.intake import Intake
+    from pystrider.intake import Intake
 
     walker = Intake(load(), "<test>")
     assert walker.visit(ast.parse("[c for c in xs]").body[0].value) is UNREADABLE
@@ -191,7 +191,7 @@ def test_the_recovery_is_concentrated_in_CALLS_and_that_is_a_fact_about_our_DESC
     from experiments.strider_unknown import sweep, totals
 
     import pathlib
-    here = pathlib.Path(__file__).resolve().parent.parent / "strider"
+    here = pathlib.Path(__file__).resolve().parent.parent / "pystrider"
     result = sweep(sorted(here.glob("*.py")))
     by_kind = result["by_kind"]
     assert totals(result)["recovered"] > 0

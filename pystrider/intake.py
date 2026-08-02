@@ -1,566 +1,620 @@
-"""Code intake — the §8 CALL tool of the design (docs/code_reasoning_design.md).
+"""INTAKE — real Python becomes graph data, with its gaps named rather than hidden.
 
-Deterministic, external, **materializes structure** from Python source via the stdlib
-`ast`. Per the design this boundary is explicitly *not* CNL and *not* rule-rewriting: it
-is the one place we author graph structure directly (the sanctioned tool contract from
-ugm's engine_developer_guide — "a tool reads opaque input, emits nodes"). Everything
-downstream (semantics, hypotheses, outcomes) then reasons over these facts through the
-public ugm firmware, never by touching the graph again.
+**⚠ This is NOT the same kind of border as ugm's `intake.py`, and conflating them would import the wrong
+discipline.** Theirs is a *goal* border: a language model writes text, and the parser accepts or refuses it
+deterministically so nothing can reach past the surface and write graph structure directly. The thing being
+guarded against is an authored claim that could say anything.
 
-Scope: a single function of straight-line name / attribute code with **reassignment** — assign,
-attribute access, return, and a tail `if VAR is not None:` guard. Intake emits a CFG: one
-program-point (state) per statement, `from_state`/`to_state` on each assignment, `in_state` on
-every expression + guard, and a pre-materialized `(state x variable)` cell lattice. The semantics
-then thread value through the cells, so `y = a; y = b` is correct (not SSA-wrong). Branch-merge
-(a join over two predecessor states) and loop unrolling are the next slice (design "Open
-questions").
+Code is not an authored claim. It is an **artifact** — it already parses, it means what it means, and
+there is no question of it lying about its own syntax. So the refusal this module needs is a different
+one: not "malformed", but **not modelled**. Python has far more syntax than we describe, and the honest
+answer for the rest is to say so by name. That is the reach membrane, not a trust boundary.
 
-The output is a flat list of `(subject, predicate, object)` triples over named nodes — the
-AST+CFG base facts. No DFG overlay: value flow is *computed by the semantics*, not
-precomputed here (the design's central simplification). The one "mint" intake owns beyond AST
-structure is the state/cell lattice — states cannot be minted by rules (existential heads
-aren't Skolem-minted), so the tool that knows the CFG pre-materializes them.
+**⭐ THE LOAD-BEARING DECISION: an unmodelled construct makes its CONTAINER partial, and a partial
+container is refused by the pattern layer.** Refusing a whole file over one comprehension would be
+useless; silently dropping the comprehension would be far worse — a `for` loop whose body we only half
+understood would be recognized as a complete iteration and a consumer would act on a description that is
+missing something. Neither. The gap is recorded, the containing node is marked `partial`, and
+`pystrider.patterns` declines to recognize a partial node. The construct we could not read costs us exactly
+the constructs that contain it, and nothing else.
+
+**⭐ REFINED 2026-08-01 (slice 8), and the refinement is about WHERE, not whether.** `partial` was a
+single BIT: it said *something below is unreadable* with no way to ask *what*, so a description had to
+refuse even when the gap sat in a part it never mentions. Three things carry the narrower answer, and all
+three are additive — `partial` still exists, still propagates, and is still what `pystrider.emit` reads:
+
+* `UNREADABLE`, what `visit` answers for a construct we do not model, **distinct from `None`**, which
+  already meant *legitimately absent*. That conflation is ugm's `graph.UNKNOWN` one level up.
+* `unknown_parts`, the LABEL a gap arrived at; `own_gap` where intake cannot place it and must stay blunt.
+* a **`unreadable` placeholder node** standing where the construct was, because position is meaning — see
+  `placeholder()`, and read it before touching any of this.
+
+⚠ The reach it bought is 4.9% of blocked recognitions and it moves the headline number not at all
+(`experiments/strider_unknown.py`). The invariant is better; the lever is small, and the probe says so.
+
+**Provenance is recorded, never inferred.** Code may be the result of a tool call — a file read, a
+generator's output, another agent's edit — and that has two consequences this module honours:
+
+* `origin` is a parameter. Where source came from is not derivable from the source.
+* `from_code` is stamped on everything intaken. This is not decoration: a consumer that both WRITES
+  structure and READS it back holds facts of both origins on one graph, so "is there an iteration over
+  `?s`" would be satisfied by the loop the writer just minted, and the check would verify its own
+  intention instead of the artifact. `from_code` is what lets a requirement say *the code contains this*.
+
+**⚠ Getting the source is a DISPATCH; parsing it is not.** Reading a file or calling a tool is an effect
+leaving the graph and belongs at `dispatch.service`, which is also where the imagined-target refusal lives.
+`intake` takes text and is pure, deterministic and testable. Keeping the two apart is the same discipline
+as ugm's "substitution and safety are two mechanisms and must stay apart" — and it means an expectation
+about intaken code must be **qualitative** (§5f): *some* functions appeared, never *two*, because a file
+re-read after an edit yields a different count and that is noise, not divergence.
 """
 from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
 
+from .library import Library
 
-def cell_name(state: str, var: str) -> str:
-    """The node id of the `(program-point, variable)` cell — one value slot per state x var. Pre-
-    materialized by intake (which knows the CFG statically); the semantics only *bind* these, never
-    mint them (state-succession without existential heads — see docs/spike_findings.md)."""
-    return f"c_{state}_{var}"
+#: The modelled constructs. Everything else is named in `unmodelled` rather than silently dropped.
+#: `Compare` and `BinOp` are here deliberately: the old intake never modelled them, which is why
+#: `experiments/first_principles_repair.py` had to reify comparisons through a separate probe path.
+MODELLED = ("Module", "FunctionDef", "ClassDef", "arguments", "arg", "For", "If", "Call", "Return",
+            "Assign", "AugAssign", "AnnAssign", "Assert", "Import", "ImportFrom", "alias",
+            "Compare", "BinOp", "BoolOp", "UnaryOp", "IfExp", "Subscript", "Slice", "Starred",
+            "Tuple", "List", "Dict", "Set", "keyword",
+            "JoinedStr", "FormattedValue", "Yield",
+            "Name", "Constant", "Expr", "Attribute", "Pass")
+
+class _Nowhere:
+    """A stand-in for an empty block, which has no statement to take a line number from."""
+    lineno = None
+
+
+_NOWHERE = _Nowhere()
+
+
+class _Unreadable:
+    """⭐ What `visit` returns for a construct we do not model — *distinct from `None`*.
+
+    `None` already meant something here: an optional child that is legitimately absent (`return` with no
+    value, an `if` with no `else`). Using it for "we could not read this" too is the conflation ugm's
+    `graph.UNKNOWN` names one level down — **NOT LOOKED, as distinct from NOT THERE** — and it cost us the
+    same thing it cost them: with the two indistinguishable, the only honest response was to darken the
+    whole container, because nothing could say *which* part went dark.
+
+    ⚠ It does not become a node. ugm's restriction is that only an attribute slot can carry ignorance —
+    an absent edge has nowhere to hang a marker — and the same is true here, so what gets recorded is a
+    label on the CONTAINER (`unknown_parts`), which is an attribute slot."""
+
+    lineno = None
+
+
+UNREADABLE = _Unreadable()
+
+#: What each handler consumes. Everything else on a node is refused by `unconsumed`.
+_CONSUMES = {
+    "Module": {"body"},
+    "FunctionDef": {"name", "args", "body", "returns", "decorator_list"},
+    "ClassDef": {"name", "bases", "body", "decorator_list"},   # `keywords` NOT consumed: not visited
+    "Assert": {"test", "msg"},
+    "AugAssign": {"target", "op", "value"},
+    "AnnAssign": {"target", "annotation", "value", "simple"},
+    "Import": {"names"},
+    "ImportFrom": {"module", "names", "level"},
+    "alias": {"name", "asname"},
+    "BoolOp": {"op", "values"},
+    "UnaryOp": {"op", "operand"},
+    "IfExp": {"test", "body", "orelse"},
+    "Subscript": {"value", "slice", "ctx"},
+    "Slice": {"lower", "upper", "step"},
+    "Starred": {"value", "ctx"},
+    "Tuple": {"elts", "ctx"},
+    "List": {"elts", "ctx"},
+    "Set": {"elts"},
+    "Dict": {"keys", "values"},
+    "keyword": {"arg", "value"},
+    "arguments": {"args", "posonlyargs", "vararg", "kwonlyargs", "kw_defaults", "kwarg", "defaults"},
+    "arg": {"arg", "annotation"},
+    "For": {"target", "iter", "body", "orelse"},
+    "If": {"test", "body", "orelse"},
+    "Call": {"func", "args", "keywords"},
+    "Return": {"value"},
+    "Assign": {"targets", "value"},
+    "Compare": {"left", "ops", "comparators"},
+    "BinOp": {"left", "op", "right"},
+    "Name": {"id", "ctx"},
+    "Constant": {"value", "kind"},
+    "Attribute": {"value", "attr", "ctx"},
+    "JoinedStr": {"values"},
+    "FormattedValue": {"value", "conversion", "format_spec"},
+    "Expr": {"value"},
+    "Yield": {"value"},
+    "Pass": set(),
+}
+
+_BOOL = {ast.And: "and", ast.Or: "or"}
+_UNARY = {ast.Not: "not", ast.USub: "neg", ast.UAdd: "pos", ast.Invert: "invert"}
+
+_CMP = {ast.Eq: "eq", ast.NotEq: "ne", ast.Lt: "lt", ast.LtE: "le", ast.Gt: "gt", ast.GtE: "ge",
+        ast.Is: "is", ast.IsNot: "is_not", ast.In: "in", ast.NotIn: "not_in"}
+_BIN = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div",
+        ast.FloorDiv: "floordiv", ast.Mod: "mod", ast.Pow: "pow",
+        # ⚠ The bitwise ops were missing and it cost more than it looks: `str | None` is a BinOp with
+        # BitOr, so every modern union annotation was refused. Measured at 36 functions in our own repo,
+        # found by the reach sweep rather than by thinking about operators.
+        ast.BitOr: "bitor", ast.BitAnd: "bitand", ast.BitXor: "bitxor",
+        ast.LShift: "lshift", ast.RShift: "rshift", ast.MatMult: "matmul"}
 
 
 @dataclass
+class Intaken:
+    """The result: the module node, and an honest account of what we could not read.
+
+    `unmodelled` is not an error list — it is the reach measurement, per file. A consumer that wants to
+    know whether a description is complete asks `partial`, not this."""
+    module: str
+    unmodelled: tuple = ()
+    origin: str = "<unknown>"
+    _graph: object = field(default=None, repr=False)
+
+    @property
+    def complete(self) -> bool:
+        return not self.unmodelled
+
+
 class Intake:
-    """The materialized facts plus the side tables a human-readable trace needs."""
-    func: str
-    params: list[str]
-    facts: list[tuple[str, str, str]]
-    line_of: dict[str, int]          # node id -> source line
-    label_of: dict[str, str]         # node id -> short source-like label (for the trace)
-    attributes: list[str]            # every attribute-access expr id (candidate None-deref sites)
-    source: str = ""                 # the source this was intaken from (for the transformer)
-    attr_base_var: dict[str, str] = None   # attribute site -> the Name variable it dereferences
-    returns: list[str] = field(default_factory=list)            # every return-statement id
-    return_var: dict[str, str] = field(default_factory=dict)    # return id -> returned source var
-    call_target: dict[str, str] = field(default_factory=dict)   # call id -> callee source name
-    call_args: dict[str, list[str]] = field(default_factory=dict)  # call id -> positional arg exprs
-    entry_state: str = "p0"          # the program point before the first statement
-    states: list[str] = field(default_factory=list)   # every program point, in order
-    state_of: dict[str, str] = field(default_factory=dict)   # expr/guard id -> the state it reads in
-    namespace: str = ""              # per-function id prefix (Session); "" = single-function (today)
-    not_modelled: list[str] = field(default_factory=list)   # ids of statements intake could NOT model
+    """Reflects a Python AST into the graph. One node per construct, parts as named edges.
 
-    def __post_init__(self) -> None:
-        if self.attr_base_var is None:
-            self.attr_base_var = {}
+    Not a visitor subclass on purpose: dispatch is an explicit table, so an unhandled node type is a
+    *lookup miss* that must be answered, rather than a silently-inherited generic visit."""
 
-    def source_line(self, node_id: str) -> int | None:
-        return self.line_of.get(node_id)
+    def __init__(self, lib: Library, origin: str):
+        self.g = lib.graph
+        self.origin = origin
+        self.unmodelled: list = []
 
-    def var_id(self, source_name: str) -> str:
-        """The graph NODE id of a source variable — namespaced so `x` in two functions are two
-        distinct nodes in a shared Session graph. Identity is by `(namespace, source_name)`."""
-        return self.namespace + source_name
+    # --- the graph-writing primitives ------------------------------------------------------------------
 
-    def var_source(self, var_id: str) -> str:
-        """The source name behind a namespaced variable node id (for rendering / source edits)."""
-        ns = self.namespace
-        return var_id[len(ns):] if ns and var_id.startswith(ns) else var_id
+    def node(self, kind: str, tree, **attrs) -> str:
+        """Mint a node for a construct, stamped with provenance and its source line.
 
-    def entry_cell(self, source_name: str) -> str:
-        """The cell to seed a parameter hypothesis into (its value at function entry)."""
-        return cell_name(self.entry_state, self.var_id(source_name))
+        `source_line` is recorded here because attribution has to be an OBSERVED fact joined later, never
+        derived — the lesson from getting loop attribution wrong the derived way."""
+        n = self.g.mint(kind, from_code=True, origin=self.origin, **attrs)
+        line = getattr(tree, "lineno", None)
+        if line is not None:
+            self.g.put(n, source_line=line)
+        return n
 
-    def entity_names(self) -> frozenset[str]:
-        """Every node name this intake mentions — the working set to bound a hypothesis's attention
-        to (feedback #7: `focus_scope` on `suppose`). For one function this is the whole graph (a
-        no-op); once a `Session` accretes several functions in one graph it is the per-function
-        subset that keeps per-hypothesis cost tracking the function, not the accreted graph."""
-        names: set[str] = set()
-        for s, _p, o in self.facts:
-            names.add(s)
-            names.add(o)
-        return frozenset(names)
+    def part(self, parent: str, label: str, child) -> None:
+        """Attach a part. A gap in a child propagates UP — as `partial`, and **at its label**.
 
+        ⭐ The label is the addition, and it is the same fix ugm made for us one level down. `establishes`
+        used to report `unknown` as a bare bool, so ANY unreadable instruction darkened a whole
+        description — including one writing to a node the description said nothing about. We reported
+        that (`docs/feedback_microfunctions.md` §3) and ugm now returns the SET OF ROLES it could not
+        resolve, so `pystrider.patterns` abstains exactly as wide as its ignorance. `partial` was that same
+        bare bool, one level up: a single bit saying *something* below is unreadable, with no way to ask
+        *what*. `unknown_parts` is the set-of-roles answer for intake.
 
-# the abstract-value lattice this intake commits to: concrete-or-None first (the design's
-# minimum domain). `none` is the sole modelled value-kind; a fresh object value is minted
-# per hypothesis by the analyzer. Emitted with every intake so the semantics can gate on it.
-VALUE_LATTICE: list[tuple[str, str, str]] = [("none", "is_a", "none_value")]
+        ⚠ `partial` is still set and still propagates. It is what `pystrider.emit` reads, and emit must stay
+        blunt: a hole cannot be rendered, so a container of one is unrenderable whichever part it is in.
+        The refinement is for READING, where a description that never names the gap is unaffected by it."""
+        if child is None:
+            return
+        if child is UNREADABLE:
+            child = self.placeholder(label)
+        self.g.link(parent, label, child)
+        if self.g.attr(child, "partial"):
+            self.gap(parent, label)
 
+    def placeholder(self, label: str) -> str:
+        """⚠⚠ A node standing where an unreadable construct was — **because POSITION IS MEANING.**
 
-class _Walker:
-    def __init__(self, src: str, loop_unroll: int = 2, namespace: str = "") -> None:
-        self.src = src.splitlines()
-        self.ns = namespace              # per-function id prefix; "" = single-function (today)
-        self.facts: list[tuple[str, str, str]] = list(VALUE_LATTICE)
-        self.line_of: dict[str, int] = {}
-        self.label_of: dict[str, str] = {}
-        self.attributes: list[str] = []
-        self.attr_base_var: dict[str, str] = {}
-        self.returns: list[str] = []              # every return-statement id (candidate returns-None sites)
-        self.not_modelled: list[str] = []         # ids of statements intake could not model (visible gaps)
-        self.statements: list[str] = []           # every statement id, in creation order — what lets a
-                                                  # compound statement link its DIRECT children
-        self._structured: set[str] = set()        # compound statements whose STRUCTURE is already
-                                                  # emitted (see `_for`: structure is per-source,
-                                                  # state is per-unrolling)
-        self.return_var: dict[str, str] = {}      # return id -> the source Name it returns (if a bare var)
-        self.call_target: dict[str, str] = {}     # call id -> callee SOURCE name (free-function calls)
-        self.call_args: dict[str, list[str]] = {}  # call id -> positional argument expr ids
-        self.func: str = ""              # the enclosing function NODE (namespaced; set by intake_function)
-        self._vars_seen: set[str] = set()
-        self._n = 0
-        # --- CFG / state threading: values live in per-state cells, not in bare variables, so
-        # reassignment is correct (see docs/spike_findings.md "State-succession"). The program point
-        # is threaded explicitly through `block`/`stmt` (a fork-join tree, not a single cursor).
-        self.entry_state = f"{namespace}p0"
-        self.states: list[str] = [self.entry_state]
-        self.state_of: dict[str, str] = {}
-        self._sn = 0
-        # loop bodies are UNROLLED to this depth: the pre-materialized state-pool size IS the
-        # fuel/world budget (design "fuel / world budget"). Beyond it, later iterations are not
-        # modelled — an honest bound, not a fixpoint (the "agent, not theorem prover" stance).
-        self.loop_unroll = loop_unroll
+        The first version of this slice recorded the gap and linked nothing, and it produced a
+        confidently-wrong description on the second test that tried it: `f([c for c in xs], x)` has one
+        `arg` edge left, so `as_application` — which describes a call by its callee and its FIRST
+        argument — read that surviving edge as the first one and reported *"applies `f` to `x`"*. The
+        unreadable argument had not merely gone dark, it had **renumbered the ones we could read**.
 
-    def _fresh(self, kind: str) -> str:
-        self._n += 1
-        return f"{self.ns}{kind}{self._n}"
+        ⭐ This is where ugm's restriction bites and where the answer differs from theirs. `graph.UNKNOWN`
+        is an ATTRIBUTE sentinel, because *"an absent edge has nowhere to hang a marker"*. An absent edge
+        is exactly what we have. So the marker gets a node of its own: ignorance becomes something the
+        graph can point AT, which restores the ordering the missing edge destroyed.
 
-    def _fresh_state(self) -> str:
-        self._sn += 1
-        st = f"{self.ns}p{self._sn}"
-        self.states.append(st)
-        return st
+        It is `own_gap`, so anything binding it abstains, and `partial`, so `pystrider.emit` refuses to
+        render it — a placeholder must never be mistaken for a construct."""
+        return self.g.mint("unreadable", from_code=True, origin=self.origin,
+                           at=label, partial=True, own_gap=True)
 
-    def _in_state(self, node_id: str, state: str) -> str:
-        """Stamp `node_id` (an expression or guard) with the program point it reads in."""
-        self._emit(node_id, "in_state", state)
-        self.state_of[node_id] = state
-        return node_id
+    def gap(self, parent: str, label: str) -> None:
+        """Record that `parent`'s `label` is not fully read: partial, and named."""
+        if parent is None:
+            return
+        known = self.g.attr(parent, "unknown_parts") or ()
+        if label not in known:
+            self.g.put(parent, unknown_parts=known + (label,))
+        self.g.put(parent, partial=True)
 
-    def _edge(self, frm: str, to: str) -> str:
-        """A plain CFG control-flow edge (branch fork / merge join) — assigns nothing, so the frame
-        rule carries EVERY variable across it. A merge point simply has two incoming edges, and the
-        value union at the merge falls out of the frame rule firing once per edge (Horn disjunction)
-        — the join is a ugm derivation, never a Python-computed lattice meet."""
-        tid = self._fresh("t")
-        self._emit(tid, "is_a", "transition")
-        self._emit(tid, "from_state", frm)
-        self._emit(tid, "to_state", to)
-        return tid
+    def refuse(self, tree, parent: str | None, label: str | None = None) -> None:
+        """Record an unmodelled construct and mark whatever contains it as partial.
 
-    def _emit(self, s: str, p: str, o: str) -> None:
-        self.facts.append((s, p, o))
+        `label` says WHICH part went dark where the call site knows; without one the gap is blanket
+        (`own_gap`), which is the honest answer when what is unreadable is the node's own identity rather
+        than one of its parts — an operator we cannot name, a field nobody visited."""
+        self.unmodelled.append((type(tree).__name__, getattr(tree, "lineno", None)))
+        if parent is None:
+            return
+        if label is None:
+            self.g.put(parent, partial=True, own_gap=True)
+        else:
+            self.gap(parent, label)
 
-    def _scope(self, entity: str) -> str:
-        """Record `entity`'s membership in the enclosing function STRUCTURALLY — an
-        `in_function` edge to the function node, not a name prefix. Scope is thus queryable
-        graph structure (and the anchor a focus frame / inter-procedural link would use)."""
-        if self.func:
-            self._emit(entity, "in_function", self.func)
-        return entity
+    def unconsumed(self, tree, parent) -> None:
+        """⚠ Refuse any AST field this handler did not consume — the guard against SILENT DROPPING.
 
-    def _var(self, name: str) -> str:
-        """A variable mention -> its graph NODE id (namespaced). Identity is by `(namespace,
-        source_name)`: within one function all mentions of `x` share a node; across functions in a
-        shared Session graph two `x`s are distinct nodes (the `ns` prefix), so the shared graph
-        holds legitimately different same-named variables. The source name is kept as the label."""
-        vid = self.ns + name
-        if name not in self._vars_seen:
-            self._vars_seen.add(name)
-            self._emit(vid, "is_a", "variable")
-            self._scope(vid)
-            self.label_of[vid] = name
-        return vid
+        Found by a round-trip sweep, not by inspection: `def f(x: int) -> bool` was intaken with an empty
+        `unmodelled` list, reported COMPLETE, and emitted as `def f(x, y)`. Annotations, decorators and
+        defaults were all being read past without a word, which is precisely the confidently-wrong answer
+        the rest of this design exists to prevent.
 
-    def _snippet(self, node: ast.AST) -> str:
-        try:
-            return ast.unparse(node)
-        except Exception:                       # pragma: no cover - defensive
-            return type(node).__name__
+        Enumerating the fields to reject by hand would have fixed those three and left the next one to be
+        discovered the same way. Declaring what a handler CONSUMES and refusing everything else inverts
+        the default: a Python version that adds a field, or a handler that stops reading one, becomes an
+        honest gap rather than a silent omission."""
+        for field, value in ast.iter_fields(tree):
+            if field in _CONSUMES.get(type(tree).__name__, ()):
+                continue
+            if value is None or value == [] or field == "type_comment":
+                continue
+            # ⚠ BLANKET, deliberately. The name here is an AST FIELD, and intake's graph labels are not
+            # the AST's — mapping one onto the other would be a second table to keep in step, and getting
+            # it wrong would narrow an abstention on a guess. A gap we cannot place is a gap everywhere.
+            self.unmodelled.append((f"{type(tree).__name__}.{field}", getattr(tree, "lineno", None)))
+            self.g.put(parent, partial=True, own_gap=True)
 
-    # --- expressions: return the node-id standing for the expression's value ---
-    # every expression is stamped `in_state <point>` so the semantics reads its variables from the
-    # cells live at that point (value flow is state-threaded, not SSA-per-variable).
-    def expr(self, node: ast.AST, state: str) -> str:
-        if isinstance(node, ast.Name):
-            eid = self._in_state(self._scope(self._fresh("e")), state)
-            self._emit(eid, "is_a", "name")
-            self._emit(eid, "reads", self._var(node.id))
-            self.label_of[eid] = node.id
-            self.line_of[eid] = node.lineno
-            return eid
-        if isinstance(node, ast.Attribute):
-            base = self.expr(node.value, state)
-            eid = self._in_state(self._scope(self._fresh("attr")), state)
-            self._emit(eid, "is_a", "attribute")
-            self._emit(eid, "attr_of", base)
-            self._emit(eid, "attr_name", node.attr)
-            self.attributes.append(eid)
-            if isinstance(node.value, ast.Name):
-                self.attr_base_var[eid] = node.value.id
-            self.label_of[eid] = self._snippet(node)
-            self.line_of[eid] = node.lineno
-            return eid
-        if isinstance(node, ast.Call):
-            fn = self.expr(node.func, state)
-            eid = self._in_state(self._scope(self._fresh("call")), state)
-            self._emit(eid, "is_a", "call")
-            self._emit(eid, "calls", fn)
-            # a FREE-function call `g(a, ...)` is an inter-procedural link candidate: record the
-            # callee's SOURCE name and each positional argument expression (each read in this state),
-            # so a Session can wire arg -> callee param cell. A method call (`x.bar()`) is not a link.
-            if isinstance(node.func, ast.Name):
-                self.call_target[eid] = node.func.id
-                self._emit(eid, "calls_func", node.func.id)
-                arg_exprs = [self.expr(a, state) for a in node.args]
-                self.call_args[eid] = arg_exprs
-                for i, aexpr in enumerate(arg_exprs):
-                    self._emit(eid, "passes", aexpr)
-                    self._emit(aexpr, "at_index", str(i))
-            self.label_of[eid] = self._snippet(node)
-            self.line_of[eid] = node.lineno
-            return eid
-        # unsupported expression: an opaque value node, typed `unknown_value` (honest UNKNOWN)
-        eid = self._in_state(self._scope(self._fresh("u")), state)
-        self._emit(eid, "is_a", "unknown_expr")
-        self.label_of[eid] = self._snippet(node)
-        self.line_of[eid] = getattr(node, "lineno", 0)
-        return eid
+    # --- the dispatch ----------------------------------------------------------------------------------
 
-    # --- statements: process one statement entering at `state`; return the EXIT state ---
-    def block(self, stmts: list[ast.stmt], state: str) -> str:
-        """Walk a straight-line block from `state`, threading the program point statement to
-        statement; return the block's exit state."""
-        for s in stmts:
-            state = self.stmt(s, state)
-        return state
+    def visit(self, tree, parent: str | None = None):
+        handler = getattr(self, f"_{type(tree).__name__}", None)
+        if handler is None:
+            # ⚠ The gap is recorded, but marking the container is left to `part`, which knows the LABEL.
+            # `parent` stays a parameter because a construct refused where nothing links it (a bare
+            # expression statement) still has a container to darken.
+            self.unmodelled.append((type(tree).__name__, getattr(tree, "lineno", None)))
+            return UNREADABLE
+        built = handler(tree)
+        if built is not None and built is not UNREADABLE:
+            self.unconsumed(tree, built)
+        return built
 
-    def stmt(self, node: ast.AST, state: str) -> str:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
-                and isinstance(node.targets[0], ast.Name):
-            # an assignment is a CFG transition state -> to: the RHS reads the cells live at `state`,
-            # the target's cell at `to` takes that value, every other var is framed forward.
-            to = self._fresh_state()
-            sid = self._scope(self._fresh("s"))
-            self.statements.append(sid)
-            self._emit(sid, "is_a", "assign")
-            self._emit(sid, "assigns", self._var(node.targets[0].id))
-            self._emit(sid, "from_expr", self.expr(node.value, state))
-            self._emit(sid, "from_state", state)
-            self._emit(sid, "to_state", to)
-            self.line_of[sid] = node.lineno
-            self.label_of[sid] = self._snippet(node)
-            return to                                             # advance the program point
-        if isinstance(node, ast.Return) and node.value is not None:
-            sid = self._scope(self._fresh("s"))
-            self.statements.append(sid)
-            self._emit(sid, "is_a", "return")
-            self._emit(sid, "returns", self.expr(node.value, state))   # reads at `state` (terminal)
-            self.returns.append(sid)                                   # a candidate returns-None site
-            if isinstance(node.value, ast.Name):
-                self.return_var[sid] = node.value.id                   # the var a coalesce would default
-            self.line_of[sid] = node.lineno
-            self.label_of[sid] = self._snippet(node)
-            return state
-        if isinstance(node, ast.If):
-            return self._if(node, state)
-        if isinstance(node, ast.While):
-            return self._while(node, state)
-        if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
-            return self._for(node, state)
-        if isinstance(node, ast.Expr):
-            # An expression STATEMENT (`print(x)`, `log(x)`): it binds no name, so the program point
-            # does not advance and no cell is written — but the EXPRESSION is modelled, so its calls,
-            # attribute accesses and reads become ordinary nodes. Previously this fell through to
-            # `not_modelled`, which made a whole class of real program (anything built out of bare
-            # calls) invisible to every downstream question: a generated `print(greet(name))` produced
-            # zero `call` nodes, so no structural rule could see it at all. Modelling the expression is
-            # the vocabulary author's half of a COVERAGE gap that no bridge can close
-            # (`docs/vocabulary_bridge.md`).
-            eid = self.expr(node.value, state)
-            sid = self._scope(self._fresh("s"))
-            self.statements.append(sid)
-            self._emit(sid, "is_a", "expr_stmt")
-            self._emit(sid, "evaluates", eid)
-            self.line_of[sid] = node.lineno
-            self.label_of[sid] = self._snippet(node)
-            return state                                          # binds nothing -> same program point
-        # an unmodelled statement kind (aug-assign, attribute/subscript store, tuple unpack, `with`,
-        # a `for` over a non-Name target, ...): we cannot thread its effect on state. Emit a VISIBLE `not_modelled`
-        # marker so a downstream `clean`/`verified` verdict can say "clear MODULO this", instead of
-        # silently framing a stale value forward and reporting confidently-clean (critique #5). The
-        # state is returned unchanged (we still don't model the effect) — but the gap is now audited.
-        sid = self._scope(self._fresh("s"))
-        self.statements.append(sid)
-        self._emit(sid, "is_a", "not_modelled")
-        self.line_of[sid] = getattr(node, "lineno", 0)
-        self.label_of[sid] = self._snippet(node)
-        self.not_modelled.append(sid)
-        return state
+    def block(self, statements, parent: str | None = None) -> str:
+        """A statement list becomes ONE `block` node with ordered `stmt` edges.
 
-    def _if(self, node: ast.If, state: str) -> str:
-        """Two intake shapes for a conditional:
+        ⚠ Not N sibling edges on the container. A pattern binds a body as a single thing (`?x each_does
+        ?body`), so a body spread across the parent as repeated edges would give the bridge nothing to
+        point at but the first statement — quietly describing a three-line loop by its first line.
+        Ordering inside the block is native, so nothing stamps a counter."""
+        b = self.node("block", statements[0] if statements else _NOWHERE)
+        for stmt in statements:
+            self.part(b, "stmt", self.visit(stmt, b))
+        if parent is not None and self.g.attr(b, "partial"):
+            # ⚠ NOT `own_gap`. Every caller also routes the block through `part`, which records the gap at
+            # its label; this is the belt-and-braces bit for a block attached some other way, and marking
+            # it blanket here would silently defeat the labelling at every single call site — which is
+            # what it did on the first run of this probe, reading 0% recovery that was entirely my bug.
+            self.g.put(parent, partial=True)
+        return b
 
-        - a **tail** `if VAR is not None:` (no else) is kept as `guard` structure gated by the
-          reachability rules — this is what makes the repair round-trip real (the transformer emits
-          exactly this source and re-intake derives the guard). Body reads at the guard's own point.
-        - **any other** `if`/`if-else` is a control-flow **fork**: two edges out of `state` into a
-          then- and else-entry point, each body threaded independently, then two edges into a fresh
-          **merge** point. Value at the merge is the *union* of the branches — derived by the frame
-          rule firing once per merge edge (Horn disjunction), never a Python join.
+    def param(self, a) -> str:
+        """One parameter, with its annotation. ⚠ ONE helper for EVERY kind of parameter, and that is the
+        whole fix for a bug worth recording.
 
-        ...and, since the `CONDITIONAL` pattern, a THIRD register alongside both: the STRUCTURAL one
-        (`is_a branch` / `condition` / `then_body`), emitted by `_branch_structure` below. The same
-        per-SOURCE-vs-per-PATH split `_for` documents applies here for the same reason — a conditional
-        inside a loop is walked once per unrolling, and "how many branches does this function have?"
-        must not count the unrollings.
-        """
-        branch = self._branch_structure(node, state)
-        guard_var = self._guard_var(node.test)
-        if guard_var is not None and not node.orelse:
-            gid = self._in_state(self._scope(self._fresh("g")), state)
-            self._emit(gid, "is_a", "guard")
-            self._emit(gid, "tests", self._var(guard_var))
-            self.line_of[gid] = node.lineno
-            before = set(self.attributes)
-            before_calls = set(self.call_target)
-            exit_state, kids = self._block_ids(node.body, state)
-            self._link_then_body(branch, kids)
-            for site in self.attributes:                          # attrs created inside this body ...
-                if site not in before:
-                    self._emit(site, "within_guard", gid)         # ... are guarded by it
-            for cid in self.call_target:                          # calls created inside this body too:
-                if cid not in before_calls:
-                    self._emit(cid, "within_guard", gid)          # lets a Session refine a guarded call's
-            return exit_state                                     # argument value across the call boundary
+        `signature` used to mint keyword-only, positional-only, `*a` and `**k` parameters inline as
+        `node("param", a, name=a.arg)` — reading the name and nothing else. So `def f(*, origin: str =
+        'x')` was intaken with an EMPTY `unmodelled` list, reported COMPLETE, and emitted as `def f(*,
+        origin='x')`. Six functions in our own repo, all silently wrong.
 
-        then_entry, else_entry = self._fresh_state(), self._fresh_state()
-        then_edge = self._edge(state, then_entry)                 # fork: assume-cond / assume-not-cond
-        else_edge = self._edge(state, else_entry)
-        # PATH REFINEMENT: when the condition is a `VAR is [not] None` test we understand, tag each
-        # fork edge with what it ASSUMES about VAR. The refined-frame rules then carry only values
-        # consistent with the assumption (none filtered out on the non-null branch, and vice versa),
-        # so a deref of VAR on its safe branch no longer reports a spurious None outcome. A condition
-        # we don't understand gets no tag → the sound may-union (both branches keep every value).
-        ref = self._none_compare(node.test)
-        if ref is not None:
-            rvar, kind = ref
-            vid = self._var(rvar)
-            then_kind, else_kind = ("nonnull", "null") if kind == "nonnull" else ("null", "nonnull")
-            self._emit(then_edge, f"assume_{then_kind}", vid)     # true-branch of the test
-            self._emit(else_edge, f"assume_{else_kind}", vid)     # false-branch of the test
-        then_exit, kids = self._block_ids(node.body, then_entry)
-        self._link_then_body(branch, kids)
-        else_exit = self.block(node.orelse, else_entry) if node.orelse else else_entry
-        merge = self._fresh_state()
-        self._edge(then_exit, merge)                              # join: both paths flow to the merge
-        self._edge(else_exit, merge)
-        return merge
+        This is the `_CONSUMES["ClassDef"]["keywords"]` failure exactly: the `unconsumed` guard exists to
+        catch precisely this, and it was bypassed by never being called. **A guard that has to be
+        remembered at each site is a guard that will be forgotten at one of them**, so there is now one
+        site."""
+        p = self.node("param", a, name=a.arg)
+        if a.annotation is not None:
+            self.part(p, "annotation", self.visit(a.annotation, p))
+        self.unconsumed(a, p)
+        return p
 
-    def _branch_structure(self, node: ast.If, state: str) -> "str | None":
-        """The STRUCTURAL register for a conditional — what it IS, as opposed to what it does to state.
+    def signature(self, n, args) -> None:
+        """The parts of a signature beyond plain positional names. Defaults pair with the LAST args, and
+        `*a` / `**k` are their own nodes rather than flags, so emit can put them back in order."""
+        for a in args.posonlyargs:
+            self.part(n, "posonly", self.param(a))
+        for a in args.kwonlyargs:
+            self.part(n, "kwonly", self.param(a))
+        for d in args.defaults:
+            self.part(n, "default", self.visit(d, n))
+        for d in args.kw_defaults:
+            self.part(n, "kw_default", self.visit(d, n) if d is not None else self.node("no_default", n))
+        if args.vararg is not None:
+            self.part(n, "vararg", self.param(args.vararg))
+        if args.kwarg is not None:
+            self.part(n, "kwarg", self.param(args.kwarg))
 
-        Deliberately the same shape `_for` emits (`is_a for_loop` / `iterates` / `loop_body`), because
-        the generation half MINTS the mirror of it (`emit_if` / `cond_on` / `body_has`) and a bridge can
-        only reconcile NAMING; neither side may be missing structure the other has
-        (`docs/vocabulary_bridge.md`).
+    # --- the modelled constructs -----------------------------------------------------------------------
 
-        Emitted once per SOURCE position, guarded by `_structured`: an `if` nested in a loop body is
-        walked once per unrolling, and a second `branch` node for one source statement would make the
-        pattern report two conditionals where the programmer wrote one — the same trap `_for` records.
+    def _Module(self, t):
+        n = self.node("module", t)
+        for stmt in t.body:                # a module is a list of definitions, not a pattern body
+            self.part(n, "defines", self.visit(stmt, n))
+        return n
 
-        Returns the node id on the FIRST walk of this source position and `None` afterwards, so the
-        caller links `then_body` from that walk's direct children only — the later walks are CFG copies
-        of the same code, not distinct statements. The condition is modelled as a real expression read,
-        which is what lets the pattern ask WHAT is being checked rather than merely that a check exists.
-        """
-        bid = self._scope(f"{self.ns}if@{node.lineno}")
-        if bid in self._structured:
-            return None
-        self._structured.add(bid)
-        self._emit(bid, "is_a", "branch")
-        self._emit(bid, "condition", self.expr(node.test, state))
-        self.line_of[bid] = node.lineno
-        self.label_of[bid] = f"if {self._snippet(node.test)}"
-        return bid
+    def _FunctionDef(self, t):
+        n = self.node("function_def", t, name=t.name)
+        for a in t.args.args:
+            self.part(n, "param", self.param(a))
+        self.signature(n, t.args)
+        for dec in t.decorator_list:
+            self.part(n, "decorator", self.visit(dec, n))
+        if t.returns is not None:
+            self.part(n, "returns", self.visit(t.returns, n))
+        self.part(n, "does", self.block(t.body, n))
+        return n
 
-    def _link_then_body(self, branch: "str | None", kids: list[str]) -> None:
-        """Link a branch to the DIRECT children of its then-arm. A no-op on a re-walk (`branch is None`),
-        which is what keeps the structural register per-SOURCE while the CFG stays per-PATH."""
-        for child in kids if branch is not None else ():
-            self._emit(branch, "then_body", child)
+    def _For(self, t):
+        n = self.node("for_stmt", t)
+        self.part(n, "over", self.visit(t.iter, n))
+        self.part(n, "binds", self.visit(t.target, n))
+        self.part(n, "body", self.block(t.body, n))
+        if t.orelse:                       # `for ... else` is real Python and we do not model it
+            # ⭐ The one gap in this file that names a part NO description mentions — `over`, `binds` and
+            # `body` are all still fully read. It is the case the part-scoped rule exists for.
+            self.refuse(t.orelse[0], n, label="orelse")
+        return n
 
-    def _block_ids(self, stmts: list[ast.stmt], state: str) -> tuple[str, list[str]]:
-        """`block`, but also reporting the DIRECT child statement of each entry — the first id the
-        statement created, since a compound statement emits its own id before descending. Nested
-        statements are therefore attributed to their own parent, not to this one."""
-        ids: list[str] = []
-        for s in stmts:
-            mark = len(self.statements)
-            state = self.stmt(s, state)
-            if len(self.statements) > mark:
-                ids.append(self.statements[mark])
-        return state, ids
+    def _If(self, t):
+        n = self.node("if_stmt", t)
+        self.part(n, "condition", self.visit(t.test, n))
+        self.part(n, "then", self.block(t.body, n))
+        self.part(n, "otherwise", self.block(t.orelse, n))
+        return n
 
-    def _for(self, node: ast.For, state: str) -> str:
-        """A `for` loop — modelled in BOTH registers, because two different questions are asked of it.
+    def _Call(self, t):
+        n = self.node("call", t)
+        self.part(n, "callee", self.visit(t.func, n))
+        for a in t.args:
+            self.part(n, "arg", self.visit(a, n))
+        for kw in t.keywords:
+            self.part(n, "kwarg", self.visit(kw, n))
+        return n
 
-        STRUCTURE (what it is): `is_a for_loop`, the sequence it `iterates`, the variable it `binds`,
-        and a `loop_body` link per direct child. This is what a pattern needs in order to recognize an
-        iteration in hand-written code — and it is deliberately the same shape the generation half
-        MINTS (`emit_for` / `iter_over` / `binds` / `body_has`), so a bridge can reconcile the two
-        namings without either side inventing structure the other lacks.
+    def _Return(self, t):
+        n = self.node("return_stmt", t)
+        self.part(n, "value", self.visit(t.value, n) if t.value is not None else None)
+        return n
 
-        STATE (what it does): unrolled to `loop_unroll` iterations exactly as `_while` is, with the
-        loop variable bound at each body entry from an element we do not model — an `unknown_expr`,
-        because knowing a sequence says nothing about its elements. Honest bound, not a fixpoint.
+    def _Assign(self, t):
+        n = self.node("assign", t)
+        for target in t.targets:
+            self.part(n, "target", self.visit(target, n))
+        self.part(n, "value", self.visit(t.value, n))
+        return n
 
-        **Structure is per-SOURCE, state is per-UNROLLING** — the distinction the two registers force.
-        A loop nested inside another is walked once per outer iteration, so a naive walker mints a
-        second `for_loop` node for the same source statement and "how many loops does this function
-        have?" answers wrongly. The structural node is therefore identified by source position and
-        emitted once; only the CFG (states, the element binding, the body's threading) repeats. For the
-        same reason `loop_body` links the FIRST walk's statement ids: the later ones are CFG copies of
-        the same source statement, not distinct code."""
-        fid = self._scope(f"{self.ns}for@{node.lineno}")
-        first = fid not in self._structured
-        if first:
-            self._structured.add(fid)
-            self.statements.append(fid)
-            self._emit(fid, "is_a", "for_loop")
-            self._emit(fid, "binds", self._var(node.target.id))
-            self.line_of[fid] = node.lineno
-            self.label_of[fid] = f"for {node.target.id} in {self._snippet(node.iter)}"
-        iterated = self.expr(node.iter, state)         # a real read at this program point, every pass
-        if first:
-            self._emit(fid, "iterates", iterated)
+    def _Compare(self, t):
+        """⭐ The gap the old intake never closed. A chained comparison (`a < b < c`) is a DIFFERENT
+        construct with different semantics, so it is refused rather than approximated by its first pair."""
+        if len(t.ops) != 1:
+            self.refuse(t, None)
+            n = self.node("compare", t, partial=True, own_gap=True)
+            return n
+        op = _CMP.get(type(t.ops[0]))
+        if op is None:
+            self.refuse(t.ops[0], None)
+            return self.node("compare", t, partial=True, own_gap=True)
+        n = self.node("compare", t, op=op)
+        self.part(n, "left", self.visit(t.left, n))
+        self.part(n, "right", self.visit(t.comparators[0], n))
+        return n
 
-        post = self._fresh_state()
-        head, linked = state, False
-        for _ in range(max(0, self.loop_unroll)):
-            body_entry = self._fresh_state()
-            self._edge(head, body_entry)                         # take the body once more ...
-            self._edge(head, post)                               # ... or exit here (0..k iterations)
-            bound = self._fresh_state()                          # the loop variable takes an element
-            element = self._in_state(self._scope(self._fresh("u")), body_entry)
-            self._emit(element, "is_a", "unknown_expr")           # an element we cannot know
-            self.label_of[element] = f"<element of {self._snippet(node.iter)}>"
-            bid = self._scope(self._fresh("s"))
-            self.statements.append(bid)
-            self._emit(bid, "is_a", "assign")
-            self._emit(bid, "assigns", self._var(node.target.id))
-            self._emit(bid, "from_expr", element)
-            self._emit(bid, "from_state", body_entry)
-            self._emit(bid, "to_state", bound)
-            self.line_of[bid] = node.lineno
-            self.label_of[bid] = f"{node.target.id} = <element>"
-            body_exit, ids = self._block_ids(node.body, bound)
-            if first and not linked:                             # structure from the first pass only
-                for child in ids:
-                    self._emit(fid, "loop_body", child)
-                linked = True
-            nxt = self._fresh_state()
-            self._edge(body_exit, nxt)                           # back-edge to the next unrolled head
-            head = nxt
-        self._edge(head, post)                                   # fuel exhausted at depth k: exit
-        return post
+    def _BinOp(self, t):
+        op = _BIN.get(type(t.op))
+        if op is None:
+            self.refuse(t.op, None)
+            return self.node("binop", t, partial=True, own_gap=True)
+        n = self.node("binop", t, op=op)
+        self.part(n, "left", self.visit(t.left, n))
+        self.part(n, "right", self.visit(t.right, n))
+        return n
 
-    def _while(self, node: ast.While, state: str) -> str:
-        """A `while` loop, **unrolled** to `self.loop_unroll` iterations — the pre-materialized
-        state pool IS the fuel budget. Each unrolled head forks into *exit the loop* (an edge
-        straight to the post-loop merge) and *run the body once more* (thread the body, then a
-        back-edge to the next head). Every exit — after 0, 1, … k iterations — flows into the same
-        merge, so the post-loop value is the *union* over all iteration counts (frame-rule
-        disjunction; no Python join, no fixpoint). The condition itself is not evaluated: exit is
-        always possible (sound may-analysis). Iterations beyond k are not modelled (honest bound)."""
-        post = self._fresh_state()
-        head = state
-        for _ in range(max(0, self.loop_unroll)):
-            body_entry = self._fresh_state()
-            self._edge(head, body_entry)                         # take the body once more ...
-            self._edge(head, post)                               # ... or exit here (0..k iterations)
-            body_exit = self.block(node.body, body_entry)
-            nxt = self._fresh_state()
-            self._edge(body_exit, nxt)                           # back-edge to the next unrolled head
-            head = nxt
-        self._edge(head, post)                                   # fuel exhausted at depth k: exit
-        return post
+    def _Pass(self, t):
+        """⚠ Modelled because EMIT WRITES ONE. An empty block renders as `pass`, so an intake that could
+        not read `pass` would break the round trip on its own output — caught by a round-trip pin, not by
+        inspection. Read and write capabilities are tracked separately, and this is the case that shows
+        why they must still be checked against each other."""
+        return self.node("pass_stmt", t)
 
-    @staticmethod
-    def _guard_var(test: ast.AST) -> str | None:
-        """The variable of a `VAR is not None` (or `None is not VAR`) test, else None."""
-        if isinstance(test, ast.Compare) and len(test.ops) == 1 \
-                and isinstance(test.ops[0], ast.IsNot):
-            l, r = test.left, test.comparators[0]
-            if isinstance(l, ast.Name) and isinstance(r, ast.Constant) and r.value is None:
-                return l.id
-            if isinstance(r, ast.Name) and isinstance(l, ast.Constant) and l.value is None:
-                return r.id
-        return None
+    def _ClassDef(self, t):
+        """⭐ The one that changes the population, not just the percentage: while `ClassDef` was
+        unmodelled nothing inside a class was ever REACHED, so ~134 methods in our own corpus were
+        invisible rather than refused."""
+        n = self.node("class_def", t, name=t.name)
+        for base in t.bases:
+            self.part(n, "base", self.visit(base, n))
+        for dec in t.decorator_list:
+            self.part(n, "decorator", self.visit(dec, n))
+        self.part(n, "does", self.block(t.body, n))
+        return n
 
-    @staticmethod
-    def _none_compare(test: ast.AST) -> tuple[str, str] | None:
-        """`(var, 'nonnull')` for a `VAR is not None` test, `(var, 'null')` for `VAR is None`
-        (either operand order), else None. Drives fork PATH REFINEMENT: 'nonnull' = the true-branch
-        assumes VAR is non-None, 'null' = it assumes VAR is None."""
-        if not (isinstance(test, ast.Compare) and len(test.ops) == 1):
-            return None
-        op, l, r = test.ops[0], test.left, test.comparators[0]
-        name = None
-        if isinstance(l, ast.Name) and isinstance(r, ast.Constant) and r.value is None:
-            name = l.id
-        elif isinstance(r, ast.Name) and isinstance(l, ast.Constant) and l.value is None:
-            name = r.id
-        if name is None:
-            return None
-        if isinstance(op, ast.IsNot):
-            return (name, "nonnull")
-        if isinstance(op, ast.Is):
-            return (name, "null")
-        return None
+    def _Assert(self, t):
+        n = self.node("assert_stmt", t)
+        self.part(n, "test", self.visit(t.test, n))
+        if t.msg is not None:
+            self.part(n, "message", self.visit(t.msg, n))
+        return n
+
+    def _AugAssign(self, t):
+        op = _BIN.get(type(t.op))
+        if op is None:
+            self.refuse(t.op, None)
+            return self.node("aug_assign", t, partial=True, own_gap=True)
+        n = self.node("aug_assign", t, op=op)
+        self.part(n, "target", self.visit(t.target, n))
+        self.part(n, "value", self.visit(t.value, n))
+        return n
+
+    def _AnnAssign(self, t):
+        n = self.node("ann_assign", t, simple=bool(t.simple))
+        self.part(n, "target", self.visit(t.target, n))
+        self.part(n, "annotation", self.visit(t.annotation, n))
+        if t.value is not None:            # `x: int` with no value is legal and means something different
+            self.part(n, "value", self.visit(t.value, n))
+        return n
+
+    def _Import(self, t):
+        n = self.node("import_stmt", t)
+        for a in t.names:
+            self.part(n, "alias", self.visit(a, n))
+        return n
+
+    def _ImportFrom(self, t):
+        n = self.node("import_from", t, module=t.module, level=t.level or 0)
+        for a in t.names:
+            self.part(n, "alias", self.visit(a, n))
+        return n
+
+    def _alias(self, t):
+        return self.node("alias", t, name=t.name, asname=t.asname)
+
+    def _BoolOp(self, t):
+        n = self.node("bool_op", t, op=_BOOL[type(t.op)])
+        for v in t.values:
+            self.part(n, "operand", self.visit(v, n))
+        return n
+
+    def _UnaryOp(self, t):
+        op = _UNARY.get(type(t.op))
+        if op is None:
+            self.refuse(t.op, None)
+            return self.node("unary_op", t, partial=True, own_gap=True)
+        n = self.node("unary_op", t, op=op)
+        self.part(n, "operand", self.visit(t.operand, n))
+        return n
+
+    def _IfExp(self, t):
+        n = self.node("if_expr", t)
+        self.part(n, "condition", self.visit(t.test, n))
+        self.part(n, "then_value", self.visit(t.body, n))
+        self.part(n, "else_value", self.visit(t.orelse, n))
+        return n
+
+    def _Subscript(self, t):
+        n = self.node("subscript", t)
+        self.part(n, "of", self.visit(t.value, n))
+        self.part(n, "index", self.visit(t.slice, n))
+        return n
+
+    def _Slice(self, t):
+        n = self.node("slice", t)
+        for label, part in (("lower", t.lower), ("upper", t.upper), ("step", t.step)):
+            if part is not None:
+                self.part(n, label, self.visit(part, n))
+        return n
+
+    def _Starred(self, t):
+        n = self.node("starred", t)
+        self.part(n, "of", self.visit(t.value, n))
+        return n
+
+    def _Tuple(self, t):
+        return self._sequence("tuple", t, t.elts)
+
+    def _List(self, t):
+        return self._sequence("list", t, t.elts)
+
+    def _Set(self, t):
+        return self._sequence("set", t, t.elts)
+
+    def _sequence(self, kind, t, elements):
+        n = self.node(kind, t)
+        for e in elements:
+            self.part(n, "item", self.visit(e, n))
+        return n
+
+    def _Dict(self, t):
+        n = self.node("dict", t)
+        for key, value in zip(t.keys, t.values):
+            if key is None:                # `{**other}` — a different construct, not a key/value pair
+                self.refuse(t, n)
+                continue
+            pair = self.node("pair", t)
+            self.part(pair, "key", self.visit(key, pair))
+            self.part(pair, "value", self.visit(value, pair))
+            self.part(n, "pair", pair)
+        return n
+
+    def _keyword(self, t):
+        n = self.node("keyword_arg", t, name=t.arg)
+        self.part(n, "value", self.visit(t.value, n))
+        return n
+
+    def _JoinedStr(self, t):
+        """An f-string: an ordered mix of literal text and interpolations.
+
+        ⚠ Modelled as PARTS rather than as a template string with holes. The interpolated expressions are
+        ordinary expressions — `f"{a + b}"` contains a real `BinOp` — so keeping them as sub-nodes means
+        everything else already knows how to read them, and a pattern could match inside one."""
+        n = self.node("fstring", t)
+        for v in t.values:
+            self.part(n, "part", self.visit(v, n))
+        return n
+
+    def _FormattedValue(self, t):
+        """One `{...}` inside an f-string. `conversion` is Python's `!r`/`!s`/`!a` as the raw int it uses
+        (-1 for none), kept as data rather than decoded, because emit needs exactly that int back."""
+        n = self.node("interpolation", t, conversion=t.conversion)
+        self.part(n, "value", self.visit(t.value, n))
+        if t.format_spec is not None:          # `:>10` — itself an f-string, so it nests naturally
+            self.part(n, "format", self.visit(t.format_spec, n))
+        return n
+
+    def _Name(self, t):
+        return self.node("name", t, id=t.id)
+
+    def _Constant(self, t):
+        return self.node("constant", t, value=t.value)
+
+    def _Attribute(self, t):
+        n = self.node("attribute", t, attr=t.attr)
+        self.part(n, "of", self.visit(t.value, n))
+        return n
+
+    def _Yield(self, t):
+        """⭐ Modelled for a reason worth stating: a Textual `compose` is a GENERATOR, so the whole
+        app-generation ending was blocked by one construct. `yield` is an expression in Python's grammar
+        and is modelled as one — it stands where a statement belongs by the same `Expr` wrapping as any
+        other expression, so nothing else had to learn about it.
+
+        `yield from` is a DIFFERENT node (`YieldFrom`) with different semantics and stays outside."""
+        n = self.node("yield_expr", t)
+        self.part(n, "value", self.visit(t.value, n) if t.value is not None else None)
+        return n
+
+    def _Expr(self, t):
+        return self.visit(t.value)
 
 
-def intake_function(src: str, *, loop_unroll: int = 2, namespace: str = "") -> Intake:
-    """Parse one top-level function from `src` and materialize its AST+CFG base facts.
+def intake(lib: Library, source: str, *, origin: str = "<unknown>") -> Intaken:
+    """Reflect Python source into `lib`'s graph. Returns the module node and what could not be read.
 
-    `loop_unroll` is the fuel budget: `while` bodies are pre-materialized (unrolled) to this many
-    iterations. Behaviour beyond it is not modelled — a bug that only manifests on iteration k+1 is
-    missed (honest, bounded partiality). Raising it costs more states, not new machinery.
+    `origin` says where the source came from — a path, a tool call, a generator. It is a parameter because
+    provenance is not derivable from the text, and because code that arrived from a tool call can differ
+    on the next run.
 
-    `namespace` prefixes every structural node id (states, exprs, statements, transitions, cells,
-    variables, the function node) so several functions coexist in one shared Session graph without
-    colliding — the type/value vocabulary the rules match on (`assign`, `none`, `none_value`,
-    `attribute_error`, …) stays SHARED (unprefixed). Default `""` is single-function (today)."""
-    tree = ast.parse(src)
-    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef))
-    w = _Walker(src, loop_unroll=loop_unroll, namespace=namespace)
-    func_node = namespace + fn.name                      # the scope node every entity links to
-    w.func = func_node
-    w.label_of[func_node] = fn.name
-    params = [a.arg for a in fn.args.args]
-    w.facts.append((func_node, "is_a", "function"))
-    for p in params:
-        w.facts.append((func_node, "has_param", w._var(p)))   # a param is a variable, scoped
-    w.block(fn.body, w.entry_state)
-    # pre-materialize the state x var cell lattice now that every state and variable is known —
-    # the intake "mint" that lets the semantics thread state without existential rule heads.
-    for st in w.states:
-        for v in sorted(w._vars_seen):
-            vid = w.ns + v
-            cid = cell_name(st, vid)
-            w._emit(cid, "in_state", st)
-            w._emit(cid, "for_var", vid)
-    return Intake(func=fn.name, params=params, facts=w.facts,
-                  line_of=w.line_of, label_of=w.label_of, attributes=w.attributes,
-                  source=src, attr_base_var=w.attr_base_var,
-                  returns=w.returns, return_var=w.return_var,
-                  call_target=w.call_target, call_args=w.call_args,
-                  entry_state=w.entry_state, states=w.states, state_of=w.state_of,
-                  namespace=namespace, not_modelled=w.not_modelled)
+    A `SyntaxError` propagates: source that does not parse is not partial understanding, it is not Python,
+    and there is nothing honest to record about it."""
+    walker = Intake(lib, origin)
+    module = walker.visit(ast.parse(source))
+    return Intaken(module=module, unmodelled=tuple(walker.unmodelled), origin=origin, _graph=lib.graph)
+
+
+__all__ = ["intake", "Intake", "Intaken", "MODELLED"]

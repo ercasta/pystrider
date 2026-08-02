@@ -1,4 +1,4 @@
-"""Pins for `strider/intake.py`, `strider/lift.py` and `strider/rules/python.mf` — real Python becoming
+"""Pins for `pystrider/intake.py`, `pystrider/lift.py` and `pystrider/rules/python.mf` — real Python becoming
 graph data, bridged into the neutral vocabulary, and recognized by the patterns.
 
 The load-bearing pins here are the ones about what we could NOT read: a construct outside the modelled
@@ -8,9 +8,9 @@ import ast
 
 import pytest
 
-import strider
-from strider.intake import MODELLED, intake
-from strider.lift import bridges, lift, lowering_for, reachable
+import pystrider
+from pystrider.intake import MODELLED, intake
+from pystrider.lift import bridges, lift, lowering_for, reachable
 
 LOOP = """
 def totals(rows):
@@ -21,7 +21,7 @@ def totals(rows):
 
 
 def intaken(source, origin="test"):
-    lib = strider.load()
+    lib = pystrider.load()
     got = intake(lib, source, origin=origin)
     return lib, got
 
@@ -119,7 +119,7 @@ def f(xs):
 """)
     lift(lib, got.module)
     loop = find(lib, got.module, "for_stmt")[0]
-    assert strider.recognizes(lib, loop) == {}
+    assert pystrider.recognizes(lib, loop) == {}
 
 
 def test_control_the_same_loop_without_the_gap_IS_recognized():
@@ -131,7 +131,7 @@ def f(xs):
 """)
     lift(lib, got.module)
     loop = find(lib, got.module, "for_stmt")[0]
-    assert set(strider.recognizes(lib, loop)) == {"as_iteration"}
+    assert set(pystrider.recognizes(lib, loop)) == {"as_iteration"}
 
 
 def test_partial_propagates_up_through_a_block():
@@ -186,7 +186,7 @@ def test_a_chained_comparison_is_refused_not_approximated_by_its_first_pair():
 
 def test_the_modelled_set_is_what_intake_actually_handles():
     """⚠ MODELLED is documentation, and documentation drifts. Pin it to the handlers that exist."""
-    from strider.intake import Intake
+    from pystrider.intake import Intake
     handled = {n[1:] for n in dir(Intake) if n.startswith("_") and n[1:2].isupper()}
     assert handled <= set(MODELLED), handled - set(MODELLED)
     for name in MODELLED:
@@ -197,7 +197,7 @@ def test_the_modelled_set_is_what_intake_actually_handles():
 
 def test_the_bridge_table_is_derived_from_the_bridge_NAMES():
     """No second table to keep in step — `as_<pattern>_from_<kind>` is the mapping."""
-    assert bridges(strider.load())["for_stmt"] == "as_iteration_from_for_stmt"
+    assert bridges(pystrider.load())["for_stmt"] == "as_iteration_from_for_stmt"
 
 
 def test_NOTHING_is_recognized_before_lifting():
@@ -206,16 +206,16 @@ def test_NOTHING_is_recognized_before_lifting():
     have agreed by coincidence and the bridge would be doing nothing."""
     lib, got = intaken(LOOP)
     loop = find(lib, got.module, "for_stmt")[0]
-    assert strider.recognizes(lib, loop) == {}
+    assert pystrider.recognizes(lib, loop) == {}
     lift(lib, got.module)
-    assert set(strider.recognizes(lib, loop)) == {"as_iteration"}
+    assert set(pystrider.recognizes(lib, loop)) == {"as_iteration"}
 
 
 def test_lifting_binds_the_pattern_to_the_REAL_nodes():
     lib, got = intaken(LOOP)
     lift(lib, got.module)
     loop = find(lib, got.module, "for_stmt")[0]
-    got_bindings = strider.recognizes(lib, loop)["as_iteration"]
+    got_bindings = pystrider.recognizes(lib, loop)["as_iteration"]
     assert lib.graph.attr(got_bindings["seq"], "id") == "rows"
     assert lib.graph.attr(got_bindings["var"], "id") == "r"
 
@@ -251,14 +251,14 @@ def test_a_bridge_ABSTAINS_when_a_part_it_needs_is_simply_absent():
     applied = lift(lib, got.module)
     call = find(lib, got.module, "call")[0]
     assert lib.graph.targets(call, "to") == ()
-    assert set(strider.recognizes(lib, call)) == set()
+    assert set(pystrider.recognizes(lib, call)) == set()
     assert "as_application_from_call" not in applied
     # ⚠ THE VACUITY CONTROL, and it is the whole test: a bridge that abstained on EVERY call would pass
     # every line above. One argument is the difference between "not an application" and "not lifting".
     lib2, got2 = intaken("def f():\n    g(1)\n")
     applied2 = lift(lib2, got2.module)
     assert find(lib2, got2.module, "call") == applied2["as_application_from_call"]
-    assert set(strider.recognizes(lib2, find(lib2, got2.module, "call")[0])) == {"as_application"}
+    assert set(pystrider.recognizes(lib2, find(lib2, got2.module, "call")[0])) == {"as_application"}
 
 
 def test_recognizes_reports_PATTERNS_and_never_bridges():
@@ -267,7 +267,7 @@ def test_recognizes_reports_PATTERNS_and_never_bridges():
     lib, got = intaken(LOOP)
     lift(lib, got.module)
     loop = find(lib, got.module, "for_stmt")[0]
-    assert set(strider.recognizes(lib, loop)) == {"as_iteration"}
+    assert set(pystrider.recognizes(lib, loop)) == {"as_iteration"}
     assert "as_iteration_from_for_stmt" in lib.bridge_names
 
 
@@ -284,7 +284,7 @@ def f(x):
     node = find(lib, got.module, "if_stmt")[0]
     assert lib.graph.targets(node, "tests") == ()      # before lifting: intake's word only
     lift(lib, got.module)
-    assert set(strider.recognizes(lib, node)) == {"as_conditional"}
+    assert set(pystrider.recognizes(lib, node)) == {"as_conditional"}
 
 
 def test_an_absent_else_is_an_empty_block_not_a_missing_edge():
@@ -296,7 +296,7 @@ def f(x):
 """)
     lift(lib, got.module)
     node = find(lib, got.module, "if_stmt")[0]
-    else_body = strider.recognizes(lib, node)["as_conditional"]["else_body"]
+    else_body = pystrider.recognizes(lib, node)["as_conditional"]["else_body"]
     assert lib.graph.kind(else_body) == "block"
     assert lib.graph.targets(else_body, "stmt") == ()
 
@@ -319,7 +319,7 @@ def test_a_field_the_handler_did_not_consume_is_REFUSED_not_dropped():
 def test_control_the_now_MODELLED_signature_fields_round_trip():
     """⚠ The other half of the pin above: what used to be refused must now genuinely work, or widening
     the membrane would just have moved the silence somewhere else."""
-    from strider.emit import emit
+    from pystrider.emit import emit
     for source in ("def f(x=1):\n    return x", "@dec\ndef f(x):\n    return x",
                    "def f(*a, **k):\n    return 1"):
         lib, got = intaken(source)
@@ -330,7 +330,7 @@ def test_control_the_now_MODELLED_signature_fields_round_trip():
 def test_the_guard_is_structural_so_a_NEW_field_would_also_be_caught():
     """Enumerating fields to reject by hand would fix the four above and leave the next one to be found
     the same way. The default is inverted: a handler declares what it consumes, everything else refuses."""
-    from strider.intake import _CONSUMES
+    from pystrider.intake import _CONSUMES
     # Every handler declares what it consumes; `unconsumed` refuses the rest. Pinned on a construct we
     # DO model, so this stays meaningful as the membrane widens.
     assert "type_params" not in _CONSUMES["FunctionDef"]
@@ -338,7 +338,7 @@ def test_the_guard_is_structural_so_a_NEW_field_would_also_be_caught():
 
 
 def test_annotations_are_MODELLED_and_survive_the_round_trip():
-    from strider.emit import emit
+    from pystrider.emit import emit
     lib, got = intaken("def f(x: int, y: str) -> bool:\n    return x")
     assert got.complete
     assert emit(lib, got.module).strip() == "def f(x: int, y: str) -> bool:\n    return x"
@@ -364,10 +364,10 @@ def test_NO_neutral_label_appears_in_the_bridge_file():
     So the labels exist in exactly one place and drift is IMPOSSIBLE rather than detected — which is why
     the check went. Per ugm's own rule: a test guarding a mechanism that exists for lack of the structural
     answer is a smell; delete the mechanism and the test goes too. This pin guards the structure itself."""
-    from strider.library import RULES
-    from strider.patterns import pattern_of
+    from pystrider.library import RULES
+    from pystrider.patterns import pattern_of
 
-    lib = strider.load()
+    lib = pystrider.load()
     neutral = {label for name in lib.patterns for _k, label, _s, _o in pattern_of(lib, name)[1]}
     assert neutral, "no pattern labels found — this check would pass vacuously"
 
@@ -379,8 +379,8 @@ def test_NO_neutral_label_appears_in_the_bridge_file():
 
 def test_control_the_leak_check_BITES():
     """⚠ Vacuity control: a pattern label planted in bridge-shaped text must be caught."""
-    from strider.patterns import pattern_of
-    lib = strider.load()
+    from pystrider.patterns import pattern_of
+    lib = pystrider.load()
     neutral = {label for name in lib.patterns for _k, label, _s, _o in pattern_of(lib, name)[1]}
     planted = 'fn x(a) -> t:\n    LINK F(a) "%s" F(a)' % sorted(neutral)[0]
     code = "\n".join(l for l in planted.splitlines() if not l.lstrip().startswith("#"))
@@ -390,13 +390,13 @@ def test_control_the_leak_check_BITES():
 def test_a_lowering_is_derived_from_its_LIFTS_name():
     """No second table: `as_iteration_from_for_stmt` already says a `for_stmt` is an `iteration`, so the
     lowering is `as_for_stmt`."""
-    lib = strider.load()
+    lib = pystrider.load()
     assert lowering_for(lib, "as_iteration") == "as_for_stmt"
     assert lowering_for(lib, "as_conditional") == "as_if_stmt"
 
 
 def test_a_pattern_with_no_bridge_is_refused_by_name():
-    lib = strider.load()
+    lib = pystrider.load()
     with pytest.raises(KeyError) as exc:
         lowering_for(lib, "as_comprehension")
     assert "as_comprehension" in str(exc.value)
@@ -421,10 +421,10 @@ def test_every_kind_of_parameter_keeps_its_annotation(source):
     This is the `_CONSUMES["ClassDef"]["keywords"]` failure repeating: the `unconsumed` guard exists for
     exactly this and was bypassed by not being called. Both sides now go through ONE helper
     (`Intake.param`, `Emit.arg`), because a guard that must be remembered per site gets forgotten at one."""
-    lib = strider.load()
-    got = strider.intake(lib, source, origin="t")
+    lib = pystrider.load()
+    got = pystrider.intake(lib, source, origin="t")
     assert got.complete, got.unmodelled
-    assert strider.emit(lib, got.module) == source
+    assert pystrider.emit(lib, got.module) == source
 
 
 def test_the_annotation_bug_was_INVISIBLE_to_a_stability_check():
@@ -434,11 +434,11 @@ def test_the_annotation_bug_was_INVISIBLE_to_a_stability_check():
     compares emit-to-emit reports a clean fixpoint on code that has already lost the annotation. Only
     comparing against the ORIGINAL SOURCE catches it, which is what this pins: the weaker check passes on
     the very input the stronger one fails."""
-    lib = strider.load()
+    lib = pystrider.load()
     source = "def f(*, origin: str='x') -> None:\n    pass"
-    once = strider.emit(lib, strider.intake(lib, source, origin="t").module)
+    once = pystrider.emit(lib, pystrider.intake(lib, source, origin="t").module)
 
-    lib2 = strider.load()
-    twice = strider.emit(lib2, strider.intake(lib2, once, origin="t").module)
+    lib2 = pystrider.load()
+    twice = pystrider.emit(lib2, pystrider.intake(lib2, once, origin="t").module)
     assert once == twice, "the fixpoint check is stable either way — that is the point"
     assert once == source, "and only the comparison against the source can tell the two apart"

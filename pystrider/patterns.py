@@ -1,128 +1,183 @@
-"""The pattern library — structural descriptions that serve BOTH writing and understanding.
+"""The bidirectional pattern layer — one authored description, both halves.
 
-This module is the humble goal's central bet, made structural: *a library of patterns and composition
-rules, expressed AS RULES, so the same library serves both halves.* It holds descriptions, not
-directions. A pattern here is a conjunction of triples in a NEUTRAL vocabulary, which is what ugm
-accepts on either side of a rule:
+This is slice 0 promoted from probe to product. The reasoning lives in
+`experiments/microfunction_pattern.py`'s docstring; what follows is what a consumer needs to know.
 
-    read it as a rule BODY  ->  it recognizes the construct in code
-    read it as a rule HEAD  ->  it constructs the construct
+**WRITE** — `construct(lib, "as_iteration", seq=..., var=..., body=...)` calls the stored function.
+**READ** — `recognize(lib, node)` derives the description from that same stored body and matches it.
 
-Nothing in a pattern names Python, `pystrider.intake`'s vocabulary, or any emitter's vocabulary. Each
-consumer reaches its own world through a BRIDGE (`docs/vocabulary_bridge.md`) — which is why one
-description can serve a reader and a writer that share no predicate name.
+Neither half names a predicate. `repeats_over` appears in `pystrider/rules/patterns.mf` and NOWHERE ELSE —
+not in this package, and (since bridges began delegating through `INVOKE`) not in `python.mf` either.
+That is the property that makes it one library instead of two that agree, and it is now structural rather
+than checked: there is no second copy to drift.
 
-**Authoring rules for this file** (each learned the hard way; see the STANDING LESSONS in
-`docs/implementation_plan.md`):
+**Recognition returns BINDINGS, not a verdict** — *which* sequence, *which* variable, *which* body. That
+is `experiments/understand_partial.py`'s result carried across: the useful unit is the partial
+description, because a verdict tells a consumer nothing it can act on. `None` is an honest refusal.
 
-1. A pattern describes WHAT a construct is, never WHERE it goes. Position, order and scope are the
-   consuming pipeline's business — `at`/`stmt_before` are deliberately absent here, so the same
-   description serves a pipeline that sequences differently.
-2. A pattern is never used as a mint head directly. A skolem is keyed on the WHOLE MATCH, so a
-   description mentioning a per-element variable would mint one node per element. Mint the node on
-   invariants, then ATTACH the description with the node LHS-bound (where it mints nothing).
-3. Bridges are the only place naming is negotiated. If a pattern stops speaking the bridges' language
-   it stops reaching either world — which is the perturbation that proves this is one library
-   (`tests/test_bidirectional_pattern.py`).
+**⚠ The contract inversion, and why `Abstained` exists.** `driver.establishes` is built to RANK candidate
+actions: it over-approximates on purpose and its own docstring says it "orders but never rules out". For
+ranking, an incomplete effect set is safe — it loses no candidates. For recognition it is a false-positive
+generator, because a node can satisfy every readable effect while failing the one nobody could read. Same
+value, opposite safety. So recognition refuses where the driver would shrug.
 """
 from __future__ import annotations
 
-__all__ = ["ITERATION", "RECOGNIZE_ITERATION", "ITERATION_FROM_INTAKE", "ITERATION_TO_EMIT",
-           "APPLICATION", "RECOGNIZE_APPLICATION", "APPLICATION_FROM_INTAKE", "APPLICATION_TO_EMIT",
-           "CONDITIONAL", "RECOGNIZE_CONDITIONAL", "CONDITIONAL_FROM_INTAKE", "CONDITIONAL_TO_EMIT"]
+from .library import Library
+from .mf import driver, function
 
 
-# --- ITERATION: "for each element of a sequence, do something" ----------------------------------------
-# The first pattern. Deliberately says nothing about what the body does, where the loop sits, or how
-# its statements are ordered — only what makes an iteration an iteration.
-
-ITERATION = "?x repeats_over ?seq and ?x element ?v and ?x each_does ?body"
-
-# the description as a QUESTION.
-RECOGNIZE_ITERATION = "?x is_a iteration when " + ITERATION
+class Abstained(Exception):
+    """Recognition refused: the description could not be read completely, so it must not be matched."""
 
 
-# --- the bridges: each world's own names, lifted into the pattern's -----------------------------------
+def pattern_of(lib: Library, name: str) -> tuple:
+    """The description, read off the stored body. Returns `(subject_param, required_effects)`.
 
-# READ: what `pystrider.intake` emits from real Python (`for_loop` / `iterates` / `binds` / `loop_body`).
-# `?e reads ?s` unwraps intake's expression node for the iterated sequence — the pattern wants the
-# sequence, not the expression that mentions it.
-#
-# The head also stamps `from_code`, which is not decoration: a consumer that both WRITES structure and
-# READS it back holds neutral facts of both origins on one graph, so "is there an iteration over ?s"
-# would be satisfied by the loop the writer just minted — the check would verify its own intention
-# instead of the artifact. `from_code` is what lets a requirement say "the CODE contains this", which
-# is a different and stronger claim than "we meant to emit this".
-ITERATION_FROM_INTAKE = ("?f repeats_over ?s and ?f element ?v and ?f each_does ?b "
-                         "and ?f from_code yes "
-                         "when ?f is_a for_loop and ?f iterates ?e and ?e reads ?s "
-                         "and ?f binds ?v and ?f loop_body ?b")
+    The subject is the FIRST parameter — not a convention invented here, but the engine's own rule that a
+    cast returns its subject and `run` falls back to the first argument when a function sets no `result`.
+    Effects that do not hang off the subject are not part of what makes a node an instance."""
+    if name not in lib.names:
+        raise Abstained(f"{name!r} is not in the library; in repertoire: {', '.join(lib.names)}")
+    effects, unknown = driver.establishes(lib.graph, name)
+    params, _program = function.load(lib.graph, name)
+    if not params:
+        raise Abstained(f"{name}: no parameters, so no subject to recognize")
+    subject = params[0]
 
-# WRITE: what an emitter walks (`emit_for` / `iter_over` / `binds` / `body_has`). The body a pattern
-# describes is a DESCRIPTOR; `lowers_to` is how the consuming pipeline says which emitted statement
-# realizes it, so the pattern never has to know that pipeline's statement vocabulary.
-ITERATION_TO_EMIT = ("?l is_a emit_for and ?l iter_over ?s and ?l binds ?v and ?l body_has ?pr "
-                     "when ?l is_a loop_node and ?l repeats_over ?s and ?l element ?v "
-                     "and ?l each_does ?b and ?b lowers_to ?pr")
-
-
-# --- APPLICATION: "this function, applied to this value" ----------------------------------------------
-# The SECOND pattern, and deliberately a different SHAPE from the first: an iteration is a container of
-# statements, an application is an expression with an operand. If the library's construction only fitted
-# containers, `ITERATION` would have been tailored to its consumers rather than general — this is the
-# entry that tests that (`docs/implementation_plan.md`, the "second pattern" slice).
-#
-# It is a strictly stronger question than "does the code call f?". A call can be present and applied to
-# the wrong thing, which is the classic almost-right program; `invokes` cannot tell those apart and this
-# can. The two coexist on purpose: they are different questions, not two spellings of one.
-
-APPLICATION = "?x applies ?fn and ?x to ?arg"
-
-RECOGNIZE_APPLICATION = "?x is_a application when " + APPLICATION
-
-# READ: intake's call node, whose argument EXPRESSION is unwrapped to the value it reads. Honest limit —
-# this recognizes an application to a NAMED value; `f(g(x))` passes an expression that reads nothing, so
-# the outer application is not matched. That is a coverage gap in the pattern, not in the bridge, and it
-# is the kind no bridge can close (`docs/vocabulary_bridge.md`).
-APPLICATION_FROM_INTAKE = ("?c applies ?f and ?c to ?a and ?c from_code yes "
-                           "when ?c is_a call and ?c calls_func ?f "
-                           "and ?c passes ?e and ?e reads ?a")
-
-# WRITE: the emit vocabulary a payload walker consumes.
-APPLICATION_TO_EMIT = ("?n is_a ast_call and ?n callee ?fn and ?n argument ?arg "
-                       "when ?n is_a call_node and ?n applies ?fn and ?n to ?arg")
+    # ⭐ `unknown` used to be a bare bool, so ANY unreadable instruction darkened the whole description —
+    # including one writing to a node the description says nothing about. We reported that
+    # (`docs/feedback_microfunctions.md` §3) and ugm now returns the SET OF ROLES it could not resolve.
+    # So the abstention is exactly as wide as the ignorance: refuse when the SUBJECT is affected, and
+    # otherwise proceed on a description that is provably complete for what it claims.
+    if subject in unknown:
+        raise Abstained(f"{name}: the body writes something to its subject {subject!r} that cannot be "
+                        "read statically (a label or key from a register), so the description is "
+                        "incomplete exactly where it matters and matching it would admit nodes failing a "
+                        "requirement nobody could read")
+    required = tuple(sorted(e for e in effects if e[2] == subject))
+    if not required:
+        raise Abstained(
+            f"{name}: nothing is written onto its subject {subject!r}, so there is no description here. "
+            "Two ways that happens, and they are different: it MINTS its subject (a `NEW` puts it in a "
+            "register — ugm names those `$`-prefixed now, so the join survives upstream and this "
+            "refusal is `pystrider` looking for a PARAMETER), or it writes through a NAVIGATED register "
+            "(`GET` then `SET`), whose role `establishes` cannot yet recover at all — the open half of "
+            "docs/feedback_microfunctions.md §2. A pattern must be a CAST onto its subject; an "
+            "operation need not be a description at all.")
+    return subject, required
 
 
-# --- CONDITIONAL: "when this holds, do these things" --------------------------------------------------
-# The THIRD pattern, and again a different shape. `ITERATION` is an unconditional container (its body
-# runs, N times); `APPLICATION` is an expression. A conditional is a container whose body MAY NOT RUN AT
-# ALL, which is a distinction no earlier entry in this library makes — and the one that forced the build
-# loop to learn about reachability, because "this statement was never observed to print what it wants"
-# stops implying "this statement is wrong" the moment it can legitimately not run.
-#
-# `checks` rather than `tests`: intake already spends `tests` on its null-GUARD register, and the two
-# vocabularies are pinned disjoint. A pattern that borrowed a consumer's word would be reconciling by
-# coincidence instead of by a bridge.
-#
-# HONEST LIMIT, in the same register as `APPLICATION`'s: this describes the THEN side only. An `else`
-# body is not part of what this pattern says a conditional is, so a two-armed conditional is recognized
-# by its then-arm and its else-arm is invisible. That is a coverage gap in the PATTERN — the kind no
-# bridge can close (`docs/vocabulary_bridge.md`) — and closing it means a second description, not a
-# second bridge.
-CONDITIONAL = "?x checks ?cond and ?x then_does ?body"
+def construct(lib: Library, name: str, **parts):
+    """Build an instance by CALLING the pattern. Returns the new node.
 
-RECOGNIZE_CONDITIONAL = "?x is_a conditional when " + CONDITIONAL
+    The subject is minted here rather than by the pattern, which is finding #1 turned into an API: the
+    pattern must be a cast to stay readable, so somebody has to supply its subject, and that somebody is
+    the consumer. The minted node's kind is the pattern's declared return type."""
+    subject, _required = pattern_of(lib, name)
+    params, _program = function.load(lib.graph, name)
+    expected = set(params) - {subject}
+    if set(parts) != expected:
+        raise TypeError(f"{name}() wants {sorted(expected)}, got {sorted(parts)}")
+    node = lib.graph.mint(function.returns_of(lib.graph, name) or name)
+    function.invoke(lib.graph, name, {subject: node, **parts})
+    return node
 
-# READ: intake's STRUCTURAL register for `if` (`is_a branch` / `condition` / `then_body`), which is
-# deliberately shaped like the one it emits for `for` — per-SOURCE, emitted once, alongside the CFG
-# fork/merge that answers a different question entirely. `from_code` for the same reason `ITERATION`
-# stamps it: this consumer writes conditionals AND reads them back on one graph.
-CONDITIONAL_FROM_INTAKE = ("?f checks ?c and ?f then_does ?b and ?f from_code yes "
-                           "when ?f is_a branch and ?f condition ?e and ?e reads ?c "
-                           "and ?f then_body ?b")
 
-# WRITE: what the emitter walks. Same shape as `ITERATION_TO_EMIT` — the body a pattern describes is a
-# DESCRIPTOR, and `lowers_to` is how the consuming pipeline names the statement that realizes it.
-CONDITIONAL_TO_EMIT = ("?n is_a emit_if and ?n cond_on ?c and ?n body_has ?pr "
-                       "when ?n is_a cond_node and ?n checks ?c and ?n then_does ?b "
-                       "and ?b lowers_to ?pr")
+def recognize(lib: Library, node, name: str) -> dict | None:
+    """Is `node` an instance of this pattern? Returns the bindings, or `None` for an honest refusal."""
+    _subject, required = pattern_of(lib, name)
+    g = lib.graph
+    # ⚠ THE ONE PLACE the gap rule is enforced. `pystrider.intake` records a construct it could not model as
+    # a gap on whatever contains it. Recognizing past one would hand a consumer a description that is
+    # missing something it has no way to ask about — a `for` loop understood by two-thirds of its body,
+    # presented as a complete iteration. Same shape as abstaining on an incomplete effect set: an
+    # incomplete description must not be matched, whichever end the incompleteness came from.
+    #
+    # ⭐ **The abstention is as wide as the ignorance, and no wider** — the third incarnation of one fix.
+    # ugm narrowed `establishes`' `unknown` from a bool to a set of roles at our request; `intake.part`
+    # now names WHICH part went dark; and here that becomes: refuse when the gap is in something this
+    # description NAMES, not when it is anywhere below. A gap in a part the description never mentions
+    # cannot make the description wrong, and refusing on it was abstaining on an unrelated fact.
+    #
+    # ⚠ `own_gap` is the honest floor. Where intake could not place a gap — an operator it cannot name, an
+    # AST field nobody visited — nothing can say the description is unaffected, so it abstains as before.
+    if g.attr(node, "own_gap"):
+        return None
+    bindings: dict = {}
+    for kind, label, _subj, obj in required:
+        if kind == "link":
+            targets = g.targets(node, label)
+            if not targets or targets[0] is None:
+                # ⚠ `targets[0] is None` is not defensive noise. A bridge `GET`s a label and `INVOKE`s the
+                # pattern with what it found; when the label is absent the register holds nothing and the
+                # pattern's `LINK` still runs, so the graph gains an edge whose TARGET IS None and
+                # `targets` comes back non-empty. Caught by a binding that read `{'seq': None}`.
+                # Reported upstream — `docs/feedback_microfunctions.md` §10.
+                return None
+            # ⚠ A BOUND part must be whole, and `partial` is exactly the right question to ask of it: it
+            # is the propagated bit, so it covers a gap anywhere in that part's subtree. Handing back a
+            # binding to a half-read block is the same lie as recognizing a half-read loop.
+            if g.attr(targets[0], "partial") or g.attr(targets[0], "own_gap"):
+                return None
+            if obj is not None:
+                bindings[obj] = targets[0]
+        elif kind == "attr":
+            if g.attr(node, label) is None:
+                return None
+    return bindings
+
+
+def recognizes(lib: Library, node) -> dict:
+    """⭐ **What IS this?** — every pattern the node satisfies, with its bindings.
+
+    The bottom-up direction, and it mirrors `types.recognize`, which ugm added for the same reason on the
+    same day: every entry point was top-down. The two are complementary rather than redundant, and the
+    difference is worth stating because it is the whole reason this layer exists. `types.recognize` asks
+    which declared SCHEMAS a node satisfies — and a schema is `{label: (kind, count)}`, flat, with no way
+    to say that two of its edges land on related nodes. This asks which authored DESCRIPTIONS it
+    satisfies, and a description carries the join.
+
+    **Multi-pattern falls out**, the same way multi-type does for them: these are independent structural
+    predicates, so of course a node can be several things at once.
+
+    ⚠ A pattern that cannot be read is SKIPPED, not silently treated as unmatched — the two are different
+    answers and conflating them would hide a broken pattern behind a plausible negative."""
+    # ⚠ `lib.patterns`, NOT `lib.names`. A bridge writes the edges it would then match, so recognizing a
+    # node as one reports our own intention back to us — no information, and actively misleading next to
+    # the real recognitions. See `pystrider/library.py` for why the file is what draws the line.
+    out = {}
+    for name in lib.patterns:
+        try:
+            got = recognize(lib, node, name)
+        except Abstained:
+            continue
+        if got is not None:
+            out[name] = got
+    return out
+
+
+def unreadable(lib: Library, *, describing_only: bool = True) -> dict:
+    """Which functions cannot be read as descriptions, and why — the honest companion to `recognizes`
+    skipping them.
+
+    **⚠ `describing_only` defaults to True, and the default is the point.** A *pattern* that cannot be
+    read is a defect: it is a description that describes nothing, and it will look exactly like a node
+    that failed to match.
+
+    Nothing else in the library owes us a description. An **operation** navigates to a part and writes
+    there, so nothing lands on its declared subject. A **bridge** now DELEGATES — a lift `INVOKE`s the
+    pattern rather than restating its labels — which makes it opaque to `establishes` by construction.
+    Both are actions, and actions are not descriptions.
+
+    ⚠ Bridges were in this set until they started delegating, and the pin went red. That was the right
+    signal: it is the moment a bridge stopped being a thing you could read and became a thing that does
+    something. Pass `describing_only=False` to see everything."""
+    considered = lib.patterns if describing_only else lib.names
+    out = {}
+    for name in considered:
+        try:
+            pattern_of(lib, name)
+        except Abstained as exc:
+            out[name] = str(exc)
+    return out

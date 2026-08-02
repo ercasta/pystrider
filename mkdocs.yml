@@ -17,17 +17,21 @@ use_directory_urls: false
 
 # The dated historical logs live in docs/ for the repo's own record, but are not part of the
 # published site (which presents only the current generation of the system).
+#
+# ⚠ 2026-08-02: the generation this site DESCRIBES was retired (see the nav note below), so most of
+# what remains here documents code that no longer exists. It is excluded rather than deleted until
+# the site is re-authored, so the prose survives for the record without being published as current.
 exclude_docs: |
   critique.md
   spike_findings.md
   implementation_plan.md
-  grammapy/
-
-# Built for their cross-references, but kept out of the top nav.
-not_in_nav: |
-  api_absorption_design.md
-  code_reasoning_design.md
-  codegen_understand.md
+  deep_dive.md
+  understanding_findings.md
+  roadmap.md
+  oracle_contracts.md
+  the_case.md
+  ast_representation_findings.md
+  vocabulary_bridge.md
 
 theme:
   name: material
@@ -86,18 +90,11 @@ extra:
 extra_css:
   - stylesheets/extra.css
 
-extra_javascript:
-  - javascripts/pystrider_play.js
-
+# ⚠ 2026-08-02 — THE SITE AWAITS RE-AUTHORING, and the nav is short because of it, not because pages
+# were lost. The two live Pyodide playgrounds ran `demos/playground/`, and the pages around them
+# described `grammapy` and the `ugm`-classic `pystrider`; all of that was retired when `strider/` took
+# the name. Publishing them would have been a site describing code that is not in the repo. They are
+# deleted rather than fixed because the new generation authors `.mf` rather than CNL, so the playgrounds
+# are a rewrite and not a repair. `pystrider/HANDOFF.md` is the current front door until this is redone.
 nav:
   - Home: index.md
-  - The case: the_case.md
-  - Try it live:
-      - "Generate — CNL → code": generate.md
-      - "Understand — code → aspects": understand.md
-      - Playground (how it works): playground.md
-  - Deep dive: deep_dive.md
-  - Understanding findings: understanding_findings.md
-  - Reference:
-      - Roadmap: roadmap.md
-      - Oracle contracts: oracle_contracts.md

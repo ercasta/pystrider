@@ -1,0 +1,52 @@
+# THE TWO STEPS THAT LEAVE THE GRAPH — rendering the app, and running it.
+#
+# Everything else `pystrider` does happens inside a graph we own. These two do not, and that is why they are
+# in their own file: `dispatch` is the one place an effect crosses the boundary, and `loop.verb_of` reads
+# the instruction a task is ON to say — **before the step is taken** — whether it is a `look` or an `act`.
+# A generator that could not make that distinction about its own output would be trusting a claim it had
+# no way to state.
+#
+# ⭐⭐ **THE TWO ARE REGISTERED DIFFERENTLY AND THAT IS THE WHOLE POINT.** `render_app` is registered
+# `observes=True`: it reads the graph and returns text, and nothing outside the machine can tell it ran.
+# `drive_app` is registered without it, so it counts as changing the world — because it does: it `exec`s
+# the source we just wrote and drives a real Textual app. A driver that declines irreversible steps takes
+# the first and stops before the second, which is the last moment at which the whole generation could
+# still be thrown away for free.
+#
+# ⚠ These are operations by category (`pystrider/library.py`) and the planner still cannot propose one:
+# neither declares a return type, so `function.producers` never offers it. The safety property is NOT
+# that we remembered to keep them out of the plan — it is that nothing can want them.
+#
+# ⚠ **THEY POLL, AND THE COORDINATION IS DATA ON THE BUILD NODE.** Both are scheduled at the start,
+# before there is anything to render or run, because the alternative — Python scheduling each task at the
+# moment it becomes possible — would put the pipeline's control flow back in Python, which is the thing
+# the outer loop exists to end. So each waits for the state that makes it applicable, and the failure
+# path is an authored flag (`abandoned`) rather than a Python `if`.
+
+# Render the emitted app once the plan has been carried out — a LOOK, and it never runs anything.
+fn render_the_app(b, p):
+    .wait:
+    ATTR R(phase) F(p) "phase"
+    CONST R(finished) "done"
+    EQ R(over) R(phase) R(finished)
+    JMPNOT R(over) ".wait"
+    ATTR R(ok) F(b) "finishes"
+    JMPNOT R(ok) ".nothing"
+    DISPATCH R(result) "render_app" F(b)
+    JMP ".end"
+    .nothing:
+    SET F(b) "abandoned" "the generation did not reach an app to render"
+    .end:
+
+# Run it. ⚠ THE IRREVERSIBLE STEP. Everything before this can be discarded at no cost; after it, code we
+# wrote has executed. It gives up honestly when the generation was abandoned rather than spinning.
+fn run_the_app(b):
+    .wait:
+    ATTR R(source) F(b) "source"
+    JMPIF R(source) ".ready"
+    ATTR R(gone) F(b) "abandoned"
+    JMPNOT R(gone) ".wait"
+    JMP ".end"
+    .ready:
+    DISPATCH R(result) "drive_app" F(b)
+    .end:

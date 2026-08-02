@@ -14,8 +14,8 @@ import ast
 
 import pytest
 
-from strider.mf import dispatch, driver, function, loop as L
-import strider
+from pystrider.mf import dispatch, driver, function, loop as L
+import pystrider
 
 from experiments.strider_agenda import (DRIVE, RENDER, Cart, generate, leaves_the_machine,
                                         open_generation, parses)
@@ -72,7 +72,7 @@ def test_THE_TWO_LINES_OF_IRREVERSIBILITY_and_why_we_stop_at_the_LATER_one():
 
     `loop.verb_of` answers `act` for a `replay` **unconditionally** — it never looks at what the plan's
     operations do. For ugm that is right: a replay writes to the real graph and nothing is undone. But
-    `strider`'s replay only rearranges an AST we own, so ugm's line falls *before* anything exists to
+    `pystrider`'s replay only rearranges an AST we own, so ugm's line falls *before* anything exists to
     look at, and a generator pausing there can show its author nothing.
 
     This runs the same generation under ugm's own line and pins the cost: the loop stops with **no
@@ -131,7 +131,7 @@ def unwatched():
 
 
 def test_a_watcher_authored_as_TEXT_stops_our_own_generation_MID_FLIGHT(unwatched):
-    """⭐⭐ `strider/rules/watch.mf` reads the live search's `steps` against a budget and writes `stop`.
+    """⭐⭐ `pystrider/rules/watch.mf` reads the live search's `steps` against a budget and writes `stop`.
 
     Everything it needs was already data — the state of a running computation, the agenda that lets it
     run *beside* what it watches, and `stop` as an ordinary attribute anything may write. Nothing here is
@@ -210,7 +210,7 @@ def test_a_MONITOR_is_a_fourth_category_and_nothing_can_ever_WANT_one():
 
     Vacuity guard: an operation from the same library IS a producer, so this is a fact about monitors and
     not about our reading of `returns_of`."""
-    lib = strider.load()
+    lib = pystrider.load()
     g = lib.graph
 
     assert lib.monitors == ("watch_generating",)
@@ -225,7 +225,7 @@ def test_the_two_WORLD_functions_are_the_only_ones_that_can_reach_the_world():
     """⚠ `dispatch` is the one place an effect leaves the graph, so "which of our functions can touch the
     world" is answerable by reading the library rather than by trusting a file name. `world.mf` is a
     separate file so a reader does not have to — and this pin is what keeps the file name honest."""
-    lib = strider.load()
+    lib = pystrider.load()
     g = lib.graph
     dispatching = {name for name in lib.names
                    if any(str(i).startswith("DISPATCH") for i in function.load(g, name)[1])}

@@ -34,8 +34,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from strider.library import Library
-from strider.mf import asm, driver, goal as G, new_graph, types
+from pystrider.library import Library
+from pystrider.mf import asm, driver, goal as G, new_graph, types
 
 VOCABULARIES = Path(__file__).resolve().parent / "vocabularies"
 
@@ -84,7 +84,7 @@ def ask(lib, cart, key, *, max_depth=6, **kw) -> dict:
     """Ask ONE question, goal-directed: can `key` be made true for this cart?
 
     Returns the verdict, the derivation chain that established it, and what it cost."""
-    from strider.mf import thread as T
+    from pystrider.mf import thread as T
     g = lib.graph
     goal = G.open_goal(g, about=cart, label=f"{key} for this cart")
     G.require_attr(g, goal, cart, key, True)
@@ -113,7 +113,7 @@ def why_not(lib, cart, report, markers=("unsupported_confirmation_step",
     **The lesson worth carrying: on this substrate a refusal has to be RETRIEVED from imagination, never
     read off the world.** Any operation that wants to explain itself must record the reason where the
     frames are, and something must go and look."""
-    from strider.mf import workbench as W
+    from pystrider.mf import workbench as W
     g = lib.graph
     findings: dict = {}
     for frame in W.frames(g, report["workbench"]):

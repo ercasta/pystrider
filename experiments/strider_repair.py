@@ -1,7 +1,7 @@
 """SLICE 3 — a GOAL drives a code repair, end to end, on the microfunctions engine.
 
 Everything before this could read code and write code. Nothing could *do* anything: there was no goal, no
-plan, and no repair. This is the slice where `strider`'s pipeline meets ugm's driver, and it is deliberately
+plan, and no repair. This is the slice where `pystrider`'s pipeline meets ugm's driver, and it is deliberately
 the same bug `experiments/first_principles_repair.py` solved on the OLD engine — an off-by-one guard, given
 only as examples — so the re-derivation can be checked against a real prior result rather than against our
 own judgement.
@@ -22,7 +22,7 @@ which means **a candidate repair can never be evaluated by running the patched c
 structurally unavailable where the choosing happens, and that is a guarantee rather than an oversight.
 
 So the evaluation has to DERIVE the answer from structure: read the operator, the threshold and the branch
-bodies, and work out what the function would return. That is `strider/rules/repair.mf`'s `evaluate_case`,
+bodies, and work out what the function would return. That is `pystrider/rules/repair.mf`'s `evaluate_case`,
 and it is pure graph reasoning, so it runs happily on a copy.
 
     IMAGINATION DERIVES.  REALITY EXECUTES.
@@ -42,10 +42,10 @@ Run it: `python -m experiments.strider_repair`
 """
 from __future__ import annotations
 
-import strider
-from strider.emit import emit
-from strider.lift import reachable
-from strider.mf import driver, goal as G, types
+import pystrider
+from pystrider.emit import emit
+from pystrider.lift import reachable
+from pystrider.mf import driver, goal as G, types
 
 BUGGY = """def classify(age):
     if age > 18:
@@ -59,9 +59,9 @@ CASES = ((18, "adult"), (25, "adult"), (10, "minor"))
 
 def setup(source: str = BUGGY, cases=CASES):
     """Intake the code, declare the types the planner needs, and materialise the cases as graph nodes."""
-    lib = strider.load()
+    lib = pystrider.load()
     g = lib.graph
-    got = strider.intake(lib, source, origin="bug report")
+    got = pystrider.intake(lib, source, origin="bug report")
 
     # ⚠ Types are what make the repairs PROPOSABLE. `driver.proposals` enumerates type-valid bindings, so
     # an operation nothing can be bound to is an operation the planner cannot see.
@@ -94,7 +94,7 @@ def state_of_cases(lib, cases) -> dict:
 
 def diagnose(lib, cases) -> dict:
     """Run the evaluator once over the unrepaired code. Which examples disagree IS the diagnosis."""
-    from strider.mf import function
+    from pystrider.mf import function
     for c in cases:
         function.invoke(lib.graph, "evaluate_case", {"k": c})
     return state_of_cases(lib, cases)
@@ -123,8 +123,8 @@ def repair(source: str = BUGGY, cases=CASES, **kw) -> dict:
 
 
 def _thread(g):
-    from strider.mf import asm  # noqa: F401  (kept local: thread lives beside the driver, not the library)
-    from strider.mf import thread as T
+    from pystrider.mf import asm  # noqa: F401  (kept local: thread lives beside the driver, not the library)
+    from pystrider.mf import thread as T
     return T.open_thread(g, "repair")
 
 
@@ -134,7 +134,7 @@ def adopt(out: dict) -> str:
     `execution.execute` was written for workbench plans long before this existed and replays this one
     unchanged — the plan is not a value our planner returned, it is the frame path, which already *is*
     replayable."""
-    from strider.mf import execution as E
+    from pystrider.mf import execution as E
     lib, report = out["lib"], out["report"]
     # ⚠ `execute` takes the winning LEAF FRAME, not the frame path. Passing the path silently replayed
     # nothing and returned a clean-looking report — caught only by the gate below noticing the emitted

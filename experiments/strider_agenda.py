@@ -6,21 +6,21 @@ ours rather than merely elegant, and this probe is the two of them measured on t
 built.
 
 **⭐⭐ 1. A CODE GENERATOR'S IRREVERSIBLE STEP IS RUNNING WHAT IT WROTE, and now it is declared.** The
-whole of `strider` up to `ast.unparse` is imagination: a plan can be discarded, a graph can be dropped,
-text costs nothing. `exec`ing that text cannot be taken back. `strider/rules/world.mf` puts both steps
+whole of `pystrider` up to `ast.unparse` is imagination: a plan can be discarded, a graph can be dropped,
+text costs nothing. `exec`ing that text cannot be taken back. `pystrider/rules/world.mf` puts both steps
 behind `DISPATCH` and registers them differently — `render_app` observes, `drive_app` acts — so
 `loop.verb_of` answers `look` for the first and `act` for the second **before either is taken**, and a
 driver stops with the source in hand and nothing run.
 
 **⭐⭐ 2. A WATCHER AUTHORED AS TEXT JUDGES OUR OWN GENERATION MID-FLIGHT AND STOPS IT.**
-`strider/rules/watch.mf` reads the live search's `steps` against a budget and writes `stop`. It is on the
+`pystrider/rules/watch.mf` reads the live search's `steps` against a budget and writes `stop`. It is on the
 same agenda as the thing it watches, so it judges *while* the search runs rather than delivering a
 post-mortem — and the refusal that comes back is honest: no plan, no source, and the app never ran.
 
 **⚠⚠ THE FINDING, and it is about `verb_of` rather than about us: THERE ARE TWO LINES OF
 IRREVERSIBILITY AND THE VOCABULARY HAS ONE WORD.** `loop.verb_of` answers `act` for a `replay`
 *unconditionally* — it does not look at what the plan's operations do. For ugm that is right and safe: a
-replay applies operations to the real graph and nothing is ever undone. But `strider`'s replay only
+replay applies operations to the real graph and nothing is ever undone. But `pystrider`'s replay only
 rearranges an AST we own, and by that reading a generator must stop before it has anything to show, which
 makes the pause useless exactly when it should be informative.
 
@@ -67,10 +67,10 @@ from __future__ import annotations
 
 import ast
 
-import strider
-from strider.emit import emit
-from strider.mf import Focus, Machine, dispatch, driver, function, loop as L
-from strider.library import Library
+import pystrider
+from pystrider.emit import emit
+from pystrider.mf import Focus, Machine, dispatch, driver, function, loop as L
+from pystrider.library import Library
 
 from experiments.strider_app import Cart, build_goal, decisions, run_events, setup
 
@@ -106,7 +106,7 @@ def register_tools(lib) -> None:
 
 def open_generation(cart: Cart = Cart(), *, budget: int | None = None, **kw) -> dict:
     """Everything scheduled, nothing done. Four tasks, one agenda, in the order they were asked for."""
-    from strider.mf import thread as T
+    from pystrider.mf import thread as T
 
     lib, build, module = setup(cart)
     g = lib.graph

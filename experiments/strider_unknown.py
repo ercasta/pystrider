@@ -7,9 +7,9 @@ already have.
 **Their defect, in their words: NOT LOOKED, as distinct from NOT THERE.** An attribute was present or
 absent and absence meant *lacks it*, so the engine could not tell "make p true" from "find out whether p".
 
-**Ours, one level up.** `strider.intake` marks a container `partial` when it holds a construct we could
+**Ours, one level up.** `pystrider.intake` marks a container `partial` when it holds a construct we could
 not read. That bit is honest but it is a BIT: it says *something below is unreadable* and gives no way to
-ask *what*. So `strider.patterns.recognize` had to refuse the whole node — including when the gap sits in
+ask *what*. So `pystrider.patterns.recognize` had to refuse the whole node — including when the gap sits in
 a part the description never mentions.
 
 ⭐ **And we have already been on the other side of this exact fix.** `driver.establishes` used to report
@@ -32,7 +32,7 @@ the headline reach number cannot move and this probe does not report one.
 
 ---
 
-## The prediction, written before the measurement (process note: `strider/HANDOFF.md` §7)
+## The prediction, written before the measurement (process note: `pystrider/HANDOFF.md` §7)
 
 Recovered recognitions come only from gaps in parts no description names. Reading `patterns.mf` against
 `python.mf`, each description names:
@@ -68,7 +68,7 @@ matters least — the band said 10-30%, the answer was 4.9%, and the reason is w
   `own_gap` column read 100%, which is not a shape Python has; a probe printing only the headline would
   have published a clean, confident zero.
 * **42.7%** — a real bug in the slice, caught by a *test* rather than by the sweep, and the finding this
-  slice is actually worth reading for. See `placeholder()` in `strider/intake.py` and
+  slice is actually worth reading for. See `placeholder()` in `pystrider/intake.py` and
   `test_an_unreadable_part_RENUMBERS_the_readable_ones_unless_something_stands_in_its_place`: recording a
   gap and linking nothing let the surviving arguments RENUMBER, so `f([c for c in xs], x)` was described
   as *"applies `f` to `x`"*. Two thirds of the "recovery" was that error being counted as a success.
@@ -81,7 +81,7 @@ result published as a win.
 **⚠ And 4.9% is a No, stated as one.** The invariant is better — the abstention is now as wide as the
 ignorance and no wider, which is the right shape and worth keeping — but as a lever this buys almost
 nothing, and it buys it entirely because `as_application` describes a call narrowly. `emit` is unmoved,
-so the headline reach is unmoved. Comprehensions remain the lever (`strider/HANDOFF.md` §5); ignorance
+so the headline reach is unmoved. Comprehensions remain the lever (`pystrider/HANDOFF.md` §5); ignorance
 was not one.
 
 Run it: `python -m experiments.strider_unknown`
@@ -90,21 +90,27 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from strider.library import load
-from strider.lift import lift, reachable
-from strider.patterns import recognize
-from strider.intake import intake
+from pystrider.library import load
+from pystrider.lift import lift, reachable
+from pystrider.patterns import recognize
+from pystrider.intake import intake
 
 REPO = Path(__file__).resolve().parent.parent
 
 #: The same corpus the reach measurements use — our own repo. ⚠ Not representative Python (see
-#: `strider/HANDOFF.md` §6); it measures the membrane, not the language.
-CORPUS = ("strider", "pystrider", "experiments", "grammapy")
+#: `pystrider/HANDOFF.md` §6); it measures the membrane, not the language.
+#:
+#: ⚠ This read `("strider", "pystrider", "experiments", "grammapy")` until the 2026-08-02 retirement, and
+#: the rename of `strider` → `pystrider` turned the first two entries into the SAME FOLDER TWICE while
+#: `grammapy` became a folder that no longer exists. The sweep skips a missing dir silently and happily
+#: walks a repeated one, so this would have gone on reporting a number — with every file in the package
+#: counted twice. A corpus is DATA, and a mechanical rename edits data as readily as code.
+CORPUS = ("pystrider", "experiments")
 
 #: Which description applies to which intaken kind. Derived from the bridges, never tabulated here — the
-#: table would be the second copy `strider.lift` exists to avoid.
+#: table would be the second copy `pystrider.lift` exists to avoid.
 def described(lib) -> dict:
-    from strider.lift import bridges
+    from pystrider.lift import bridges
     return {kind: name.split("_from_", 1)[0] for kind, name in bridges(lib).items()}
 
 

@@ -1,4 +1,4 @@
-"""Pins for `strider/` — pystrider's bidirectional-pattern bet, running on ../ugm's microfunctions engine.
+"""Pins for `pystrider/` — pystrider's bidirectional-pattern bet, running on ../ugm's microfunctions engine.
 
 Slice 0 (`tests/test_microfunction_pattern.py`) established that the bet is expressible. These pin it as
 a PRODUCT: authored `.mf` files on disk, a loader, and both halves reaching structure only through what
@@ -6,9 +6,9 @@ those files say.
 """
 import pytest
 
-from strider import Abstained, construct, load, pattern_of, recognize, recognizes
-from strider.library import RULES
-from strider.patterns import unreadable
+from pystrider import Abstained, construct, load, pattern_of, recognize, recognizes
+from pystrider.library import RULES
+from pystrider.patterns import unreadable
 
 
 def parts(lib, *kinds):
@@ -68,8 +68,8 @@ def test_no_predicate_name_is_hardcoded_outside_the_mf_files():
     expected — a hardcoded value is not. (The first version of this check grepped the source and failed
     on its own docstring, which would have pushed the explanation out of the module to satisfy it.)"""
     import ast
-    import strider.library as library_mod
-    import strider.patterns as patterns_mod
+    import pystrider.library as library_mod
+    import pystrider.patterns as patterns_mod
 
     authored = RULES.joinpath("patterns.mf").read_text(encoding="utf-8")
     predicates = {tok.strip('"') for tok in authored.split() if tok.startswith('"')}

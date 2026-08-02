@@ -10,10 +10,10 @@ import ast
 
 import pytest
 
-import strider
+import pystrider
 from experiments import strider_app as A
-from strider.lift import reachable
-from strider.mf import driver, function, goal as GG, thread as T, types, workbench as W
+from pystrider.lift import reachable
+from pystrider.mf import driver, function, goal as GG, thread as T, types, workbench as W
 
 textual = pytest.importorskip("textual", reason="the drive needs the real toolkit")
 
@@ -23,12 +23,12 @@ textual = pytest.importorskip("textual", reason="the drive needs the real toolki
 def test_skeleton_and_every_fragment_are_fully_modelled():
     """No fragment is `partial`, so none is spliced in half-read.
 
-    ⚠ This is not a formality: `strider.emit` refuses a partial node, so an unmodelled construct anywhere
+    ⚠ This is not a formality: `pystrider.emit` refuses a partial node, so an unmodelled construct anywhere
     in the authored Python would surface as a refusal at emit time with no indication of which fragment
     caused it. Failing here names the file."""
-    lib = strider.load()
+    lib = pystrider.load()
     for label, source in (("skeleton", A.SKELETON), *A.FRAGMENTS.items()):
-        got = strider.intake(lib, source, origin=label)
+        got = pystrider.intake(lib, source, origin=label)
         assert got.complete, f"{label} is not fully modelled: {got.unmodelled}"
 
 
@@ -37,17 +37,17 @@ def test_compose_needs_yield_and_yield_is_what_slice_7_added():
 
     A `compose` method is a generator, so one unmodelled expression made every Textual app partial. Pinned
     by removing it from the modelled set and watching the skeleton go partial."""
-    lib = strider.load()
-    assert strider.intake(lib, A.SKELETON, origin="skeleton").complete
+    lib = pystrider.load()
+    assert pystrider.intake(lib, A.SKELETON, origin="skeleton").complete
 
-    lib2 = strider.load()
-    intake = strider.intake.__module__
+    lib2 = pystrider.load()
+    intake = pystrider.intake.__module__
     walker = __import__(intake, fromlist=["Intake"]).Intake(lib2, "no-yield")
     delattr_target = walker.__class__
     saved = delattr_target._Yield
     try:
         del delattr_target._Yield
-        got = strider.intake(lib2, A.SKELETON, origin="skeleton")
+        got = pystrider.intake(lib2, A.SKELETON, origin="skeleton")
         assert not got.complete
         assert any(name == "Yield" for name, _line in got.unmodelled)
     finally:
@@ -56,11 +56,11 @@ def test_compose_needs_yield_and_yield_is_what_slice_7_added():
 
 def test_yield_round_trips_through_text():
     """Read and write are separate capabilities, so the widening is checked in both directions."""
-    lib = strider.load()
+    lib = pystrider.load()
     source = "def compose(self):\n    yield Input(id='amount')"
-    got = strider.intake(lib, source, origin="t")
+    got = pystrider.intake(lib, source, origin="t")
     assert got.complete
-    assert strider.emit(lib, got.module) == source
+    assert pystrider.emit(lib, got.module) == source
 
 
 # --- the plan IS the derivation ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ def test_a_missing_operation_refuses_rather_than_emitting_a_half_app():
     # ⚠ `def _finish`, not `_finish`. The skeleton CALLS `self._finish(total)` unconditionally — that call
     # is the seam and it is always there. Asserting on the bare name passed for the wrong reason and would
     # have gone on passing if the fragment had been spliced. What must be absent is the DEFINITION.
-    assert "def _finish" not in strider.emit(lib, module)
+    assert "def _finish" not in pystrider.emit(lib, module)
 
 
 def test_the_seam_collision_that_the_drive_found_would_still_be_invisible_structurally():

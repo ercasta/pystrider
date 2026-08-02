@@ -1,17 +1,13 @@
 name: Build & deploy the docs site
 
+# ⚠ 2026-08-02 — AUTO-DEPLOY IS OFF ON PURPOSE, and this is a pause rather than a retirement.
+# The generation this site presented (the `ugm`-classic `pystrider`, `grammapy`, and the two Pyodide
+# playgrounds built from `demos/playground/`) was deleted when `strider/` took the `pystrider` name. A
+# push-triggered build would either fail on the missing sources or, worse, succeed and publish a site
+# describing code that is no longer in the repo. Leaving it on `workflow_dispatch` keeps the LIVE site
+# exactly as it was last deployed — nothing is withdrawn from anyone's browser — while nothing new is
+# published until the site is re-authored for the new generation. Restore the `push:` block then.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "docs/**"
-      - "mkdocs.yml"
-      - "requirements-docs.txt"
-      - "demos/playground/**"
-      - "pystrider/**"
-      - "grammapy/**"
-      - "pyproject.toml"
-      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 # Allow the workflow to publish to GitHub Pages.
@@ -59,10 +55,9 @@ jobs:
           python -c "import json,glob,os; print(json.dumps([os.path.basename(w) for w in glob.glob('docs/wheels/*.whl')]))" > docs/wheels/manifest.json
           cat docs/wheels/manifest.json
 
-      - name: Stage the browser Python sources
-        run: |
-          mkdir -p docs/play
-          cp demos/playground/brew.py demos/playground/web_api.py docs/play/
+      # ⚠ The "Stage the browser Python sources" step was here. It copied `demos/playground/brew.py`
+      # and `web_api.py` into `docs/play/` for the in-browser engine; both were deleted with the old
+      # generation. Removed rather than commented-in-place so a manual dispatch does not fail on it.
 
       - name: Build the MkDocs site
         run: mkdocs build --site-dir site

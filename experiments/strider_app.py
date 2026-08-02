@@ -13,10 +13,10 @@ which is a better audit trail than the saturated graph it replaces, because a sa
 what became true.
 
 **⭐ WHAT REPLACES THE TEMPLATES: graph surgery on a parsed AST.** The skeleton and every fragment go
-through `strider.intake`, so each carries `from_code`, an `origin` and a `source_line`. The operations in
-`strider/rules/app.mf` splice *those nodes* into the class body, and `strider.emit` renders the result
+through `pystrider.intake`, so each carries `from_code`, an `origin` and a `source_line`. The operations in
+`pystrider/rules/app.mf` splice *those nodes* into the class body, and `pystrider.emit` renders the result
 through `ast.unparse`. Nothing is concatenated, so nothing can be concatenated wrong: the output is valid
-Python by construction rather than by inspection, and a fragment containing a construct `strider` cannot
+Python by construction rather than by inspection, and a fragment containing a construct `pystrider` cannot
 model is REFUSED by the membrane instead of being pasted in unread.
 
 **⚠ THE HONEST LINE BETWEEN AUTHORED AND DERIVED.** The fragment *bodies* are authored Python. This is not
@@ -63,10 +63,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-import strider
-from strider.emit import emit
-from strider.lift import reachable
-from strider.mf import driver, function, goal as G, types
+import pystrider
+from pystrider.emit import emit
+from pystrider.lift import reachable
+from pystrider.mf import driver, function, goal as G, types
 
 # --- the authored code: one skeleton with two named SEAMS, and the fragments that fill them ------------
 #
@@ -234,11 +234,11 @@ def find_class_constant(lib, class_node, name: str):
 
 def setup(cart: Cart = Cart()):
     """Intake the skeleton and every fragment, then mint the build node that ties them together."""
-    lib = strider.load()
+    lib = pystrider.load()
     g = lib.graph
     declare_types(g)
 
-    skeleton = strider.intake(lib, SKELETON, origin="app skeleton")
+    skeleton = pystrider.intake(lib, SKELETON, origin="app skeleton")
     if not skeleton.complete:
         raise AssertionError(f"the skeleton is not fully modelled: {skeleton.unmodelled}")
     app_class = find_class(lib, skeleton.module)
@@ -250,7 +250,7 @@ def setup(cart: Cart = Cart()):
     g.link(build, "applies_constant", find_class_constant(lib, app_class, "APPLIES"))
 
     for label, source in FRAGMENTS.items():
-        got = strider.intake(lib, source, origin=f"fragment {label}")
+        got = pystrider.intake(lib, source, origin=f"fragment {label}")
         if not got.complete:
             raise AssertionError(f"fragment {label} is not fully modelled: {got.unmodelled}")
         # ⚠ The DEFINITION, not the module. A module node would drag a second `module` into the frame and
@@ -276,7 +276,7 @@ def build_goal(g, build):
 
 def derive(cart: Cart = Cart(), **kw) -> dict:
     """Pursue the goal by imagining, then replay the winning plan against the real graph and emit."""
-    from strider.mf import execution as E, thread as T
+    from pystrider.mf import execution as E, thread as T
 
     lib, build, module = setup(cart)
     g = lib.graph

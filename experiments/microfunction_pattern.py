@@ -31,7 +31,7 @@ anything is rewritten.
 
    `minting_is_not_recognizable()` below now measures the NEW behaviour and is renamed accordingly. The
    original finding is kept here rather than deleted because it is the reason the fix exists, and because
-   `strider/` still authors patterns as casts — a choice that is now a preference rather than a
+   `pystrider/` still authors patterns as casts — a choice that is now a preference rather than a
    necessity, and one that should be revisited deliberately rather than by drift.
 
    **⚠ Still open, and the half that matters more to us: NAVIGATION.** A register assigned by `GET R(s)
@@ -64,7 +64,7 @@ from __future__ import annotations
 # `microfunctions` imports plainly since ugm added it to `packages` — reported as
 # `docs/feedback_microfunctions.md` §1, fixed, and verified upstream against a real wheel. This file
 # previously carried a `sys.path` fix; it is gone.
-from strider.mf import asm, driver, function as fn, new_graph
+from pystrider.mf import asm, driver, function as fn, new_graph
 
 
 # --- THE PATTERN, authored once, as ONE microfunction -------------------------------------------------
@@ -193,7 +193,7 @@ def round_trip() -> dict:
 def minting_is_not_recognizable() -> dict:
     """Finding #1, as it stands AFTER ugm's fix: a minted register is now a subject, so the join the
     original measurement found missing is present — carried on a `$`-prefixed role rather than a
-    parameter name. `strider`'s `pattern_of` still refuses this shape, because it looks for a subject
+    parameter name. `pystrider`'s `pattern_of` still refuses this shape, because it looks for a subject
     among the PARAMETERS; that is now our restriction, not the engine's."""
     g = library(minting_source())
     effects, unknown = driver.establishes(g, "make_iteration")
@@ -220,7 +220,7 @@ def navigation_still_loses_roles() -> dict:
 
     ugm shipped exactly that: the role is now a **path**, `a.over` — "the `over` of parameter `a`". So a
     navigating function keeps its joins, and the consequence for us is that BRIDGES ARE NOW READABLE as
-    descriptions, where `strider/rules/python.mf` still documents them as write-only."""
+    descriptions, where `pystrider/rules/python.mf` still documents them as write-only."""
     g = library("\n".join([
         "fn navigate(a, b) -> t:",
         '    GET R(s) F(a) "over"',

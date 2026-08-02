@@ -1,0 +1,135 @@
+# APP — the operations that BUILD an application, and nothing else.
+#
+# `repair.mf` fixes code that already exists. This file writes code that does not, and it is the same
+# machinery pointed the other way: a goal, a driver, and operations whose PARAMETER TYPE is their
+# precondition.
+#
+# ⭐ THE CLAIM THIS FILE EXISTS TO MAKE. The old engine derived a feature set by forward chaining — assert
+# facts, saturate, read off what became true — and a separate composer then turned features into code. The
+# new engine has no forward chaining at all. What replaces it is here: a business decision is an operation
+# whose argument must already satisfy a type, so `grant_discount(b: qualified_build)` is PROPOSABLE only
+# against a build that has been qualified, and the planner rediscovers the dependency order by itself.
+#
+#     THE PLAN IS THE DERIVATION.
+#
+# That is strictly better than the saturated graph it replaces, and not because it is faster: a saturated
+# graph says what became true, while a plan says WHAT WAS DONE, IN ORDER, AND WHY EACH STEP WAS AVAILABLE.
+# The audit trail is the artifact rather than a reconstruction of one.
+#
+# ⚠ EVERY OPERATION HERE IS GRAPH SURGERY ON A REAL AST, never string assembly. The skeleton and every
+# fragment were PARSED by `pystrider.intake`, so each carries `from_code`, an `origin` and a `source_line`,
+# and what these operations splice together is an artifact rather than our intention about one. Emission
+# then goes through `ast.unparse`, so the result is valid Python by construction — indentation, precedence
+# and statement order are not ours to get wrong.
+#
+# ⚠ WHAT IS AUTHORED AND WHAT IS DERIVED, stated plainly so nobody reads more into this than it earns.
+# The BODIES of the fragments are authored Python — this is not a system that invents `_show_discount`.
+# What is derived is WHICH fragments exist in the emitted app and how they are assembled, and that is
+# derived from the knobs by a search that could have gone otherwise. The seams are named
+# (`_present`, `_finish`), every seam is filled by exactly one fragment, and which one is the plan's
+# answer, not a template's.
+
+# --- the business decision ------------------------------------------------------------------------------
+
+# Does this cart earn the discount? Reads the knobs and writes the verdict — the ONLY arithmetic in the
+# derivation, because the ISA has `LT` and `EQ` and that is genuinely all this question needs.
+#
+# ⚠ It writes `qualifies` on BOTH branches, and the false branch is load-bearing. `install_plain_display`
+# takes an `unqualified_build`, which is `qualifies = false` — an ATTRIBUTE THAT IS PRESENT AND FALSE, not
+# an absent one. If this returned early instead, a build that had never been qualified would be
+# indistinguishable from one that had been found wanting, and the planner could install the plain display
+# before asking the business question at all.
+fn qualify(b: build) -> build:
+    ATTR R(tier) F(b) "tier"
+    ATTR R(spend) F(b) "spend"
+    ATTR R(threshold) F(b) "threshold"
+
+    EQ R(loyal) R(tier) "premium"
+    JMPNOT R(loyal) .no
+
+    LT R(under) R(spend) R(threshold)
+    JMPIF R(under) .no
+
+    SET F(b) "qualifies" true
+    JMP .done
+
+.no:
+    SET F(b) "qualifies" false
+
+.done:
+    CONST R(end) true
+
+# ⭐ The decision REACHES INTO THE CODE. Granting the discount is not a flag the emitter later consults —
+# it rewrites the `APPLIES = False` constant in the skeleton's own AST, exactly the way `lower_threshold`
+# rewrites a comparison's constant in `repair.mf`. So there is no separate "apply the decisions" pass that
+# could disagree with the decisions: applying IS deciding.
+fn grant_discount(b: qualified_build) -> discounting_build:
+    GET R(c) F(b) "applies_constant"
+    SET R(c) "value" true
+    SET F(b) "discount" true
+
+# --- the `_present` seam --------------------------------------------------------------------------------
+# Two operations, mutually exclusive BY TYPE rather than by an `if`. Neither is proposable until `qualify`
+# has run, and afterwards exactly one is.
+
+fn install_discount_display(b: discounting_build) -> displaying_build:
+    GET R(f) F(b) "discount_display"
+    GET R(blk) F(b) "class_block"
+    LINK R(blk) "stmt" R(f)
+    SET F(b) "displays" true
+    SET F(b) "shows_discount" true
+
+fn install_plain_display(b: unqualified_build) -> displaying_build:
+    GET R(f) F(b) "plain_display"
+    GET R(blk) F(b) "class_block"
+    LINK R(blk) "stmt" R(f)
+    SET F(b) "displays" true
+    SET F(b) "shows_discount" false
+
+# --- the `_finish` seam ---------------------------------------------------------------------------------
+# ⚠ THE SAFETY PROPERTY LIVES IN THESE TWO PARAMETER TYPES, and it took two corrections to state honestly.
+#
+# An irreversible checkout can only be finished by `install_gated_finish`, because the direct one demands
+# `irreversible = false`. The first version of this comment said the unsafe app was therefore UNBUILDABLE.
+# It is not. A parameter type is enforced by `driver.proposals`, which is a PLANNING constraint: it is why
+# no plan reaches the unsafe app, and it does nothing whatever about a caller who invokes the operation
+# directly, because `function.invoke` does not check parameter types at all. Caught by a pin that asserted
+# the invocation would raise and watched it succeed.
+#
+# So the guarantee is stated in two parts, and the `NATIVE "check"` below is the second one:
+#
+#   * NO PLAN builds the unsafe app — carried by the parameter type, at proposal time.
+#   * NO CALL builds it either — carried by the check, at invocation time, which is the only thing that
+#     makes the declared type binding on someone who bypasses the planner.
+#
+# ⚠ This was the `CHECK` opcode until ugm's 2026-08-02 restructuring retired `PLAN`/`STEP`/`CHECK`: the
+# instruction set imported `driver` and `types` to serve them, so the kernel knew what a plan and a type
+# were, and a port would have had to port both to implement three instructions. They are now primitives
+# reached BY NAME through `native.py`, which the kernel does not populate. Same semantics — it still
+# answers by raising, not by returning, which is why there is no destination register here.
+#
+# And both together are still only as good as what the types SAY. Which is why driving the emitted app
+# through Pilot is not a formality: it is the independent observation that the derivation was right about
+# the real toolkit. `experiments/strider_app.py` deliberately relaxes this type to prove the drive would
+# have caught what the derivation stopped preventing.
+
+fn install_direct_finish(b: reversible_build) -> finishing_build:
+    NATIVE "check" F(b) "reversible_build"
+    GET R(f) F(b) "direct_finish"
+    GET R(blk) F(b) "class_block"
+    LINK R(blk) "stmt" R(f)
+    SET F(b) "finishes" true
+    SET F(b) "gated" false
+
+# The gate brings its own screen, and the screen goes on the MODULE rather than in the class — the one
+# operation here that writes to two places, because a confirmation gate is genuinely two pieces of code.
+fn install_gated_finish(b: irreversible_build) -> finishing_build:
+    NATIVE "check" F(b) "irreversible_build"
+    GET R(f) F(b) "gated_finish"
+    GET R(blk) F(b) "class_block"
+    LINK R(blk) "stmt" R(f)
+    GET R(scr) F(b) "confirm_screen"
+    GET R(mod) F(b) "module_node"
+    LINK R(mod) "defines" R(scr)
+    SET F(b) "finishes" true
+    SET F(b) "gated" true

@@ -7,8 +7,8 @@ succeeds in imagination while changing nothing looks identical to a real fix fro
 import pytest
 
 import experiments.strider_repair as R
-from strider.lift import reachable
-from strider.mf import driver
+from pystrider.lift import reachable
+from pystrider.mf import driver
 
 INTENDED = lambda age: "adult" if age >= 18 else "minor"      # noqa: E731 — the reference semantics
 
@@ -40,7 +40,7 @@ def test_the_diagnosis_derives_rather_than_executes(done):
     evaluator is a microfunction reading structure, which runs happily on a workbench copy."""
     lib = done["lib"]
     assert "evaluate_case" in lib.operations
-    _params, program = __import__("strider").mf.function.load(lib.graph, "evaluate_case")
+    _params, program = __import__("pystrider").mf.function.load(lib.graph, "evaluate_case")
     opcodes = {ins.op for ins in program if not isinstance(ins, str)}
     assert "DISPATCH" not in opcodes                    # nothing in it can reach the world
     assert "CALL" not in opcodes
@@ -85,7 +85,7 @@ def test_the_rival_repair_is_ALSO_valid(done):
     chosen = driver.plan_steps(done["lib"].graph, done["report"])[0]
     rival, = REPAIR_FAMILIES - {chosen}
     lib, _got, task, _branch, cases = R.setup()
-    from strider.mf import function
+    from pystrider.mf import function
     comparison = next(n for n in reachable(lib, task) if lib.graph.kind(n) == "compare")
     function.invoke(lib.graph, rival, {"c": comparison})
     for c in cases:
@@ -162,7 +162,7 @@ def test_an_unmodelled_operator_is_REFUSED_not_guessed():
 def test_a_refused_case_leaves_the_goal_UNMET_so_no_repair_is_credited():
     """The refusal has to cost something, or it is decoration: an unevaluable case can never satisfy its
     constraint, so nothing can be reported as having fixed it."""
-    from strider.mf import goal as G
+    from pystrider.mf import goal as G
     lib, _got, task, _branch, cases = R.setup(UNMODELLED, ((18, "minor"), (10, "adult")))
     R.diagnose(lib, cases)
     goal = R.build_goal(lib, task, cases)

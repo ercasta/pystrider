@@ -60,7 +60,7 @@ def test_navigation_roles_are_now_carried_as_a_PATH():
     outcome. It pinned that a navigated register lost its object role; we reported that as §2 with the
     argument that the provenance was derivable, and ugm shipped it: the role is now `a.over`.
 
-    The consequence for `strider` is real and not yet taken up: bridges are now readable as descriptions."""
+    The consequence for `pystrider` is real and not yet taken up: bridges are now readable as descriptions."""
     r = navigation_still_loses_roles()
     assert r["a_parameter_operand_keeps_its_object_role"], r["effects"]
     assert r["a_navigated_register_now_carries_a_PATH"], r["effects"]
