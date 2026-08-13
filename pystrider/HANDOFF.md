@@ -1,5 +1,63 @@
 # Handoff — `strider/`, 2026-08-01
 
+## ⭐⭐⭐ 2026-08-13 — **THE BLOCKER IS GONE.** ugm shipped our feedback; `join` is a 483× on `law`
+
+```
+python -m pytest tests_restart/ -q          # 29 passed, 0.5s
+python -u experiments/restart_scale.py      # every table now doubles by ~2
+```
+
+`docs/restart_port_survey.md` **§9**. The thing §4 called *the one blocker no amount of cleverness on our
+side routes around*, and §5 made the condition for re-taking the whole decision. We filed
+`docs/feedback_restart.md` §1; upstream agreed with the diagnosis and shipped it the same day.
+
+| probe | n | before | **after `join`** | |
+|---|---|---|---|---|
+| self-join `unify` calls | 1,000 | 2,017,031 | **3,014** | **669×** |
+| `law` run | 4,000 | **24.14s** | **0.05s** | **483×** |
+| `anchor` 10% run | 4,000 | 5.12s | **0.19s** | 27× |
+
+The self-join's unifications are now `3n + 14` — linear, from exactly quadratic. **⭐ The second half of
+their fix is one we did not identify:** an argument index is no use to the member that has bound nothing
+yet, so **the delta's pivot is walked first** and every other member is narrowed by what it bound.
+
+⚠ **The risk we flagged did not exist, and their answer is worth keeping:** *the walk may be reordered,
+the antecedent may not* — `consumed` is filled by member POSITION, so the trail and `heap`'s stamp see
+what authored order gives them, and narrowing only removes candidates `unify` would have rejected. Our §4
+(answerer arity) is closed too. **Their cost, stated not buried: +16% on the `edge` chain, +3% on their
+suite.**
+
+**⭐ A corpus-sized graph is reachable now** — the thing §8 said was not. Twelve real modules in ONE
+machine: 27,017 nodes, 5,545 facts, intake 0.12s, **rules 0.13s**, 101 ticks.
+
+### ⚠⚠ And that measurement immediately found a real defect: A DESCRIPTION WAS DESCRIBING WHAT IT COULD NOT READ
+
+`for x in [c for c in xs]` — the comprehension is unmodelled, so `iterated` is a **placeholder** — was
+recognized as an iteration and `sequence(loop, <unreadable>)` asserted `+`. **A confidently wrong
+description, not a missed one**; the same shape engine 2 hit from the other end.
+
+⭐⭐ **Engine 2 guarded this in `patterns.py`, in PYTHON — which this handoff had named as the thing to
+move (*a judgement living where nothing can argue with it*). It is now a member of the antecedent:**
+
+    +iterated(?n, ?s), +readable(?s)
+
+Intake asserts `readable` on every node it read and **not** on the placeholder. A description declares
+which of its own parts it refuses to guess about, and another author can disagree by writing a different
+description. **The oldest de-Pythonization debt on the list, closed by the substrate change rather than by
+an effort to close it.**
+
+* ⚠ **Positive on purpose** — a rule cannot say *nothing claims this* (§9's `-` is *an entry denies this*),
+  so nobody fakes negation-as-failure.
+* ⚠ **`readable` is not `complete`** — a block holding one unreadable statement is still a readable
+  *block*, so a gap costs exactly the descriptions binding the part it is in. Pinned.
+* ⚠ **My own bug inside the fix, caught by three red pins:** `block()` mints off the main path and never
+  got `readable`, darkening every description that binds a body. **A node minted off the main path misses
+  whatever the main path stamps.**
+* ⚠ **One superseded expectation, recorded not widened:** backward reading now also asks for `readable`,
+  so constructing a loop includes establishing its parts are readable — coherent, and nobody designed it.
+
+Pins **25 → 29**. Reach unchanged at 3.2%, UNSTABLE still 0.
+
 ## ⭐⭐⭐ 2026-08-13 — **USER DECISION: WE ARE PORTING.** `restrider/` EXISTS AND ITS SPINE RUNS
 
 ```

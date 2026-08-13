@@ -144,6 +144,9 @@ class Intake:
         """
         n = self.f.node(f"{kind}@{getattr(tree, 'lineno', '?')}")
         self.f.fact(kind, n)
+        # ⭐⭐ `readable` is what a description names to ABSTAIN — see `placeholder`,
+        # which is the only thing that does not get it.
+        self.f.fact("readable", n)
         # ⭐ `from_code` is what makes a later recognition a claim about the
         # ARTIFACT rather than about our own intention. Without it a round-trip
         # check verifies the graph we meant to build.
@@ -167,7 +170,21 @@ class Intake:
             self.gap(parent, label)
 
     def placeholder(self, label: str) -> int:
-        """⚠⚠ A node standing where an unreadable construct was — POSITION IS MEANING."""
+        """⚠⚠ A node standing where an unreadable construct was — POSITION IS MEANING.
+
+        ⭐⭐ **It is the one node intake does not call `readable`**, and that absence
+        is what lets a DESCRIPTION abstain (`rules/patterns.ugm`). On engine 2 the
+        same judgement lived in `patterns.py` as Python — which our own notes had
+        flagged as the thing to move, *a judgement living where nothing can argue
+        with it*. Here it is a member of the antecedent, so a description declares
+        which of its parts it refuses to guess about, and another author can
+        disagree by writing a different description.
+
+        ⚠ It is asserted POSITIVELY, on the readable nodes, because a rule cannot
+        say *nothing claims this*. §9's `-` means *an entry denies this*, never
+        *for no entry* — so negation-as-failure is not available here and is not
+        being faked.
+        """
         n = self.f.node(f"unreadable@{label}")
         self.f.fact("unreadable", n)
         self.f.fact("from_code", n)
@@ -187,7 +204,13 @@ class Intake:
         but a hole in a part a description never names cannot make that
         description WRONG. Reading and writing have different obligations.
         """
-        self.f.fact("unknown_part", parent, self.f.rel(label))
+        # ⚠ Idempotent per (parent, label). An unmodelled construct records its gap
+        # twice otherwise — once where the handler is missing, once when `part`
+        # sees the placeholder is partial — and `unknown_part` listed `iterated`
+        # TWICE for one comprehension. Harmless to read and wrong to count.
+        marker = self.f.rel(label)
+        if marker not in [m for (m,) in self.f.of("unknown_part", parent)]:
+            self.f.fact("unknown_part", parent, marker)
         if not self.f.has("partial", parent):
             self.f.fact("partial", parent)
 
@@ -231,6 +254,13 @@ class Intake:
         b = self.f.node("block")
         self.f.fact("block", b)
         self.f.fact("from_code", b)
+        # ⚠ A block is minted here rather than through `node()` (it has no line of
+        # its own), and the first version of the abstention therefore left it
+        # WITHOUT `readable` — so every description binding a body went dark and
+        # three pins went red. A node minted off the main path misses whatever the
+        # main path stamps: the same shape as the `unconsumed` guard being bypassed
+        # by never being called at a site.
+        self.f.fact("readable", b)
         for s in statements:
             self.part(b, "stmt", self.visit(s, b, "stmt"))
         return b
@@ -250,6 +280,7 @@ class Intake:
         n = self.f.node("module")
         self.f.fact("module", n)
         self.f.fact("from_code", n)
+        self.f.fact("readable", n)
         self.f.fact("origin", n, self.f.value(self.origin))
         self.part(n, "body", self.block(t.body, n))
         self.unconsumed(t, n)

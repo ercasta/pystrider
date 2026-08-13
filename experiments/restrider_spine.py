@@ -141,8 +141,10 @@ def run() -> int:
                 asked[fw.g.show(fw.g.relation_of(inner))] = fw.g.show(inner)
     for rel in sorted(asked):
         print(f"     {asked[rel][:96]}")
+    # ⚠ `readable` joined this set when the abstention landed — the description
+    # grew a member, so the work order grew one. Recorded, not quietly widened.
     check("it asks for the structure in PYTHON's words",
-          set(asked) == {"for_stmt", "target", "iterated", "body"})
+          set(asked) == {"for_stmt", "target", "iterated", "body", "readable"})
     check("CONTROL: and for NONE of its own — a description asking for itself "
           "would be a rule that recognizes what it wrote",
           not ({"iteration", "item", "sequence", "does"} & set(asked)))

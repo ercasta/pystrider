@@ -5,6 +5,12 @@ and it shares **not one name** with what `pystrider` imports. This is the estima
 before any decision: what a rewrite onto that engine would cost us, module by module, measured rather
 than summarised.
 
+> **⚠ STATUS, 2026-08-13 — READ THIS BEFORE THE VERDICT BELOW.** Both halves of that verdict have since
+> been overturned, by measurement, and the original is kept because it is the reasoning that got here.
+> **§7:** the bet is NATIVE on the new floor, so the architectural gap is smaller than §2 counts.
+> **§9:** the quadratic is GONE — upstream shipped the index off our §1 feedback, and `law` went 24.1s →
+> 0.05s at 4,000 facts. **The user's decision is to port, `restrider/` exists, and its spine runs.**
+
 **The verdict, up front: do not port yet, and the blocker is not architecture.** The architectural gap is
 large but survivable — we have re-derived this package once already, and about a third of it would carry
 over. What blocks it is a **measured quadratic** in exactly the operation our recognition half is made of.
@@ -379,3 +385,82 @@ argument-position bucket would be maintained by the same walk. Recorded in `docs
 **⚠ And the good news that should not be lost in the caveat:** everything about this engine that is *not*
 our join is now linear and fast — 12,800 facts in 4.1s upstream, and our 25 pins run in 0.4s. The wall is
 one specific index, not the engine.
+
+## 9. ⭐⭐⭐ THE BLOCKER IS GONE. Commit `join` — and it was ours to name
+
+The thing §4 called *the one blocker that no amount of cleverness on our side routes around*, and §5
+made the condition for re-taking the whole decision. Upstream read `docs/feedback_restart.md` §1, agreed
+with the diagnosis, and shipped it the same day. Re-measured here:
+
+| probe | n | before `join` | **after `join`** | |
+|---|---|---|---|---|
+| broad self-join, `unify` calls | 1,000 | 2,017,031 | **3,014** | **669×** |
+| `law`, run | 1,000 | 1.37s | **0.02s** | |
+| `law`, run | 4,000 | **24.14s** | **0.05s** | **483×** |
+| `anchor` 2%, run | 4,000 | 0.90s | **0.08s** | 11× |
+| `anchor` 10%, run | 4,000 | 5.12s | **0.19s** | 27× |
+
+**Every table now doubles by ~2.** The self-join's unifications are `3n + 14` — linear, from exactly
+quadratic. Our 25 pins were green throughout.
+
+**What they did, and the second half is one we did not identify.** An entry is now filed under each of
+its arguments — `(sign, relation, position, node)`, the index §6 predicted — **and the delta's pivot is
+walked first**, because an argument index is no use to the member that has bound nothing yet. Without
+that second change a pass pivoting on member 1 still scanned the whole state for member 0.
+
+⚠ **The risk we flagged turned out not to exist, and their answer is worth keeping:** we asked whether
+member order was free to be reordered, since §18's tiebreaks read the consumed entries. **The walk may
+be reordered; the antecedent may not** — `consumed` is filled by member *position*, so the trail and
+`heap`'s stamp see exactly what authored order gives them. And narrowing removes only candidates `unify`
+would have rejected, so the matching candidates *and their order* are identical.
+
+⚠ **Stated rather than buried, by them:** the `edge` chain costs +16% and their suite +3%, which is the
+price of maintaining the buckets on every deposit. Our §4 (answerer arity) is closed too — refused at
+registration now, naming itself.
+
+> **So §4's recommendation is fully discharged.** *Revisit the port when upstream has an answer to the
+> quadratic.* They have one; we had already ported; and the shape our recognition is made of went from
+> disqualifying to free.
+
+### ⭐ A corpus-sized graph is now reachable — measured, because that is what was disqualified
+
+§8 said *a corpus-sized graph is not reachable until this specific index exists*. It exists. Twelve real
+modules intaken into **one** machine:
+
+| files | nodes | facts | intake | rules run | ticks |
+|---|---|---|---|---|---|
+| 4 | 7,887 | 1,477 | 0.04s | 0.03s | 35 |
+| 8 | 22,235 | 4,512 | 0.08s | 0.07s | 85 |
+| 12 | 27,017 | 5,545 | 0.12s | **0.13s** | 101 |
+
+⚠ Not yet a reach measurement, and not offered as one — it is the scale claim only.
+
+### ⚠⚠ And the corpus measurement immediately found a real defect: A DESCRIPTION WAS DESCRIBING WHAT IT COULD NOT READ
+
+`for x in [c for c in xs]` — the comprehension is unmodelled, so `iterated` is a **placeholder** — was
+recognized as an iteration, and `sequence(loop, <unreadable>)` was asserted `+`. **A confidently wrong
+description, not a missed one.** Exactly the shape engine 2 hit from the other end, where a renumbered
+argument made `f([c for c in xs], x)` read as *applies f to x*.
+
+Engine 2 guarded this in `patterns.py` — **in Python**, which our own handoff had named as the thing to
+move: *a judgement living where nothing can argue with it*. Here it is **a member of the antecedent**:
+
+    +iterated(?n, ?s), +readable(?s)
+
+`readable` is asserted by intake on every node it read and **not** on the placeholder. ⭐ So a description
+declares which of its own parts it refuses to guess about, and another author can disagree by writing a
+different description. **The oldest de-Pythonization debt on the list, closed by the substrate change
+rather than by an effort to close it.**
+
+* ⚠ **Positive, on purpose.** A rule cannot say *nothing claims this* — §9's `-` is *an entry denies
+  this*, never *for no entry* — so intake asserts the good case and nobody fakes negation-as-failure.
+* ⚠ **`readable` is not `complete`.** A block holding one unreadable statement is still a readable
+  *block*, so a gap costs exactly the descriptions binding the part it is in. Engine 2's load-bearing
+  rule, arriving as authoring rather than as machinery, and pinned.
+* ⚠ **My own bug inside the fix, caught by three red pins:** `block()` mints off the main path and so
+  never got `readable`, darkening every description that binds a body. **A node minted off the main path
+  misses whatever the main path stamps** — the same shape as the `unconsumed` guard being bypassed by
+  never being called at a site.
+* ⚠ **One superseded expectation, recorded not widened:** backward reading now also asks for `readable`,
+  so constructing a loop includes establishing that its parts are readable. Coherent, and a consequence
+  nobody designed — worth watching if `readable` ever means more than *not a placeholder*.

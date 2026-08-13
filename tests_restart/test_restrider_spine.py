@@ -121,6 +121,69 @@ def test_the_PERTURBATION_darkens_recognition():
     assert f.holds("iteration", loop) != "+"
 
 
+# -- abstention: a description will not describe what it could not read ---------
+
+#: `iterated` is a comprehension, which is unmodelled — so it becomes a PLACEHOLDER
+#: and the loop's sequence is a part we did not read.
+OVER_A_GAP = "def f(xs):\n    for x in [c for c in xs]:\n        pass\n"
+
+
+def test_a_description_ABSTAINS_over_a_part_it_could_not_read():
+    """⚠⚠ Measured as a live defect before the rule existed, not anticipated.
+
+    `for x in [c for c in xs]` was recognized as an iteration and
+    `sequence(loop, <unreadable>)` was asserted `+` — a CONFIDENTLY WRONG
+    description, not a missed one. Same shape engine 2 hit from the other end
+    (`f([c for c in xs], x)` described as *applies f to x*).
+    """
+    f = Facts(corpus("patterns"), scope="gap")
+    taken = intake(OVER_A_GAP, f, "<test>")
+    f.run()
+    (loop,) = f.subjects("for_stmt")
+    assert "ListComp" in taken.unmodelled
+    assert f.has("unreadable", f.one("iterated", loop))
+    assert f.holds("iteration", loop) != "+"
+    assert f.holds("sequence", loop, f.one("iterated", loop)) != "+"
+
+
+def test_CONTROL_the_SAME_loop_with_a_readable_sequence_IS_recognized():
+    """Or the pin above would pass for any reason at all — including the rule
+    never firing on this shape of loop."""
+    f = Facts(corpus("patterns"), scope="nogap")
+    intake("def f(xs):\n    for x in xs:\n        pass\n", f, "<test>")
+    f.run()
+    (loop,) = f.subjects("for_stmt")
+    assert f.holds("iteration", loop) == "+"
+
+
+def test_readable_is_NOT_complete_so_a_gap_costs_only_what_BINDS_it():
+    """⭐ Engine 2's load-bearing rule, arriving here as authoring not machinery.
+
+    A block holding one unreadable statement is still a readable BLOCK, and
+    `does(?n, ?b)` names the block — so the loop is still described. If this ever
+    goes red because `readable` started meaning `complete`, the gap has begun
+    costing every description above it again, which is what made refusing a whole
+    file over one comprehension useless.
+    """
+    f = Facts(corpus("patterns"), scope="deep")
+    intake("def f(xs):\n    for x in xs:\n        y = [c for c in xs]\n", f, "<test>")
+    f.run()
+    (loop,) = f.subjects("for_stmt")
+    body = f.one("body", loop)
+    assert f.has("partial", body), "the block really does contain a gap"
+    assert f.holds("iteration", loop) == "+"
+
+
+def test_a_gap_is_recorded_ONCE_per_label():
+    """⚠ It was recorded twice — once where the handler is missing, once when
+    `part` saw the placeholder was partial. Harmless to read, wrong to count."""
+    f = Facts(corpus("patterns"), scope="dedup")
+    intake(OVER_A_GAP, f, "<test>")
+    (loop,) = f.subjects("for_stmt")
+    labels = [f.show(m) for (m,) in f.of("unknown_part", loop)]
+    assert labels == ["iterated"]
+
+
 # -- the write direction, on the same rule --------------------------------------
 
 
@@ -137,7 +200,17 @@ def test_the_SAME_rule_read_backwards_asks_for_the_STRUCTURE():
         for mo in f.m.chain.moments for e in mo.delta
         if e.sign == PLUS and f.g.relation_of(e.proposition) is f.m.SUBGOAL
     }
-    assert asked == {"for_stmt", "target", "iterated", "body"}
+    # ⚠ SUPERSEDED EXPECTATION, recorded rather than quietly widened. This asserted
+    # exactly {for_stmt, target, iterated, body} until the abstention landed; the
+    # description now also names `readable`, so the work order asks for it too.
+    # Nothing about the claim became false — the set grew because the antecedent
+    # grew, which is the two readings staying in step.
+    #
+    # ⭐ And it says something real about the write direction: constructing a loop
+    # now includes establishing that its parts are readable. That is coherent (a
+    # node you built is not a placeholder) and it is a consequence nobody designed,
+    # which is worth watching if `readable` ever means more than *not a placeholder*.
+    assert asked == {"for_stmt", "target", "iterated", "body", "readable"}
     # ⚠ CONTROL: in PYTHON's vocabulary and none of its own. A description that
     # asked for its own words would be a rule recognizing what it had written.
     assert not (asked & {"iteration", "item", "sequence", "does"})
