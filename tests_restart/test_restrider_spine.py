@@ -87,7 +87,10 @@ def test_what_was_recognized_CAME_FROM_PARSED_TEXT():
     f.run()
     (loop,) = f.subjects("for_stmt")
     assert f.has("from_code", loop)
-    assert f.text("origin", loop) == "<test>"
+    # ⚠ `origin` is a VALUE (repr-encoded), not a vocabulary word — read it
+    # with `literal`, not `text`. The two readers exist so this is a loud
+    # mistake rather than a `"'<test>'"` that looks almost right.
+    assert f.literal("origin", loop) == "<test>"
 
 
 def test_recognition_arrives_EXPLAINED_which_engine_2_could_not_do():

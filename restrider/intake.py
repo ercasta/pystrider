@@ -92,6 +92,11 @@ _CONSUMES = {
     "Pass": set(),
 }
 
+#: Attributes whose payload is a Python VALUE rather than a vocabulary word, and so
+#: is `repr`-encoded. Everything else a handler passes as an attribute is a word.
+#: ⚠ `origin` and `source_line` are provenance, not code, and stay values.
+_LITERALS = {"literal", "origin", "source_line"}
+
 _CMP = {ast.Eq: "eq", ast.NotEq: "ne", ast.Lt: "lt", ast.LtE: "le", ast.Gt: "gt", ast.GtE: "ge",
         ast.Is: "is", ast.IsNot: "is_not", ast.In: "in", ast.NotIn: "not_in"}
 #: ⚠ The bitwise ops are here because leaving them out once refused `str | None`,
@@ -156,7 +161,15 @@ class Intake:
         if line is not None:
             self.f.fact("source_line", n, self.f.value(line))
         for label, payload in attrs.items():
-            self.f.fact(label, n, self.f.value(payload))
+            # ⚠⚠ WORDS AND LITERALS ARE DIFFERENT KINDS OF NODE. `operator=gt` and
+            # `name=classify` are vocabulary — a rule must be able to name them —
+            # while `literal=18` is a value the program computes with, and only that
+            # one is `repr`-encoded. Storing an operator as `'gt'` made
+            # `+operator(?g, gt)` unmatchable, so one of two repair families could
+            # never fire and the suite could not tell.
+            self.f.fact(label, n,
+                        self.f.value(payload) if label in _LITERALS
+                        else self.f.word(str(payload)))
         return n
 
     def part(self, parent: int, label: str, child: Any) -> None:

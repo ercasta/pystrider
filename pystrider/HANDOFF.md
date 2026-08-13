@@ -1,5 +1,71 @@
 # Handoff — `strider/`, 2026-08-01
 
+## ⭐⭐⭐ SLICE 2 — ONE GOAL DRIVES A CODE REPAIR, and §2's "redesign" item is ANSWERED
+
+```
+python -m pytest tests_restart/ -q            # 42 passed, 0.9s
+python -u experiments/restrider_repair.py     # 15 checks, 0 failing
+```
+
+`restrider/rules/repair.ugm` + `restrider/evaluator.py` + `experiments/restrider_repair.py` + 13 pins.
+Engine 2's off-by-one guard bug, re-derived — deliberately, so the result checks against a real prior one
+rather than against nothing. Given as a **case**, never a spec.
+
+**⭐⭐ THE MEASUREMENT THE SLICE EXISTS FOR.** Survey §2 lists *a rule's condition is its parameter type*
+as the one item that is **a redesign, not a port** — it is what let engine 2 delete forward chaining and
+say *the plan IS the derivation*, and `restart` has no parameter types. Three candidates were named and
+none measured. **The answer is `+unmet(?p, ...)`:** a repair is proposable only once BACKWARD READING has
+found the goal unmet, so the search still discovers the order — and the condition is now an ordinary
+**antecedent member**, which is *better*, because it is arguable and another author can write a different
+one.
+
+> **The control is what makes that a measurement.** Replace the `unmet` member with a binder that gates
+> nothing and the repair **fires on correct code**, turning `age >= 18` into `age >= 17`. With it, correct
+> code is untouched and no family fires at all.
+
+**The loop, end to end:** goal → backward reading → `unmet` → a repair **denies** the old claim and asserts
+the new one → re-asks the evaluation under a fresh occasion → the tool re-derives → `agrees` holds → emit
+renders the repaired source → **and it is executed**, which is the independent gate engine 2 needed after
+shipping a plan that "succeeded" while emitting byte-identical source.
+
+* **⚠ Repair on an append-only chain is DENY-THEN-ASSERT.** Nothing is mutated or removed, so
+  `-operator(?g, gt), +operator(?g, ge)` is the substrate's own answer to *change this* — and `Facts.of`
+  had to start asking `holds`, or a reader over its own deposit log hands `emit` the unrepaired code.
+* **⚠⚠ `unmet` IS A FACT, AND A FACT IS NOT AN EVENT** — it stays written, so after the first repair fixed
+  the code the second was **still proposable off the same stale occasion** and fired too: `if age >= 17`,
+  two independent fixes for one bug, correct by luck and wrong as a repair. Each repair now denies the
+  occasion it acted on. Same shape as `artefact.py`'s stale signal, seen from the other side: there it
+  reports work still to do, here it authorises work already done.
+* **⚠⚠ IN A CONJUNCTION WHERE ONE HALF IS A GIVEN AND THE OTHER IS REPAIRABLE, THE GIVEN MUST BIND FIRST.**
+  `_settle` takes the first entry satisfying a subgoal and nothing backtracks, so with `evaluated` written
+  before `wants`, `?v` bound to what the code DOES and the plan reported the **expectation** unmet — *your
+  case is wrong*. Authoring order, load-bearing, measured.
+* **⭐ The winner is DERIVED, never named** — and it flipped from `lower` to `relax` mid-slice when denying
+  the occasion changed the option set. Engine 2 pinned its winner by name and the pin went silently vacuous
+  when upstream's tie-break moved. Both families are pinned to fix it alone.
+* **⚠⚠⚠ The evaluator's membrane is FIRST AND EXPLICIT**, because engine 2's was prose and lied: its
+  comment claimed `gt`/`ge` only while the code fell through to `gt`, deriving `age < 18` as `age > 18`.
+  Here an unmodelled operator is refused by name, nothing is concluded, and the goal simply stays unmet.
+
+### Three defects in `facts.py` that 29 green pins could not see
+
+Each was invisible to slice 1 and appeared the moment slice 2 asked a different kind of question.
+
+1. **⚠⚠ THE TWIN TRAP, IN OUR OWN CODE, FOURTH TIME** — `value()` used `g.atom`, which mints a FRESH node
+   every call, so `value("gt")` twice was two nodes: `holds` answered **None** about a fact just deposited,
+   and a denial could not name the entry to deny. Interned through the corpus table now. **A pin that only
+   round-trips cannot see identity.**
+2. **⚠⚠ A PYTHON-SIDE READER OVER ITS OWN WRITES IS NOT A READER OF THE GRAPH** — the index was built from
+   our own deposits, so nothing could see what a **rule** concluded. The evaluator asked for `guard(f, c)`,
+   derived by an authored rule, and got nothing. Indices are now caught up from `g.instances_of`.
+3. **⚠⚠ A WORD AND A LITERAL ARE DIFFERENT KINDS OF NODE** — `operator` was stored `repr`-encoded as
+   `'gt'`, so `+operator(?g, gt)` in an authored rule **could never match** and one of the two repair
+   families was dead. The other keys on an integer, where `repr(18)` and the token `18` agree by luck, so
+   nothing failed. `word()`/`text()` for vocabulary, `value()`/`literal()` for Python values.
+
+⚠ `Facts.one` also refused only one of its two ambiguities: it caught *several objects* and silently
+returned the first of a THREE-place relation's two. One object means one, in both axes.
+
 ## ⭐⭐⭐ 2026-08-13 — **THE BLOCKER IS GONE.** ugm shipped our feedback; `join` is a 483× on `law`
 
 ```
