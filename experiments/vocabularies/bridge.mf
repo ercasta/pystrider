@@ -5,23 +5,23 @@
 # and UX blocks retarget, or honestly fail to.
 
 fn admit_highlight(c: wants_highlight) -> admitted_cart:
-    GET R(lib) F(c) "library"
-    ATTR R(cap) R(lib) "styled_label"
+    INVOKE R(lib) related node=F(c) label="library"
+    INVOKE R(cap) slot_of node=R(lib) key="styled_label"
     JMPNOT R(cap) .unsupported
-    SET F(c) "admitted_highlighted_discount" true
+    INVOKE R(_) set_slot node=F(c) key="admitted_highlighted_discount" value=true
     JMP .done
 .unsupported:
-    SET F(c) "unsupported_highlighted_discount" true
+    INVOKE R(_) set_slot node=F(c) key="unsupported_highlighted_discount" value=true
 .done:
-    SET F(c) "highlight_considered" true
+    INVOKE R(_) set_slot node=F(c) key="highlight_considered" value=true
 
 fn admit_confirmation(c: wants_confirmation) -> admitted_cart:
-    GET R(lib) F(c) "library"
-    ATTR R(cap) R(lib) "modal_confirm"
+    INVOKE R(lib) related node=F(c) label="library"
+    INVOKE R(cap) slot_of node=R(lib) key="modal_confirm"
     JMPNOT R(cap) .unsupported
-    SET F(c) "admitted_confirmation_step" true
+    INVOKE R(_) set_slot node=F(c) key="admitted_confirmation_step" value=true
     JMP .done
 .unsupported:
-    SET F(c) "unsupported_confirmation_step" true
+    INVOKE R(_) set_slot node=F(c) key="unsupported_confirmation_step" value=true
 .done:
-    SET F(c) "confirmation_considered" true
+    INVOKE R(_) set_slot node=F(c) key="confirmation_considered" value=true

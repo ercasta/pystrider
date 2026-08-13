@@ -1,0 +1,37 @@
+# The neutral descriptions. THE BET lives in this file.
+#
+# Each rule below is ONE authored description, and the engine reads it two ways:
+#
+#   forwards   structure  =>  description   -- RECOGNIZE intaken code
+#   backwards  description =>  structure    -- the work order for WRITING it
+#
+# Neither reading is ours to build. That is survey §7, and it is the whole reason
+# this generation exists: engine 2 deleted pattern matching, so the duality had to
+# be reconstructed by reading a microfunction's body against its effects
+# (`driver.establishes`). Here an antecedent IS what that reconstructed.
+#
+# ⭐⭐ AND THE TWO FILES BECAME ONE. Engine 2 needed `patterns.mf` to declare the
+# neutral labels and `python.mf`'s BRIDGES to write them, because a microfunction
+# is pointed one way and a description that could only be read could not also
+# translate. Here the antecedent is Python's vocabulary and the consequent is the
+# neutral one, so **the pattern and the bridge are one statement**. There is no
+# second file to drift from.
+#
+# ⚠ THE AUTHORING CONSTRAINT THAT SURVIVED THE SUBSTRATE CHANGE UNTOUCHED: intake
+# must not reuse a pattern's word. Intake says `for_stmt` / `iterated` / `body`;
+# the description says `iteration` / `sequence` / `does`. If they coincided, the
+# translation would do nothing for that part while looking like it worked, and the
+# perturbation pin would not bite there. Coincidental agreement is exactly what
+# this separation exists to make explicit.
+
+rule <iteration> = implies(
+  { +for_stmt(?n), +target(?n, ?v), +iterated(?n, ?s), +body(?n, ?b) },
+  { +iteration(?n), +item(?n, ?v), +sequence(?n, ?s), +does(?n, ?b) } )
+
+rule <conditional> = implies(
+  { +if_stmt(?n), +condition(?n, ?c), +then(?n, ?t) },
+  { +choice(?n), +tests(?n, ?c), +otherwise_does(?n, ?t) } )
+
+rule <application> = implies(
+  { +call(?n), +callee(?n, ?f) },
+  { +applies(?n, ?f) } )

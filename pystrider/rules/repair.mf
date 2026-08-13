@@ -22,14 +22,14 @@
 
 # Family 1 — the boundary is right, the strictness is wrong.
 fn relax_comparison(c: comparison) -> comparison:
-    SET F(c) "op" "ge"
+    INVOKE R(_) set_slot node=F(c) key="op" value="ge"
 
 # Family 2 — the strictness is right, the boundary is off by one.
 fn lower_threshold(c: comparison) -> comparison:
-    GET R(rhs) F(c) "right"
-    ATTR R(v) R(rhs) "value"
+    INVOKE R(rhs) related node=F(c) label="right"
+    INVOKE R(v) slot_of node=R(rhs) key="value"
     ADD R(v2) R(v) -1
-    SET R(rhs) "value" R(v2)
+    INVOKE R(_) set_slot node=R(rhs) key="value" value=R(v2)
 
 # --- the evaluator ------------------------------------------------------------------------------------
 # ⚠ Models `gt` and `ge` ONLY, and REFUSES anything else: an unmodelled operator leaves `agrees` unset, so
@@ -44,22 +44,22 @@ fn lower_threshold(c: comparison) -> comparison:
 # The guard is now FIRST and explicit, because a membrane described in prose is not a membrane.
 
 fn evaluate_case(k: case) -> checked_case:
-    GET R(f) F(k) "of"
-    GET R(c) R(f) "condition"
-    ATTR R(op) R(c) "op"
+    INVOKE R(f) related node=F(k) label="of"
+    INVOKE R(c) related node=R(f) label="condition"
+    INVOKE R(op) slot_of node=R(c) key="op"
 
     # Refuse before deriving anything: is this an operator we actually model?
     EQ R(isge) R(op) "ge"
     JMPIF R(isge) .modelled
     EQ R(isgt) R(op) "gt"
     JMPIF R(isgt) .modelled
-    SET F(k) "unmodelled_operator" R(op)
+    INVOKE R(_) set_slot node=F(k) key="unmodelled_operator" value=R(op)
     JMP .done
 
 .modelled:
-    GET R(rhs) R(c) "right"
-    ATTR R(thr) R(rhs) "value"
-    ATTR R(in) F(k) "input"
+    INVOKE R(rhs) related node=R(c) label="right"
+    INVOKE R(thr) slot_of node=R(rhs) key="value"
+    INVOKE R(in) slot_of node=F(k) key="input"
 
     # Below the threshold, no operator we model takes the branch.
     LT R(lt) R(in) R(thr)
@@ -75,19 +75,19 @@ fn evaluate_case(k: case) -> checked_case:
     JMP .otherwise
 
 .then:
-    GET R(b) R(f) "then"
+    INVOKE R(b) related node=R(f) label="then"
     JMP .read
 .otherwise:
-    GET R(b) R(f) "otherwise"
+    INVOKE R(b) related node=R(f) label="otherwise"
 
 .read:
-    GET_AT R(s) R(b) "stmt" 0
-    GET R(rv) R(s) "value"
-    ATTR R(out) R(rv) "value"
-    SET F(k) "observed" R(out)
-    ATTR R(exp) F(k) "expects"
+    INVOKE R(s) relation_at node=R(b) label="stmt" index=0
+    INVOKE R(rv) related node=R(s) label="value"
+    INVOKE R(out) slot_of node=R(rv) key="value"
+    INVOKE R(_) set_slot node=F(k) key="observed" value=R(out)
+    INVOKE R(exp) slot_of node=F(k) key="expects"
     EQ R(ok) R(out) R(exp)
-    SET F(k) "agrees" R(ok)
+    INVOKE R(_) set_slot node=F(k) key="agrees" value=R(ok)
 
 .done:
     CONST R(end) true

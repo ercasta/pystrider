@@ -1,5 +1,267 @@
 # Handoff — `strider/`, 2026-08-01
 
+## ⭐⭐⭐ 2026-08-13 — **USER DECISION: WE ARE PORTING.** `restrider/` EXISTS AND ITS SPINE RUNS
+
+```
+python -m pytest tests/ -q             # pystrider  — 219 passed, ~100s   (engine 2, ugm-classic)
+python -m pytest tests_restart/ -q     # restrider  —  25 passed, 0.4s    (engine 3, ../ugm@restart)
+python -u experiments/restrider_spine.py    # slice 1 — 11 checks, 0 failing
+python -u experiments/restrider_reach.py    # 3.3% of 550 functions, UNSTABLE 0
+```
+
+**⚠⚠ THE TWO SUITES ARE SEPARATE INVOCATIONS AND THAT IS NOT NEGOTIABLE.** Two engines are installed
+under the name `ugm`; `import ugm` resolves to whichever the process found first. `restrider/mf.py`
+refuses at import when the other engine is already loaded, naming BOTH paths, and
+`tests_restart/conftest.py` refuses a mixed collection. **Verified: `pytest tests/ tests_restart/` errors
+out.** A silent cross-wiring would not fail — it would answer.
+
+Nothing in `pystrider/` changed. It stays green and it stays the only running account of what this is
+supposed to do (see the retirement bar in `restrider/__init__.py`).
+
+### The port is smaller than the survey predicted, for a reason worth keeping
+
+Survey §2 counted ~90 substrate call sites against a floor with **no attributes, no mutation, no
+removal** and called it a total loss. **Every one of them goes through five helpers**, and the ~40 AST
+handlers are pure walking. So the re-derivation is those five, in `restrider/facts.py`:
+
+| engine 2 | engine 3 |
+|---|---|
+| `g.mint("for_stmt")` | a fresh node, plus `for_stmt(n)` |
+| `g.attr(n, "name") = "f"` | `name(n, f)` — an ordinary proposition |
+| `g.link(parent, "body", ch)` | `body(parent, ch)` — the same shape |
+| `g.targets(n, "body")` | read `body(n, ?x)` back |
+
+> ⭐⭐ **A kind, an attribute and an edge were three mechanisms; here they are one.** That is not a
+> workaround — it is *why* the bet is native: a pattern's antecedent names a kind, an attribute and an
+> edge in one breath because on this floor they are the same kind of thing.
+
+**⭐⭐ AND THE TWO RULE FILES BECAME ONE.** Engine 2 needed `patterns.mf` to declare the neutral labels
+and `python.mf`'s bridges to write them, because a microfunction is *pointed* one way. Here the
+antecedent is Python's vocabulary and the consequent is the neutral one, so **the pattern and the bridge
+are the same authored statement.** There is no second file, so there is nothing to drift — `lift.py`,
+`library.py` and the deleted `vocabulary_drift` check all have no counterpart to build.
+
+### Slice 1 — the spine on real code (`experiments/restrider_spine.py`, 11 checks)
+
+Slice 0 proved the bet on a fixture *I wrote in the same file as the rule that read it* — a claim about my
+own intention. Slice 1 runs the same authored rule against propositions that came out of `ast.parse`,
+carrying `from_code`, and renders them back: **intake → recognize → emit, byte-exact against the ORIGINAL
+SOURCE.** The perturbation pin holds (rename one word, recognition goes dark), and the same rule read
+backwards asks for the structure in **Python's** words and none of its own.
+
+**Reach: 3.3% of 550 functions, and ⭐ UNSTABLE 0.** The membrane is narrow — 16 handlers — but nothing is
+ever silently approximated, which is the property; coverage is only the backlog. For comparison engine 2's
+first measurement was 2.8% and it climbed to 64.6% over three slices. Backlog by **functions blocked**:
+`Assert` 218, `Tuple` 198, `FunctionDef.returns` 192, `Call.keywords` 180, `arg.annotation` 169,
+`Subscript` 101.
+
+⚠ **`experiments/restrider_reach.py` exists from slice 1 on purpose.** Engine 2's retirement bar was a
+reach measurement whose artifact was deleted in the same commit that took the decision it gated — *"we did
+not measure it."* A measurement you have to reconstruct is one that gets assumed.
+
+### What is kept from the old generation, deliberately, because a port that drops these looks identical until the bug returns
+
+`unconsumed` (the guard that found silent field dropping — and ⚠ declaring a field consumed switches it
+OFF for that field, so only list one beside the code that reads it); the **placeholder**, because position
+is meaning and a recorded-but-unlinked gap renumbers the readable parts; a body is **one `block` node**;
+an empty else renders as **no else**; intake must **not reuse a pattern's word**; and `Facts.one` **refuses
+to pick** between several objects rather than taking the first, which was the shape of two measured bugs.
+
+### ⚠ Two traps paid for again while building this
+
+* **The twin, third time.** `Graph.atom` mints a FRESH node every call — names are for printing, never
+  identity. Every name now goes through `Loader.atom`, and there is a pin (`test_a_relation_resolves_to_
+  the_SAME_node...`) asserting the corpus's relation is *not* `g.atom` of the same string.
+* **One `load` call, always.** Two build two name tables, so the facts' relations are twins of the rules'
+  and the run reports a contented quiescence having done nothing. `restrider.corpus()` concatenates files
+  so there is only ever one call.
+
+### ⭐⭐⭐ UPSTREAM SYNC, same day: TWO QUADRATICS — and their four scale commits fixed the other one
+
+Upstream landed 7 more commits (`c05d5b3`), four about scale: `quiet`, `weigh` (*the quadratic is
+ARBITRATION, not bookkeeping*), `heap` (candidate walk made linear, `considered` n²/2 → 2n), plus
+`state`. **`restrider`'s 25 pins stayed green across all of it** — the chokepoint held, as it has three
+times now.
+
+**And our `law` probe did not move** (22.5s → 24.8s at 4,000, noise). That was chased rather than
+shrugged at. Counting `rules.unify` on both fixtures (`restart_scale.pinpoint()`, now in the repo):
+
+| fixture | n | run | **`unify` calls** | ticks | proposed |
+|---|---|---|---|---|---|
+| broad self-join | 1,000 | 1.93s | **2,017,031** | **3** | 18 |
+| `edge` chain | 1,000 | 1.97s | 3,007 | 1,003 | 18 |
+
+> ⭐⭐⭐ **Same wall clock, opposite mechanisms.** The `edge` chain's unifications are LINEAR and its
+> TICKS grow with n — the option set, which is what all four commits addressed. The self-join's ticks
+> are CONSTANT AT 3 and its unifications are exactly quadratic. **One tick costs a million unifications**
+> with `applied` 1 throughout.
+
+So §6's guess is now measured: `rules.Situation` indexes by `(sign, relation)` only, so a member whose
+variable is already bound still scans every instance. **The fix is an argument-position index**, local to
+one class. Filed as `docs/feedback_restart.md` §1, as a hypothesis.
+
+⭐ **`weigh`'s own ⚠⚠⚠ — *the benchmark that defined the wall is the unrepresentative case* — is §6's
+conclusion reached independently from the other side, the same day.** Two derivations from different
+evidence. It also means §4's fixture, §6's anchor and their `edge` chain are three shapes and **none is
+"typical"**.
+
+⚠ **What it changes for the port: nothing yet.** The anchored shape we author is affordable per file, so
+slice 1 runs. What it settles is that a **corpus-sized graph is unreachable until that index exists**,
+and nothing on our side routes around it.
+
+**⭐⭐⭐ AND THEN `kept` TURNED IT INTO A CONTROLLED EXPERIMENT** (`db45c76`; 25 pins green, 4th sync in a
+row with no change on our side). Upstream removed the last O(state)-per-tick costs — *doubling now
+doubles* — and the same run measured both fixtures:
+
+| fixture | n | before `kept` | after | `unify` before | `unify` after |
+|---|---|---|---|---|---|
+| `edge` chain | 1,000 | 1.97s | **0.31s** (6.4×, linear) | 3,007 | 3,007 |
+| broad self-join | 1,000 | 1.93s | 1.98s | 2,017,031 | **2,017,031** |
+
+> **An intervention made one linear and left the other byte-identical.** Unify counts equal to the digit
+> is the join path being untouched — the two quadratics are now separated by an experiment, not an
+> argument. `Situation._keys` still answers `(sign, relation)` only.
+
+⭐ `kept` makes our proposed fix *easier*, not harder: the index is now maintained incrementally by
+`add`/`drop`, so an argument-position bucket would ride the same walk. **⚠ And the good news not to lose
+in the caveat: everything that is not our join is now linear and fast** — 12,800 facts in 4.1s upstream,
+our 25 pins in 0.4s. The wall is one index, not the engine.
+
+⭐ **Also adopted from their new `artefact.py`:** *composing the text is a function, and a request
+answered by a function is exactly what a tool is* — so **`emit` being Python is now principled rather
+than expedient.** Our standing note said the `ast` border "should stay Python" without saying why. ⚠ The
+reason changed; recorded, because a rule kept for an evaporated reason is one the next person deletes.
+
+**NEXT:** widen the membrane (`Assert` / `Tuple` / `returns` / `keywords` / annotations are 5 cheap slices
+worth most of the backlog), then the question slice 1 does not touch — **the planner**. Engine 2's *a
+rule's condition is its parameter type* has no counterpart here (survey §2), and backward reading is the
+candidate replacement, unmeasured. ⚠ Their `artefact.py` is the closest upstream analogue and worth
+reading first: a goal that is a CONJUNCTION, split by backward reading, each half answered separately —
+which is *build → reread → repair the half that is wrong* without our engine-2 machinery.
+
+## ⭐⭐⭐ 2026-08-13: THE PORT DECISION RE-TAKEN, AND SLICE 0 SAYS THE BET IS NATIVE
+
+```
+python -m pytest tests/ -q            # 219 passed, 100s — unchanged, still on ugm-classic
+python -u experiments/restart_scale.py  # the four scale probes
+python -u experiments/restart_bet.py    # slice 0 — 11 checks, 0 failing
+```
+
+Full account: **`docs/restart_port_survey.md` §6 and §7.** Three things moved on 2026-08-13, and nothing
+in `pystrider/` changed — this is a decision session, not a code session.
+
+**1. The condition §5 named fired, and it was the wrong condition.** The survey said *re-decide when
+upstream memoises applications*. Upstream did exactly that (`delta`: 98.7% of matching was re-derivation;
+`state`: 8.3×) and the broad self-join is **still exactly quadratic** — every doubling costs 4×, measured
+two sizes further out than before. Memoising bought a **~3.2× constant, not an exponent.** ⚠ The condition
+that *would* flip it is narrower and now visible in the code: `rules.Situation` indexes by
+`(sign, relation)` and nothing else, so a member whose variable is already bound still **scans**. An
+argument-position index is the thing to watch for.
+
+**2. ⭐⭐ §4 measured the wrong shape, and probe (d) is the correction.** The survey's broad join has two
+broad members; **no pattern of ours is written that way** — a pattern names a rare KIND first and only then
+follows structure. Anchored, a recognition pass over one file (~600 nodes) lands in **tens of
+milliseconds**, not seconds. Same exponent, ~20× smaller constant. **The wall is where §4 put it; we do not
+stand as close to it as §4 implied.** What stays disqualified is a corpus in one machine (slice 7's 1,107
+functions); per-file intake → recognise → emit is not.
+
+**3. ⚠⚠ The standing recommendation expired for an unrelated reason: `main` is FROZEN.**
+`git rev-list --count 16053ad..main` is **0**, and upstream says so outright — *"`main` still holds the old
+46-module engine on purpose."* The choice is no longer a mature engine versus an immature one; it is a
+**frozen** engine versus a moving one.
+
+### ⭐⭐⭐ Slice 0 — `experiments/restart_bet.py`, 11 checks, 0 failing
+
+**The bet is native on the new floor, and it is the cleanest of the three engines.** `restart` has
+pattern-matching rules *again* plus a backward reader over the same rules, so ONE authored description is
+read forwards by the matcher (structure ⟹ description = RECOGNIZE) and backwards by `<plan>`/`<expand>`
+(description ⟹ the structural subgoals = WRITE). **Neither reading is ours to build.**
+
+> **`driver.establishes` is not missing — it is unnecessary.** Survey §2 lists it as having no counterpart
+> and is right about the name, wrong about the need. Engine 2 needed it only because microfunctions deleted
+> pattern matching, so the duality had to be reconstructed from a function's body versus its effects. What
+> that reconstructed **is what an antecedent already is.** The module this whole package was founded on
+> drops out of the design.
+
+Forward recognition also arrives **explained** — `why()` names every structural part it consumed, which
+retires §6's *"the reason must be RETRIEVED from the frames"*. The perturbation pin holds: rename one label
+and both halves go dark together.
+
+**The write half closes.** A tool (bound as data by `answers(<M>, check)`, therefore deniable) mints one
+node per free variable; an **authored** rule re-asks the check on the occasion the minting creates; the
+same rule read forwards concludes the description off the structure it caused to exist. ⚠⚠ **The tool
+knows nothing about iteration** — WHAT to mint is the description's to say, and it says it by being an
+antecedent.
+
+⚠⚠ **And the pin nearly went on the thing that could not fail.** With the re-ask disabled, the tool still
+mints and the description **still holds** — `holds` alone measures nothing. What the re-ask buys is that
+the *plan* knows: without it, four subgoals are reported **`blocked` about a goal that is true.** The
+silent-wrong shape, not a missing feature.
+
+⚠ **Slice 0 does NOT establish** scale (§6), `intake`/`emit` against a substrate with no attributes and no
+mutation, or the other eight items §2 counts missing. It establishes that the **central bet is not one of
+them** — the one gap that would have made the port pointless rather than merely large.
+
+⚠ **`experiments/restart_*.py` are RUNNERS, not pytest modules, on purpose.** They put `creazioni/ugm` on
+`sys.path`, which re-points `import ugm` for the whole process — a test doing that would silently hand
+every other test in the run an engine it was not written for. Survey §0's cwd trap, third direction.
+
+## ⚠⚠ 2026-08-04: `../ugm`'s DE-PYTHONIZATION ARC REACHED US, AND IT ARRIVED AS 45 RED PINS
+
+```
+python -m pytest tests/ -q          # 219 passed, ~94s
+```
+
+**We were red on arrival again, and this time it was not our defect — it was a requirement.** ugm has
+been moving the workbench out of Python (`docs/HANDOFF.md`, *"the arc is de-Pythonization"*): `step` and
+`open_workbench` are `.mf` behind thin wrappers, frames are sparse, and reads go through a closed
+**mediated-access vocabulary** of eight names. Sharing versions between frames is only correct if *every*
+read is interposable — one unmediated read and the answer is silently wrong — so `rules/step.mf` now
+`REFUSE`s an unmediated operator outright.
+
+Every operation we had touched the graph bare. **45 of 216 pins failed, all with one message**
+(`… reaches the graph bare, so imagining it would write to the real world`), none of them from a change
+on this side.
+
+**⭐ The refusal is the mechanism working, and the danger is demonstrable rather than theoretical.**
+Bare, imagining `qualify` would have written `qualifies` onto the REAL build — planning reaching the
+world, the one thing the workbench exists to prevent. ugm's own note records a step *imagining* `tamper`
+writing `tampered` onto a real car. Our whole `strider_vocabularies` argument (a failed search leaves the
+real graph untouched) rests on this holding.
+
+**The fix was mechanical and cost nothing measurable.** `GET`→`related`, `ATTR`→`slot_of`,
+`SET`→`set_slot`, `LINK`→`relate`, `GET_AT`→`relation_at`, each as `INVOKE R(x) <name> node=… key=…`.
+Nine functions across `rules/repair.mf`, `rules/app.mf` and `experiments/vocabularies/*.mf`. No Python
+changed except one name added to `mf.py`'s import surface.
+
+**⭐⭐ AND THE ONE THAT WAS NOT OBVIOUS: THE BET SURVIVES MEDIATION.** Mediation lowers every read and
+write to a *call*, and `driver._effects` is normally blind to a call — the effect happens somewhere else.
+Had that blinded `establishes`, mediating a pattern would have turned it into a description that
+describes nothing, and `recognizes` would have skipped it: a plausible negative, not an error. It does
+not, because `access.as_opcode` translates the closed set back — *"a static reader may know it exactly as
+it knows the opcodes"*. Measured, not reasoned: the real `patterns.mf` was mediated wholesale and every
+description read back **identical**, suite green. Reverted afterwards (see below), and pinned as
+`test_the_bet_survives_mediation`.
+
+**⚠ What is still bare, and why that is a position rather than luck.** `access.offenders` only sees
+functions that declare **parameter types** — its own stated hole. Our patterns, bridges, the two
+dispatchers and the monitor are unmediated and green only because *nothing imagines them*: they are
+invoked from Python, on the real graph. `tests/test_mediation.py` names that set explicitly, so a name
+ARRIVING in it is a new operation authored bare that will refuse the first time a planner imagines it.
+Mediating the rest is now known to be free and is **not owed until an operation needs to lift or
+recognize while imagining** — at which point it becomes forced, exactly as this did.
+
+**⚠ The suite is ~94s, not the ~8min this document cites below.** That is upstream's sparse frames, not
+anything here. The old figure is left in place as the record of what it was.
+
+**Where our own Python still is** — unchanged by this, and the standing answer to *can we de-Pythonize
+too?*: `intake.py` and `emit.py` are the `ast` border and should stay Python; `lift.py`'s walk,
+`library.py`'s category-by-file and `patterns.py`'s abstention rules are the candidates, and the last of
+those is the interesting one, because it is a **judgement** living where nothing can argue with it —
+ugm's F7 shape.
+
+---
+
 **Read this first if you are picking this up cold.** Two sessions: `../ugm` replaced its engine, we
 evaluated migrating, decided to rewrite rather than port, and built **seven** slices. `pystrider/` is
 untouched — nothing was deleted here.

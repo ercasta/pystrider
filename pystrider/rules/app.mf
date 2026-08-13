@@ -40,9 +40,9 @@
 # indistinguishable from one that had been found wanting, and the planner could install the plain display
 # before asking the business question at all.
 fn qualify(b: build) -> build:
-    ATTR R(tier) F(b) "tier"
-    ATTR R(spend) F(b) "spend"
-    ATTR R(threshold) F(b) "threshold"
+    INVOKE R(tier) slot_of node=F(b) key="tier"
+    INVOKE R(spend) slot_of node=F(b) key="spend"
+    INVOKE R(threshold) slot_of node=F(b) key="threshold"
 
     EQ R(loyal) R(tier) "premium"
     JMPNOT R(loyal) .no
@@ -50,11 +50,11 @@ fn qualify(b: build) -> build:
     LT R(under) R(spend) R(threshold)
     JMPIF R(under) .no
 
-    SET F(b) "qualifies" true
+    INVOKE R(_) set_slot node=F(b) key="qualifies" value=true
     JMP .done
 
 .no:
-    SET F(b) "qualifies" false
+    INVOKE R(_) set_slot node=F(b) key="qualifies" value=false
 
 .done:
     CONST R(end) true
@@ -64,27 +64,27 @@ fn qualify(b: build) -> build:
 # rewrites a comparison's constant in `repair.mf`. So there is no separate "apply the decisions" pass that
 # could disagree with the decisions: applying IS deciding.
 fn grant_discount(b: qualified_build) -> discounting_build:
-    GET R(c) F(b) "applies_constant"
-    SET R(c) "value" true
-    SET F(b) "discount" true
+    INVOKE R(c) related node=F(b) label="applies_constant"
+    INVOKE R(_) set_slot node=R(c) key="value" value=true
+    INVOKE R(_) set_slot node=F(b) key="discount" value=true
 
 # --- the `_present` seam --------------------------------------------------------------------------------
 # Two operations, mutually exclusive BY TYPE rather than by an `if`. Neither is proposable until `qualify`
 # has run, and afterwards exactly one is.
 
 fn install_discount_display(b: discounting_build) -> displaying_build:
-    GET R(f) F(b) "discount_display"
-    GET R(blk) F(b) "class_block"
-    LINK R(blk) "stmt" R(f)
-    SET F(b) "displays" true
-    SET F(b) "shows_discount" true
+    INVOKE R(f) related node=F(b) label="discount_display"
+    INVOKE R(blk) related node=F(b) label="class_block"
+    INVOKE R(_) relate node=R(blk) label="stmt" other=R(f)
+    INVOKE R(_) set_slot node=F(b) key="displays" value=true
+    INVOKE R(_) set_slot node=F(b) key="shows_discount" value=true
 
 fn install_plain_display(b: unqualified_build) -> displaying_build:
-    GET R(f) F(b) "plain_display"
-    GET R(blk) F(b) "class_block"
-    LINK R(blk) "stmt" R(f)
-    SET F(b) "displays" true
-    SET F(b) "shows_discount" false
+    INVOKE R(f) related node=F(b) label="plain_display"
+    INVOKE R(blk) related node=F(b) label="class_block"
+    INVOKE R(_) relate node=R(blk) label="stmt" other=R(f)
+    INVOKE R(_) set_slot node=F(b) key="displays" value=true
+    INVOKE R(_) set_slot node=F(b) key="shows_discount" value=false
 
 # --- the `_finish` seam ---------------------------------------------------------------------------------
 # ⚠ THE SAFETY PROPERTY LIVES IN THESE TWO PARAMETER TYPES, and it took two corrections to state honestly.
@@ -115,21 +115,21 @@ fn install_plain_display(b: unqualified_build) -> displaying_build:
 
 fn install_direct_finish(b: reversible_build) -> finishing_build:
     NATIVE "check" F(b) "reversible_build"
-    GET R(f) F(b) "direct_finish"
-    GET R(blk) F(b) "class_block"
-    LINK R(blk) "stmt" R(f)
-    SET F(b) "finishes" true
-    SET F(b) "gated" false
+    INVOKE R(f) related node=F(b) label="direct_finish"
+    INVOKE R(blk) related node=F(b) label="class_block"
+    INVOKE R(_) relate node=R(blk) label="stmt" other=R(f)
+    INVOKE R(_) set_slot node=F(b) key="finishes" value=true
+    INVOKE R(_) set_slot node=F(b) key="gated" value=false
 
 # The gate brings its own screen, and the screen goes on the MODULE rather than in the class — the one
 # operation here that writes to two places, because a confirmation gate is genuinely two pieces of code.
 fn install_gated_finish(b: irreversible_build) -> finishing_build:
     NATIVE "check" F(b) "irreversible_build"
-    GET R(f) F(b) "gated_finish"
-    GET R(blk) F(b) "class_block"
-    LINK R(blk) "stmt" R(f)
-    GET R(scr) F(b) "confirm_screen"
-    GET R(mod) F(b) "module_node"
-    LINK R(mod) "defines" R(scr)
-    SET F(b) "finishes" true
-    SET F(b) "gated" true
+    INVOKE R(f) related node=F(b) label="gated_finish"
+    INVOKE R(blk) related node=F(b) label="class_block"
+    INVOKE R(_) relate node=R(blk) label="stmt" other=R(f)
+    INVOKE R(scr) related node=F(b) label="confirm_screen"
+    INVOKE R(mod) related node=F(b) label="module_node"
+    INVOKE R(_) relate node=R(mod) label="defines" other=R(scr)
+    INVOKE R(_) set_slot node=F(b) key="finishes" value=true
+    INVOKE R(_) set_slot node=F(b) key="gated" value=true

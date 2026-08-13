@@ -3,8 +3,8 @@
 
 # A benefit the business granted is something the interface must SURFACE, prominently.
 fn surface_benefit(c: discounting_cart) -> ux_specified_cart:
-    SET F(c) "requires_highlighted_discount" true
+    INVOKE R(_) set_slot node=F(c) key="requires_highlighted_discount" value=true
 
 # An IRREVERSIBLE action carries an OBLIGATION to confirm — a modality, not a flag.
 fn oblige_confirmation(c: irreversible_cart) -> ux_specified_cart:
-    SET F(c) "requires_confirmation_step" true
+    INVOKE R(_) set_slot node=F(c) key="requires_confirmation_step" value=true

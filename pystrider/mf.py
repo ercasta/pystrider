@@ -15,11 +15,11 @@ the old engine of that name having been retired. The whole of `pystrider` moved 
 itself until the next upstream rename."""
 from __future__ import annotations
 
-from ugm import (asm, conflict, dispatch, driver, execution, function, goal, loop, thread, types,
-                 workbench)
+from ugm import (access, asm, conflict, dispatch, driver, execution, function, goal, loop, thread,
+                 types, workbench)
 from ugm.focus import Focus
 from ugm.graph import Graph, new_graph
 from ugm.isa import Machine
 
-__all__ = ["asm", "conflict", "dispatch", "driver", "execution", "function", "goal", "loop", "thread",
-           "types", "workbench", "Focus", "Graph", "Machine", "new_graph"]
+__all__ = ["access", "asm", "conflict", "dispatch", "driver", "execution", "function", "goal", "loop",
+           "thread", "types", "workbench", "Focus", "Graph", "Machine", "new_graph"]

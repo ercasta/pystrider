@@ -7,23 +7,23 @@
 # The chain the old engine found by saturation, the planner finds by chaining types.
 
 fn qualify_order(c: priced_cart) -> checked_cart:
-    ATTR R(a) F(c) "amount"
-    GET R(p) F(c) "policy"
-    ATTR R(t) R(p) "threshold"
+    INVOKE R(a) slot_of node=F(c) key="amount"
+    INVOKE R(p) related node=F(c) label="policy"
+    INVOKE R(t) slot_of node=R(p) key="threshold"
     LT R(under) R(a) R(t)
     JMPIF R(under) .no
-    SET F(c) "order_qualifies" true
+    INVOKE R(_) set_slot node=F(c) key="order_qualifies" value=true
     JMP .done
 .no:
-    SET F(c) "order_qualifies" false
+    INVOKE R(_) set_slot node=F(c) key="order_qualifies" value=false
 .done:
-    SET F(c) "order_checked" true
+    INVOKE R(_) set_slot node=F(c) key="order_checked" value=true
 
 fn grant_discount(c: qualified_cart) -> discounting_cart:
-    ATTR R(tier) F(c) "customer_tier"
+    INVOKE R(tier) slot_of node=F(c) key="customer_tier"
     EQ R(premium) R(tier) "premium"
     JMPNOT R(premium) .done
-    SET F(c) "grants_discount" true
-    SET F(c) "has_benefit_discount" true
+    INVOKE R(_) set_slot node=F(c) key="grants_discount" value=true
+    INVOKE R(_) set_slot node=F(c) key="has_benefit_discount" value=true
 .done:
-    SET F(c) "tier_checked" true
+    INVOKE R(_) set_slot node=F(c) key="tier_checked" value=true
