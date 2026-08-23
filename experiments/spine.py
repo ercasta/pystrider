@@ -1,10 +1,10 @@
 """Slice 1 — the spine on the new floor: intake → recognize → emit, on real code.
 
-    python experiments/restrider_spine.py
+    python experiments/pystrider_spine.py
 
-⚠ A RUNNER, not a pytest module. Importing `restrider` re-points `import ugm` to
+⚠ A RUNNER, not a pytest module. Importing `pystrider` re-points `import ugm` to
 `restart` for the whole process, so a test doing this would silently hand every
-other test in the run the wrong engine. See `restrider/mf.py`.
+other test in the run the wrong engine. See `pystrider/mf.py`.
 
 WHAT SLICE 0 LEFT OPEN, and this answers: slice 0 proved the bet on a HAND-WRITTEN
 fixture — `fact +for_stmt(loop1)` and friends, authored by me, in the same file as
@@ -28,11 +28,20 @@ if hasattr(sys.stdout, "reconfigure"):
 
 sys.path.insert(0, r"C:\Users\ercas\creazioni\pystrider")
 
-from restrider import corpus                      # noqa: E402
-from restrider.emit import Unrenderable, emit     # noqa: E402
-from restrider.facts import Facts                 # noqa: E402
-from restrider.intake import intake               # noqa: E402
-from restrider.mf import ENGINE, PLUS             # noqa: E402
+from pystrider import corpus                      # noqa: E402
+from pystrider.emit import Unrenderable, emit     # noqa: E402
+from pystrider.facts import Facts                 # noqa: E402
+from pystrider.intake import intake               # noqa: E402
+from pystrider.mf import ENGINE                   # noqa: E402
+
+#: ⚠⚠ SECTIONS 4 (why) AND 6 (backwards) LOST THEIR ENGINE ON 2026-08-23.
+#:
+#: `Machine.why`, `Machine.focus`, `GOAL`, `SUBGOAL` and `Machine.chain` were all
+#: deleted on the way to the scratchpad, and goal management became something a corpus
+#: authors for itself. This probe REPORTS that where it used to measure, rather than
+#: being trimmed to what still works — a narrative that quietly drops its hardest
+#: section reads as if the section had never existed. `docs/transplant.md`.
+GONE = "not on this engine — see docs/transplant.md"
 
 SOURCE = '''\
 def total(items):
@@ -68,7 +77,7 @@ def run() -> int:
         failures += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
 
-    print(f"restrider slice 1 — the spine\n  engine {ENGINE}\n")
+    print(f"pystrider slice 1 — the spine\n  engine {ENGINE}\n")
 
     # 1 --------------------------------------------------------------------
     f, taken = _load(SOURCE, origin="<slice1>")
@@ -97,14 +106,15 @@ def run() -> int:
     (loop,) = f.subjects("for_stmt")
     print("\n-- 4. the authored pattern recognizes the ARTIFACT --")
     print(f"     iteration({f.show(loop)}) = {f.holds('iteration', loop)}")
-    for line in f.why("iteration", loop)[:6]:
-        print(f"     {line[:96]}")
+    # ⚠ `for line in f.why(...)` stood here and printed the derivation. There is no
+    # history to walk any more, so the probe says so instead of printing nothing.
+    print(f"     why(): {GONE}")
     check("the description is concluded off intaken code",
-          f.holds("iteration", loop) == "+")
+          f.holds("iteration", loop))
     check("...and what it read CAME FROM PARSED TEXT, not from our intention",
           f.has("from_code", loop))
     check("the neutral parts are established too — `does` names the whole block",
-          f.holds("does", loop, f.one("body", loop)) == "+")
+          f.holds("does", loop, f.one("body", loop)))
 
     # 5 --------------------------------------------------------------------
     print("\n-- 5. the membrane --")
@@ -125,29 +135,12 @@ def run() -> int:
     # 6 --------------------------------------------------------------------
     # The write direction, on the same authored rule — no second artifact.
     print("\n-- 6. the SAME rule, read backwards --")
-    fw = Facts(corpus("patterns"), scope="slice1-write")
-    wanted = fw.g.rel(fw.rel("iteration"), fw.node("loop_to_build"))
-    fw.m.gate.write(fw.m.focus, fw.g.rel(fw.m.GOAL, wanted), PLUS, mention=True)
-    fw.run()
-    # ⚠ Read the RELATION of each subgoal, never a substring of the printed form:
-    # `iteration(loop_to_build)` contains the word `iteration` whichever side of
-    # the rule it came from, so a string check could not tell the two vocabularies
-    # apart — which is the only thing this pair is measuring.
-    asked = {}
-    for mo in fw.m.chain.moments:
-        for e in mo.delta:
-            if e.sign == PLUS and fw.g.relation_of(e.proposition) is fw.m.SUBGOAL:
-                inner = fw.g.member(e.proposition, 1)
-                asked[fw.g.show(fw.g.relation_of(inner))] = fw.g.show(inner)
-    for rel in sorted(asked):
-        print(f"     {asked[rel][:96]}")
-    # ⚠ `readable` joined this set when the abstention landed — the description
-    # grew a member, so the work order grew one. Recorded, not quietly widened.
-    check("it asks for the structure in PYTHON's words",
-          set(asked) == {"for_stmt", "target", "iterated", "body", "readable"})
-    check("CONTROL: and for NONE of its own — a description asking for itself "
-          "would be a rule that recognizes what it wrote",
-          not ({"iteration", "item", "sequence", "does"} & set(asked)))
+    print(f"     {GONE}")
+    print("     what it measured: asserting `goal(iteration($n))` made the engine read")
+    print("     the SAME rule backwards and emit subgoals in PYTHON's words -")
+    print("     {for_stmt, target, iterated, body, readable} and none of its own.")
+    print("     That expectation is preserved as an xfail(strict) in tests/test_spine.py,")
+    print("     so it announces itself the day a backward reader is authored in rules/.")
 
     print(f"\n{checks} checks, {failures} failing")
     return failures

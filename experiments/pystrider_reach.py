@@ -1,8 +1,8 @@
-"""How much Python `restrider` can read and write back — the reach measurement.
+"""How much Python `pystrider` can read and write back — the reach measurement.
 
-    python experiments/restrider_reach.py [path-glob]
+    python experiments/pystrider_reach.py [path-glob]
 
-⚠ A RUNNER, not a pytest module (see `restrider/mf.py`).
+⚠ A RUNNER, not a pytest module (see `pystrider/mf.py`).
 
 **WHY THIS FILE EXISTS AT ALL, and it is the one lesson from the last generation
 that cost a decision:** engine 2's stated bar for retiring the generation before it
@@ -43,10 +43,10 @@ if hasattr(sys.stdout, "reconfigure"):
 
 sys.path.insert(0, r"C:\Users\ercas\creazioni\pystrider")
 
-from restrider import corpus                      # noqa: E402
-from restrider.emit import Unrenderable, emit     # noqa: E402
-from restrider.facts import Facts                 # noqa: E402
-from restrider.intake import intake               # noqa: E402
+from pystrider import corpus                      # noqa: E402
+from pystrider.emit import Unrenderable, emit     # noqa: E402
+from pystrider.facts import Facts                 # noqa: E402
+from pystrider.intake import intake               # noqa: E402
 
 
 def sweep(pattern: str = "**/*.py") -> dict:

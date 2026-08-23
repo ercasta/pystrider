@@ -1,6 +1,6 @@
 """Slice 2's pins — one goal drives a code repair.
 
-The narrative version with its printed evidence is `experiments/restrider_repair.py`.
+The narrative version with its printed evidence is `experiments/pystrider_repair.py`.
 
 ⚠ Read `conftest.py` first: this suite runs in its own pytest invocation.
 """
@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import pytest
 
-from restrider import corpus
-from restrider.emit import emit
-from restrider.evaluator import evaluate, register
-from restrider.facts import Facts
-from restrider.intake import intake
-from restrider.mf import PLUS
+from pystrider import corpus
+from pystrider.emit import emit
+from pystrider.evaluator import evaluate, register
+from pystrider.facts import Facts
+from pystrider.intake import intake
 
 BUG = "def classify(age):\n    if age > 18:\n        return 'adult'\n    return 'minor'\n"
 CORRECT = "def classify(age):\n    if age >= 18:\n        return 'adult'\n    return 'minor'\n"
@@ -32,11 +31,25 @@ def world(source: str = BUG, rules: str = "", scope: str = "r", given=18, wants=
     return f, taken, function, case
 
 
+#: ⚠⚠ EVERY TEST BELOW THAT CALLS THIS IS `xfail(strict=True)`, and the mark is on the
+#: test rather than here so each one still says what it was checking. The three lines
+#: this used to be are not repairable in place:
+#:
+#:     f.m.gate.write(f.m.focus, f.g.rel(f.m.GOAL, goal), PLUS, mention=True)
+#:                      ^^^^^             ^^^^^^         ^^^^   ^^^^^^^
+#:                      gone              gone           gone   gone
+#:
+#: A goal was the engine's own relation and drove backward reading; under the
+#: scratchpad it is an ordinary corpus relation with no machinery behind it. STRICT so
+#: that the day a backward reader is authored, these XPASS loudly instead of sitting
+#: green-but-skipped — a pin that cannot tell you the world changed is not a pin.
+NEEDS_GOALS = ("the engine no longer manages goals — see docs/transplant.md; a backward "
+               "reader has to be authored in rules/ before this can pass again")
+
+
 def pursue(f: Facts, function: int, case: int):
-    goal = f.g.rel(f.rel("agrees"), function, case)
-    f.m.gate.write(f.m.focus, f.g.rel(f.m.GOAL, goal), PLUS, mention=True)
-    f.run(limit=8000)
-    return goal
+    """Assert the goal and let the rules chase it. NOT AVAILABLE on this engine."""
+    raise NotImplementedError(NEEDS_GOALS)
 
 
 def ran(source: str):
@@ -53,11 +66,13 @@ def test_what_the_code_does_is_DERIVED_FROM_STRUCTURE_not_by_running_it():
     assert evaluate(f, function, case).value == "minor"
 
 
+@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 def test_the_goal_comes_to_hold_and_the_repair_reaches_the_REAL_graph():
     f, _, function, case = world()
     assert f.m.holds(pursue(f, function, case)) == PLUS
 
 
+@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 def test_CHANGE_then_OBSERVE_the_evaluation_is_re_derived_after_the_change():
     """A repair is not done until its effect is observed. Two evaluations, not one."""
     f, _, function, case = world()
@@ -68,6 +83,7 @@ def test_CHANGE_then_OBSERVE_the_evaluation_is_re_derived_after_the_change():
 # -- the artefact ---------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 def test_the_emitted_source_RUNS_and_answers_the_case():
     """⚠⚠ THE INDEPENDENT GATE. Engine 2 shipped a plan that "succeeded" while
     emitting BYTE-IDENTICAL source: a plan that changes nothing is
@@ -80,6 +96,7 @@ def test_the_emitted_source_RUNS_and_answers_the_case():
     assert ran(repaired)(5) == "minor"
 
 
+@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 def test_exactly_ONE_repair_family_fires():
     """⚠⚠ It was TWO, and the emitted code read `if age >= 17` — two independent
     fixes for one bug, correct by luck and wrong as a repair.
@@ -97,6 +114,7 @@ def test_exactly_ONE_repair_family_fires():
 # -- the rivals -----------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 @pytest.mark.parametrize("dropped", ["relax", "lower"])
 def test_EITHER_repair_family_alone_genuinely_fixes_it(dropped):
     """⚠ Engine 2 pinned its winner BY NAME and the pin went silently vacuous when
@@ -125,14 +143,14 @@ def test_WITHOUT_the_unmet_member_a_repair_damages_CORRECT_code():
     """⭐⭐ The measurement this slice exists for.
 
     Survey §2 lists *a rule's condition is its parameter type* as the one item that
-    is a REDESIGN rather than a port. The answer measured here is `+unmet(?p, ...)`:
+    is a REDESIGN rather than a port. The answer measured here is `+unmet($p, ...)`:
     a repair is proposable only once backward reading has found the goal unmet, and
     the condition is an ordinary antecedent member rather than a type — so it is
     arguable, and another author can write a different one.
     """
     ungated = corpus("patterns", "repair").replace(
-        "+unmet(?p, evaluated(?f, ?c, ?v))", "+wants(?f, ?c, ?v)"
-    ).replace("-unmet(?p, evaluated(?f, ?c, ?v)),\n    ", "")
+        "+unmet($p, evaluated($f, $c, $v))", "+wants($f, $c, $v)"
+    ).replace("-unmet($p, evaluated($f, $c, $v)),\n    ", "")
     f, taken, _function, _case = world(CORRECT, rules=ungated, scope="ungated")
     f.run()
     assert emit(f, taken.module).strip() != CORRECT.strip()
@@ -171,6 +189,7 @@ def test_CONTROL_an_operator_that_IS_modelled_is_not_refused():
 # -- the substrate the repair rests on ------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 def test_repair_is_DENY_then_ASSERT_and_the_reader_sees_the_CURRENT_claim():
     """⚠⚠ The chain is append-only: nothing is mutated and nothing is removed, so
     *change this* is `-old, +new`. A reader over its own deposit log would see both
@@ -185,7 +204,7 @@ def test_repair_is_DENY_then_ASSERT_and_the_reader_sees_the_CURRENT_claim():
 
 def test_a_WORD_and_a_LITERAL_are_different_kinds_of_node():
     """⚠⚠ Conflating them made a corpus unable to talk about code: the operator was
-    stored `repr`-encoded as `'gt'`, so `+operator(?g, gt)` in an authored rule
+    stored `repr`-encoded as `'gt'`, so `+operator($g, gt)` in an authored rule
     could never match and one of the two repair families was **dead**. The suite
     could not tell, because the other family keys on an integer, where `repr(18)`
     and the token `18` agree by luck."""

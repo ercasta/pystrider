@@ -49,7 +49,7 @@ from __future__ import annotations
 import ast
 from typing import Any, Dict, List, Optional, Tuple
 
-from .mf import PLUS, Loader, Machine
+from .mf import Loader, Machine
 
 #: Attribute payloads are stored as their `repr`, which round-trips exactly for
 #: every constant Python's grammar can express (`str`, `bytes`, `int`, `float`,
@@ -170,7 +170,12 @@ class Facts:
         which is how `unreadable` and the gap vocabulary get somewhere to hang.
         """
         prop = self.g.rel(self.rel(relation), *members)
-        self.m.gate.write(self.m.focus, prop, PLUS, source=self.m.KB, mention=True)
+        # ⚠ 2026-08-23: this was `gate.write(focus, prop, PLUS, source=KB, mention=True)`
+        # and all four of those arguments are gone, not renamed. Under the scratchpad
+        # there is one graph and it IS the state, so there is no focus to write into, no
+        # sign to carry, and no source to attribute to — a proposition is anchored or it
+        # is absent. `docs/transplant.md`.
+        self.m.gate.write(prop)
         return prop
 
     # -- the index ---------------------------------------------------------
@@ -216,7 +221,7 @@ class Facts:
         self._catch_up(rel)
         return [self.g.members(p)[1:]
                 for p in self._index.get((rel, subject), ())
-                if self.m.holds(p) == PLUS]
+                if self.m.holds(p)]
 
     def one(self, relation: str, subject: int) -> Optional[int]:
         """The single object of a relation, or None. Refuses to guess between two.
@@ -255,7 +260,7 @@ class Facts:
         charges for; only what the rules join does.
         """
         return [self.g.members(p)[0] for p in self._catch_up(self.rel(relation))
-                if self.g.members(p) and self.m.holds(p) == PLUS]
+                if self.g.members(p) and self.m.holds(p)]
 
     def has(self, relation: str, subject: int) -> bool:
         """Whether `relation(subject)` — a kind, or any one-place claim — holds now.
@@ -267,7 +272,7 @@ class Facts:
         """
         rel = self.rel(relation)
         self._catch_up(rel)
-        return any(self.m.holds(p) == PLUS
+        return any(self.m.holds(p)
                    for p in self._index.get((rel, subject), ()))
 
     def text(self, relation: str, subject: int) -> Optional[str]:
@@ -297,11 +302,36 @@ class Facts:
         """Let the authored rules read what was deposited."""
         return self.m.run(limit=limit)
 
-    def holds(self, relation: str, *members: int) -> Optional[str]:
+    def holds(self, relation: str, *members: int) -> bool:
+        """Whether this proposition is anchored right now.
+
+        ⚠ A BOOL since 2026-08-23, where it used to be a sign (`"+"`, `"-"`, or None).
+        Under the scratchpad a retraction is a deletion, so there is no third answer to
+        give: `not holds(...)` covers both *denied* and *never said*, and the corpus
+        says which it meant by anchoring `not($p)` when it means the first.
+        """
         return self.m.holds(self.g.rel(self.rel(relation), *members))
 
     def why(self, relation: str, *members: int) -> List[str]:
-        return self.m.why(self.g.rel(self.rel(relation), *members))
+        """REFUSED, by name, because the engine no longer keeps a history to read.
+
+        ⚠⚠ This is not a stub waiting to be filled in — it is a capability that LEFT,
+        and it was the headline of the generation this package came from: *recognition
+        arrives EXPLAINED, which engine 2 could not do.* `Machine.why` walked a
+        belief's support back to what it rested on, and upstream deleted it with the
+        chain: *"both were readings of a history, and there is no history"*
+        (`../ugm/ugm/__main__.py`). Their README still advertises `--why`; it is stale.
+
+        It raises rather than returning `[]` because an explanation facility that
+        quietly answers *no reason* is worse than one that is missing: the caller
+        cannot tell a derivation with no premises from an engine with no memory.
+        Upstream parks the replacement behind a future memory system.
+        """
+        raise NotImplementedError(
+            "`why` needs a support trail, and the scratchpad engine keeps none — "
+            "see docs/transplant.md. Nothing here can answer WHY a proposition holds; "
+            "ask `holds` for WHETHER it does."
+        )
 
     def show(self, n: int) -> str:
         return self.g.show(n)

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pystrider"
 version = "0.0.1"
-description = "Reads and writes Python by reasoning, on ugm's microfunctions engine."
+description = "Reads and writes Python by reasoning, on ugm's scratchpad engine."
 requires-python = ">=3.11"
 dependencies = ["universal-graph-machine"]
 
@@ -14,9 +14,12 @@ dev = ["pytest"]
 experiments = ["textual>=8,<9"]   # drives the emitted apps through textual's Pilot
 
 [tool.setuptools]
-# ⚠ 2026-08-02: the previous generation (the `ugm`-classic `pystrider` package and its `grammapy` peer)
-# was retired and `strider/` took the name. `hypothesis` went with grammapy's property tests.
+# ⚠ 2026-08-23: engine 2 was deleted and `restrider/` took the `pystrider` name (docs/transplant.md).
+# The 2026-08-02 note this replaces recorded the previous such move, one generation earlier.
 packages = ["pystrider"]
 
 [tool.setuptools.package-data]
-pystrider = ["rules/*.mf"]
+# ⚠⚠ `.ugm`, NOT `.mf`. This said `rules/*.mf` until 2026-08-23 and would have shipped a wheel
+# with NO RULES IN IT — every corpus file is `.ugm` on this engine, and `corpus()` reads them off
+# disk, so the failure would have been an empty rule set rather than a missing-file error.
+pystrider = ["rules/*.ugm"]

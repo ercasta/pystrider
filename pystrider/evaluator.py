@@ -30,7 +30,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .facts import Facts
-from .mf import PLUS
 
 #: The comparison operators this can reason about. ⚠ Not a comment — the lookup.
 _DECIDES = {
@@ -120,11 +119,17 @@ def register(f: Facts) -> None:
     mints a SECOND `evaluate` and the tool waits for a request nobody can make.
     """
 
-    def answer(machine, frame, entry):
+    # ⚠ 2026-08-23: the callback was `(machine, frame, entry)` and is now
+    # `(machine, proposition)`. A frame is no longer a thing an answerer is handed, and
+    # the entry's SIGN is gone with the chain — a proposition that reaches an answerer
+    # is anchored, so there is nothing left to check it against. The engine binds this
+    # signature strictly (`inspect.signature(fn).bind(None, None)`), so a stale
+    # three-argument answerer is refused at registration rather than at call time.
+    def answer(machine, proposition):
         g = f.g
-        if g.relation_of(entry.proposition) is not f.rel("evaluate") or entry.sign != PLUS:
+        if g.relation_of(proposition) is not f.rel("evaluate"):
             return None
-        function, case = g.members(entry.proposition)
+        function, case = g.members(proposition)
         result = evaluate(f, function, case)
         if result.refused is not None:
             # ⚠ The refusal is DEPOSITED rather than swallowed, so a goal that

@@ -1,0 +1,116 @@
+# Slice 2 — one goal drives a code repair, on the new floor.
+#
+# The same off-by-one guard bug engine 2 repaired, re-derived here so the result
+# checks against a real prior one rather than against nothing.
+#
+# ⭐⭐ WHAT REPLACES "A RULE'S CONDITION IS ITS PARAMETER TYPE". That is what let
+# engine 2 delete forward chaining, and survey §2 lists it as having no counterpart
+# — the one item that was *a redesign, not a port*. The answer measured here is
+# `+unmet($p, ...)`: a repair is proposable only once BACKWARD READING has found
+# the goal unmet, so the search still discovers the order. The difference is that
+# the condition is now an ordinary ANTECEDENT MEMBER rather than a type on a
+# parameter, which means it is arguable and another author can write a different
+# one. `experiments/restrider_repair.py` measures the control — with the `unmet`
+# member removed, the repair fires on CORRECT code too.
+#
+# ⚠ IMAGINATION DERIVES, REALITY EXECUTES — carried over deliberately. What a case
+# returns is derived from STRUCTURE by a tool; running the emitted source is a
+# separate, independent gate. Engine 2 reached this from the opposite direction
+# (its dispatcher refused an imagined target, so a candidate repair could never be
+# evaluated by running the patched code). Here it is a choice, and the same one.
+#
+# ⚠⚠ REPAIR ON AN APPEND-ONLY CHAIN IS DENY-THEN-ASSERT. Nothing is mutated and
+# nothing is removed, so `-operator($g, gt), +operator($g, ge)` is the substrate's
+# own answer to *change this*. `Facts.of` asks `holds`, so a reader sees the
+# current claim and `emit` renders the repaired code — engine 2 shipped a plan that
+# "succeeded" while emitting byte-identical source, and only an independent gate
+# caught it.
+
+# Where the guard is: navigate the intaken structure to the comparison a
+# function's first `if` tests. Python's vocabulary throughout — this is a reading
+# of code, not a description of it.
+# ⚠⚠ EVERY RULE BELOW CARRIES `no <its own conclusion>` AS A PREMISE, AND A NEW RULE
+# WITHOUT ONE IS A HANG. There is no inert set in this engine: an application that
+# changed nothing is offered again, so a rule that does not stop itself never stops —
+# and the symptom is not an error but a run that burns its whole budget on the FIRST
+# applicable rule while every later rule never fires. See `mf.py`.
+
+rule <guard> = implies(
+  { +function($f), +body($f, $bl), +stmt($bl, $i), +if_stmt($i), +condition($i, $c),
+    +comparison($c), no guard($f, $c) },
+  { +guard($f, $c) } )
+
+# ⭐ The inverses the evaluator needs to walk UP. A proposition relates its members
+# and nothing about it is directional, but our reader indexes by first member — so
+# *which `if` is this the condition of* is an authored rule rather than a second
+# index. That is the substrate's own shape: navigation is a claim, not a pointer.
+rule <guard-of>  = implies(
+  { +if_stmt($i), +condition($i, $c), no if_stmt_of($c, $i) },
+  { +if_stmt_of($c, $i) } )
+rule <in-block>  = implies(
+  { +block($b), +stmt($b, $s), no block_of($s, $b) },
+  { +block_of($s, $b) } )
+
+# Ask what the function does for a case. The ANSWER is a tool's (see below), so
+# what this rule writes is the request.
+# ⚠ `+guard($f, $g)` is not decoration: without it this fired BEFORE <guard> had
+# navigated to the comparison, the tool answered *no guard*, and nothing asked
+# again — a request is a fact and a fact is not an event. That is `artefact.py`'s
+# recorded ⚠⚠⚠ (*without a re-ask the signal is stale*) arriving here on the first
+# run. A request must not be askable before what it needs exists.
+rule <ask> = implies(
+  { +function($f), +case($c), +guard($f, $g), no evaluate($f, $c) },
+  { +evaluate($f, $c) } )
+
+# ⭐ The goal. Backward reading expands it into exactly two subgoals — what the
+# code does, and what was expected — and `_settle` binds `$v` from `expects`, so
+# the `evaluated` subgoal is asked about the value that was WANTED.
+# ⚠⚠ THE ORDER OF THESE TWO MEMBERS IS LOAD-BEARING, AND GETTING IT WRONG MAKES THE
+# PLAN BLAME THE WRONG HALF. `_settle` takes the FIRST entry that satisfies a
+# subgoal and nothing backtracks over the binding, so whichever member comes first
+# binds `$v`. With `evaluated` first, `$v` binds to what the code DOES ('minor'),
+# and the plan reports `wants` unmet — i.e. *your expectation is wrong*. Measured,
+# not reasoned: that is exactly what came back.
+#
+# ⭐ THE RULE THIS GIVES: in a conjunction where one half is a GIVEN and the other
+# is REPAIRABLE, the given must bind first. `wants` is the case we were handed and
+# nothing may revise it; the code is the thing that can change. Upstream's own
+# `backward.py` says the same from the other side — *which tap gets tried is
+# decided by the walk, and therefore by authoring order*.
+rule <checked> = implies(
+  { +wants($f, $c, $v), +evaluated($f, $c, $v), no agrees($f, $c) },
+  { +agrees($f, $c) } )
+
+# ⭐⭐ THE TWO REPAIR FAMILIES. Both genuinely fix the bug, which is the point:
+# "found A" must not be read as "B is wrong". ⚠ Engine 2 pinned its winner by name
+# and the pin went quietly VACUOUS when upstream's tie-break flipped — so the probe
+# derives the rival from the plan instead of naming it.
+#
+# CHANGE then OBSERVE: each denies the old claim, asserts the new one, and re-asks
+# the evaluation under a fresh occasion. A repair is not done until its effect is
+# observed.
+
+# ⚠⚠ EACH REPAIR DENIES ITS OWN OCCASION, AND LEAVING THAT OUT CAUSED OVER-REPAIR.
+# `unmet` is a FACT, and a fact is not an event: once backward reading has written
+# it, it stays written on an append-only chain — so after `<lower>` fixed the code
+# and the goal came to hold, `<relax>` was **still proposable off the same stale
+# `unmet`** and fired too. The emitted result was `if age >= 17`: two independent
+# fixes for one bug, still correct by luck and wrong as a repair.
+#
+# ⭐ It is the same shape as `artefact.py`'s ⚠⚠⚠ (*without a re-ask the signal is
+# stale*) seen from the other side — there a stale signal reports work still to do;
+# here it authorises work already done. `-unmet(...)` is the repair CONSUMING the
+# occasion it acted on, which is upstream's own `<redo>` shape.
+
+rule <relax> = implies(
+  { +unmet($p, evaluated($f, $c, $v)), +guard($f, $g), +operator($g, gt) },
+  { -unmet($p, evaluated($f, $c, $v)),
+    -operator($g, gt), +operator($g, ge), +relaxed($g),
+    +again(evaluate($f, $c), relaxed($g)) } )
+
+rule <lower> = implies(
+  { +unmet($p, evaluated($f, $c, $v)), +guard($f, $g), +right($g, $r),
+    +literal($r, 18) },
+  { -unmet($p, evaluated($f, $c, $v)),
+    -literal($r, 18), +literal($r, 17), +lowered($r),
+    +again(evaluate($f, $c), lowered($r)) } )
