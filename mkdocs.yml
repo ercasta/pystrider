@@ -96,5 +96,10 @@ extra_css:
 # the name. Publishing them would have been a site describing code that is not in the repo. They are
 # deleted rather than fixed because the new generation authors `.mf` rather than CNL, so the playgrounds
 # are a rewrite and not a repair. `pystrider/HANDOFF.md` is the current front door until this is redone.
+#
+# ⚠ 2026-08-18 — AND THE `.mf` GENERATION IS ITSELF RETIRED NOW, so the sentence above is already one
+# engine stale: the authored rules are `.ugm` on the `rules-design.md` floor. The nav stays at one page.
+# Recorded rather than edited in place, because a re-authoring note that quietly rewrites its own history
+# is how a site ends up describing a generation nobody can name.
 nav:
   - Home: index.md

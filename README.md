@@ -1,14 +1,18 @@
 # pystrider
 
-> **⚠ 2026-08-02 — THIS README DESCRIBES THE RETIRED GENERATION AND HAS NOT BEEN RE-AUTHORED.**
-> The `pystrider` package it documents (CNL rules, `grammapy`, the browser playgrounds, the whole
-> `ugm`-classic engine) was **deleted**, and the rewrite that was living in `strider/` took the name.
-> The thesis below still holds; the mechanisms named in it largely do not — the new generation authors
-> ugm **microfunctions** (`pystrider/rules/*.mf`) rather than CNL, and there is no `grammapy` half.
-> The live site is frozen at its last deploy for the same reason.
+> **⚠ 2026-08-18 — THIS README DESCRIBES A GENERATION THAT IS NOW TWO ENGINES OLD, AND HAS NOT BEEN
+> RE-AUTHORED.** It documents CNL rules, `grammapy` and the browser playgrounds, on the `ugm`-classic
+> engine. That was deleted on 2026-08-02 and `strider/` took the name, authoring ugm **microfunctions**
+> instead of CNL. On **2026-08-18 that generation went too**: upstream deleted the microfunctions floor
+> deliberately (`../ugm`'s `CLAUDE.md` — *"an ISA with opcodes and registers, which the design in
+> `rules-design.md` rejects"*), so it could no longer import, and the port in `restrider/` took the name.
+>
+> The thesis below still holds; **almost every mechanism named in it does not.** The live site is frozen
+> at its last deploy for the same reason.
 >
 > **Current front door: [`pystrider/HANDOFF.md`](pystrider/HANDOFF.md).** Verify with
-> `python -m pytest tests/ -q` (216 passing).
+> `python -m pytest tests/ -q` (**75 passing**) — one invocation now, where the two generations
+> previously needed two because two engines were installed under the name `ugm`.
 
 **Bring your own rules — business, UX, your favorite Python library — keep them in separate files,
 bridge them, and brew a _working, verified_ UI.** No wizards, no hardcoded engine, no LLMs: every
@@ -237,17 +241,31 @@ ways. That is why:
 
 ## Run
 
+⚠ The demos and the playground below **were deleted with the first retirement** and are kept here only
+because the rest of this README is a frozen document. What actually runs today is the second block.
+
 ```bash
-pip install -e ../ugm -e .    # the ugm sibling + this package (grammapy ships in-repo)
-pip install textual            # for the playground (the driven Textual app)
-
-python demos/playground/playground.py          # THE PLAYGROUND — bring rules, bridge, brew a UI
-python demos/playground/playground.py --run     # launch the emitted app interactively
-
+# ⚠ HISTORICAL — none of these paths exist any more.
+python demos/playground/playground.py           # THE PLAYGROUND — bring rules, bridge, brew a UI
 python -m pystrider.demo                        # the packaged analysis/repair walkthrough
-python demos/run.py                             # five focused analysis/repair demos
-pytest -q                                       # the behaviour pins (284 green)
 ```
+
+What runs today, from a checkout beside `../Universal-Graph-Machine`:
+
+```bash
+pip install -e ../Universal-Graph-Machine -e .  # the ugm sibling + this package
+                                                # ⚠ the sibling is `Universal-Graph-Machine`, not `ugm`
+
+python -m pytest tests/ -q                      # the behaviour pins — 75 green, ONE invocation
+
+python experiments/strider_spine.py             # slice 1 — intake, recognize, emit   (11 checks)
+python experiments/strider_repair.py            # slice 2 — one goal drives a repair  (15 checks)
+python experiments/restart_bet.py               # slice 0 — THE BET on this floor     (11 checks)
+python experiments/strider_reach.py             # the reach measurement — UNSTABLE must be 0
+```
+
+⚠ `UGM_PATH=../Universal-Graph-Machine/.claude/worktrees/<branch>` measures against a ugm *worktree*
+instead of the install — upstream usually has several branches live at once. See `pystrider/mf.py`.
 
 For everything else — the reasoning axes, the generation loop in full, the layout of every module
 and probe — see **[docs/deep_dive.md](docs/deep_dive.md)**. For the newer exploration — deriving a

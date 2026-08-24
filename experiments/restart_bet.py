@@ -1,18 +1,15 @@
-"""Slice 0 on `../ugm@restart` — does THE BET survive the new floor?
+"""Slice 0 — does THE BET survive the floor in `../ugm`'s `rules-design.md`?
 
     python experiments/restart_bet.py
 
-⚠ THIS RUNS THE OTHER ENGINE, by path, exactly as `restart_scale.py` does, and for
-the same reason: `pystrider` itself runs on ugm `main` via the `ugm-classic`
-worktree. It imports nothing from `pystrider`.
+⚠ IT IS A RUNNER, NOT A TEST MODULE — with its own checks and its own exit code, in
+the shape `ugm/backward.py` uses. It stays one because the printed derivations ARE
+the evidence; `tests/test_spine.py` pins the same claims for CI.
 
-⚠ AND IT IS NOT A TEST MODULE, DELIBERATELY. Putting `creazioni/ugm` on `sys.path`
-makes `import ugm` resolve to `restart` for the WHOLE PROCESS, so a pytest module
-doing this would silently re-point every other test in the run at an engine they
-were not written for. That is survey §0's trap — *the same import resolves to two
-different engines depending on where you stand* — arriving from the third
-direction. It is a runner with its own checks and its own exit code, in the shape
-`ugm/backward.py` uses.
+✅ It used to reach a SECOND engine by absolute path, and its warning about doing so
+was the longest note in this file. Engine 2 was deleted upstream, so there is one
+engine, this file goes through `pystrider.mf` like everything else, and both suites
+now run in one pytest invocation. The trap it guarded against cannot occur.
 
 THE BET, unchanged across three engines: **ONE authored description, read one way
 recognizes code, read the other way writes it.**
@@ -22,10 +19,10 @@ recognizes code, read the other way writes it.**
   * engine 2 (`microfunctions`) — deleted pattern matching, so the bet moved to
     `driver.establishes`: a function's BODY versus its EFFECTS. That rewrite is
     `pystrider/` as it stands.
-  * engine 3 (`restart`) — what this file measures.
+  * engine 3 (`rules-design.md`) — what this file measures, and what ships.
 
 ⭐⭐⭐ THE RESULT: THE BET IS NATIVE HERE, AND IT IS THE CLEANEST OF THE THREE.
-`restart` has pattern-matching rules again (`implies({ant}, {con})`) AND a backward
+Engine 3 has pattern-matching rules again (`implies({ant}, {con})`) AND a backward
 reader over the same rules. So one authored rule is read forwards by the matcher
 (structure ⟹ description = RECOGNIZE) and backwards by `<plan>`/`<expand>`
 (description ⟹ the structural subgoals = WRITE). Neither reading is ours to build;
@@ -54,28 +51,19 @@ check that could not fail.
 """
 from __future__ import annotations
 
+import os
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-UGM_RESTART = r"C:\Users\ercas\creazioni\ugm"
+#: Run me from anywhere: the repo root is this file's parent, not a machine-specific path.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
-def _engine():
-    sys.path.insert(0, UGM_RESTART)
-    import ugm
-
-    assert "ugm-classic" not in ugm.__file__, (
-        f"expected the restart engine, resolved {ugm.__file__} — is creazioni/ugm on `main`?"
-    )
-    from ugm import Machine, PLUS
-    from ugm.text import load
-
-    return Machine, PLUS, load
-
-
-Machine, PLUS, load = _engine()
+#: ⚠ Through the chokepoint, like everything else. This file used to bootstrap a SECOND engine by
+#: absolute path, because two of them were installed under the name `ugm`; engine 2 was deleted
+#: upstream and there is only one left. `mf.py` is now the only file here that names `ugm`.
+from pystrider.mf import ENGINE, Machine, PLUS, load  # noqa: E402
 
 
 # -- the one authored description -----------------------------------------------
@@ -107,6 +95,23 @@ fact +body(loop1, blk1)
 # It satisfies upstream's criterion for an occasion — *warranted only if re-asking
 # cannot produce one* — because the tool declines a goal it has already filled, so
 # the second ask produces no second `built`.
+#
+# ⚠⚠ AND THE TOOL ANSWERS `fill`, WHICH IS THE CORPUS'S OWN, NOT `check`, WHICH IS THE
+# APPARATUS'S. Upstream refuses the second at registration — *a corpus tool may not share a
+# request relation with the apparatus; choose a request name of your own* — because a tool
+# PROPOSES while the apparatus CONCLUDES (§19), so sharing `check` would quietly give this
+# probe a share of a request the agent acts on directly. READING `check` in a rule is still
+# fine; only answering it is not. So `<fill>` bridges the one into the other, which is the
+# same shape `rules/repair.ugm`'s `<ask>` uses to reach `evaluate`.
+#: ⚠ ALWAYS LOADED, in BOTH arms of 4's control. This rule is not the variable under test —
+#: it is how the tool is reachable at all, and putting it in `REASK` silently turned the
+#: control from *no re-ask* into *no tool*, which mints nothing and makes the control pass
+#: for the wrong reason. The variable is `<reask>` alone.
+FILL = """
+rule <fill> = implies( { +check(?p, ?w) },
+                       { +fill(?p, ?w) } )
+"""
+
 REASK = """
 rule <reask> = implies( { +check(?p, ?w), +built(?w) },
                         { +again(check(?p, ?w), built(?w)) } )
@@ -173,12 +178,12 @@ def _write(reask: bool):
     the silent-wrong shape, not a missing feature.
     """
     m = Machine()
-    kb = load(m, PATTERN + (REASK if reask else ""))
+    kb = load(m, PATTERN + FILL + (REASK if reask else ""))
     minted, filled_for = [], set()
 
     def mint(_m, frame, e):
         g = m.g
-        if g.relation_of(e.proposition) is not m.CHECK or e.sign != PLUS:
+        if g.relation_of(e.proposition) is not kb.atom("fill") or e.sign != PLUS:
             return None
         _plan, goal = g.members(e.proposition)
         if goal in filled_for:
@@ -198,7 +203,7 @@ def _write(reask: bool):
         m.gate.write(frame, g.rel(kb.atom("built"), goal), PLUS, source=m.KB, mention=True)
         return None
 
-    kb.answerer("minter", "check", mint)
+    kb.answerer("minter", "fill", mint)
     goal = kb.term(f"iteration({GOAL_SUBJECT})")
     m.gate.write(m.focus, m.g.rel(m.GOAL, goal), PLUS, mention=True)
     m.run(limit=4000)
@@ -221,7 +226,7 @@ def run() -> int:
         failures += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
 
-    print("THE BET on ../ugm@restart — one description, read two ways\n")
+    print("THE BET on ../ugm — one description, read two ways\n")
 
     # 1 --------------------------------------------------------------------
     m, verdict, why = recognize()

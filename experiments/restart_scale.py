@@ -1,4 +1,4 @@
-"""The three probes behind `docs/restart_port_survey.md` §4 — what `../ugm@restart` costs.
+"""The three probes behind `docs/restart_port_survey.md` §4 — what `../ugm`'s engine costs.
 
     python experiments/restart_scale.py
 
@@ -7,14 +7,13 @@ recommendation is *re-take this decision when upstream fixes the quadratic*, and
 recommendation with an unrunnable measurement behind it is a recommendation nobody
 can check.
 
-⚠ THIS RUNS THE OTHER ENGINE. `pystrider` runs on ugm `main` via the `ugm-classic`
-worktree; this file reaches past the editable install to `creazioni/ugm` (branch
-`restart`) BY PATH, and asserts it got the one it meant. It imports nothing from
-`pystrider` and nothing here is on the package's import path.
+✅ It used to reach past the editable install to a SECOND engine BY PATH, and to
+assert it got the one it meant. Engine 2 was deleted upstream, so it goes through
+`pystrider.mf` now — and it is no longer branch-sensitive, which was previously the
+most surprising thing about it.
 
-⚠ It is also branch-sensitive in a way an ordinary test is not: if `creazioni/ugm`
-is checked out on `main` these probes fail at `from ugm import Machine`, which is
-correct rather than a flake — there is nothing to measure there.
+⚠ It is still a RUNNER rather than a test: these are timings, and a timing that
+fails a threshold on a busy machine is a flake, not a finding. Read the numbers.
 
 WHAT THE FOUR ESTABLISH, in order:
 
@@ -31,6 +30,7 @@ close to it as §4 implied.
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
 
@@ -40,29 +40,13 @@ import time
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-UGM_RESTART = r"C:\Users\ercas\creazioni\ugm"
+#: Run me from anywhere: the repo root is this file's parent, not a machine-specific path.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-
-def _engine():
-    """Import the restart engine by path, and refuse the wrong one loudly.
-
-    ⚠ A cwd inside `creazioni/ugm` puts `''` on `sys.path` and the local package
-    directory wins over the install — which is how this session first mistook a
-    shell artefact for pystrider being dark (survey §0). The assertion below is
-    that mistake made impossible in the one direction that matters here.
-    """
-    sys.path.insert(0, UGM_RESTART)
-    import ugm
-
-    assert "ugm-classic" not in ugm.__file__, (
-        f"expected the restart engine, resolved {ugm.__file__} — is creazioni/ugm on `main`?"
-    )
-    from ugm import Machine, text
-
-    return Machine, text
-
-
-Machine, text = _engine()
+#: ⚠ Through the chokepoint — see `restart_bet.py`. The refusal this file used to carry (`assert
+#: "ugm-classic" not in ugm.__file__`) guarded against an engine that no longer exists.
+from pystrider.mf import ENGINE, Machine  # noqa: E402
+from ugm import text  # noqa: E402  — `text` is a submodule, so it rides the resolution `mf` fixed
 
 
 def _run(src: str, limit: int = 100000):

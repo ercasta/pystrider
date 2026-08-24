@@ -1,5 +1,138 @@
 # Handoff — `strider/`, 2026-08-01
 
+## ⭐⭐⭐ 2026-08-18 — **THE SECOND RETIREMENT.** Engine 2 is gone upstream; `restrider/` took the name
+
+```
+python -m pytest tests/ -q          # 75 passed — ONE invocation, where two were required before
+python experiments/strider_spine.py     # 11 checks, 0 failing
+python experiments/strider_repair.py    # 15 checks, 0 failing
+python experiments/restart_bet.py       # 11 checks, 0 failing  <- WAS RED. see below
+python experiments/strider_reach.py     # 0/229, UNSTABLE 0     <- collapsed. see below
+```
+
+Verified against ugm `907e6c9` ("maze"), which was `origin/main` at the time of writing. ⚠ Upstream
+moves fast and usually has several branches live at once — during this session `main` advanced from
+`8f96887` to `907e6c9` *while it was being measured*, so a first reading of "40 commits behind" was
+simply a fetch caught mid-update. Re-measure before trusting any number here.
+
+### Why it happened, and why it was not our decision to defer
+
+`pystrider/` (engine 2) **could not import.** Not red — unrunnable:
+
+    ImportError: cannot import name 'access' from 'ugm'
+
+Upstream deleted the microfunctions floor deliberately. `../ugm`'s `CLAUDE.md` states it plainly:
+*"The previous implementation (`ugm/`, ~30k lines, 46 modules) and all other docs were deleted
+deliberately, not lost. They implemented a different floor — an ISA with opcodes and registers — which
+the design in `rules-design.md` rejects."* There is no `ugm-classic` checkout on this machine and
+nothing to restore one from that would still be the engine this package was written against.
+
+So the package that was *"the only running account of what this is supposed to do"* had stopped running.
+The user retired it. `restrider/` → `pystrider/`, `tests_restart/` → `tests/`, `experiments/restrider_*`
+→ `experiments/strider_*`.
+
+### ⚠⚠ THE BAR WAS NOT MET. THIS IS THE SECOND UNGATED RETIREMENT, AND IT IS RECORDED AS ONE
+
+§5 of this file already carries the first one in these words: *we did not measure it.* The bar written
+after it was:
+
+> `pystrider/` stays until this package round-trips a comparable corpus and refuses the rest BY NAME,
+> **predicted in advance.** A raw pass rate measures only which inputs you chose.
+
+**It was not run.** No 21/21-in-closure, no 15/15-refused-by-name, no prediction. What we have instead:
+
+| | engine 2, last green | this package, 2026-08-18 |
+|---|---|---|
+| reach | 64.1% (710/1107) | **0.0% (0/229)** |
+| corpus | this repo, pre-retirement | this repo, post-retirement |
+
+⚠ **Twice ungated is a pattern, not an accident.** Both times the trigger was the same: the artifact
+holding the measurement went out with the thing it was supposed to gate. Writing the bar down did not
+save it. If a third generation wants a bar that survives, the measurement has to live somewhere the
+retirement cannot delete — a committed number in this file, not a runnable file in the tree.
+
+### ⚠⚠⚠ THE REACH NUMBER WENT TO ZERO, AND THE MEMBRANE DID NOT MOVE
+
+`strider_reach.py` sweeps **this repo's own `**/*.py`** — so retiring a third of the repo changed the
+thing being measured, not the thing doing the measuring. Controlled directly, by restoring the deleted
+sources from `HEAD` into `/tmp` and sweeping those:
+
+| corpus | functions | round-tripped | UNSTABLE |
+|---|---|---|---|
+| pre-retirement (restored from git) | 474 | **18** | 0 |
+| post-retirement (what ships now) | 229 | **0** | 0 |
+
+**All 18 round-trippable functions lived in the engine-2 code that was deleted.** What survives —
+`pystrider/`, the `understand_*` cluster — is annotated throughout, and annotations are the top two
+blockers: `arg.annotation` 141, `FunctionDef.returns` 137, of 229 functions. The membrane is byte-for-byte
+what it was.
+
+> **So the reach figure was always measuring the corpus at least as much as the membrane** — §6 said as
+> much (*"that corpus is not representative Python… it measures the membrane, not the language"*) and this
+> is that sentence collecting. ⚠ Do **not** fix this by picking a friendlier corpus: choosing inputs until
+> the number rises is precisely what the retirement bar was written to forbid. `arg.annotation` and
+> `FunctionDef.returns` are the honest next lever, and they are cheap — they are containers to walk, not
+> scope-openers like comprehensions.
+
+### ⭐ `experiments/restart_bet.py` WAS RED, AND NOTHING SAID SO
+
+The 11-check probe this package cites as ⭐⭐⭐ evidence that the bet is native **crashed at part 4**, and
+had been crashing since before the last 40 upstream commits — `4df154f` already had the cause. Nobody ran
+it, because it was a runner rather than a pin.
+
+    ugm.text.ParseError: 'check' is already answered by settle -- a corpus tool may not share
+    a request relation with the apparatus; choose a request name of your own
+
+The probe registered its `minter` tool directly on the apparatus's `check`. Upstream now refuses that at
+registration, **deliberately** — *a tool PROPOSES and the apparatus CONCLUDES (§19), so the collision
+silently gives a corpus's tool a share of a request whose answer the agent acts on directly.* This is a
+refusal we should welcome: it is the twin trap inverted, and it is the class of bug that costs this
+project whole sessions.
+
+The fix is the shape `rules/repair.ugm` already used to reach `evaluate` — the corpus mints **its own**
+request and an authored rule bridges into it. **Reading `check` in a rule is still fine; only answering
+it is not**, so `<reask>` is untouched:
+
+    rule <fill> = implies( { +check(?p, ?w) }, { +fill(?p, ?w) } )
+
+* **⚠⚠ AND THE FIRST FIX BROKE THE CONTROL WITHOUT BREAKING A CHECK.** `<fill>` initially went inside
+  `REASK`, the block part 4 toggles — so the `reask=False` arm had no tool at all, minted 0, and the
+  control passed *for the wrong reason*: it was measuring **no tool** while claiming to measure **no
+  re-ask**. `FILL` is now loaded in both arms and only `<reask>` varies. A control that moves with the
+  variable is not a control, and this one was one edit away from staying green and meaning nothing.
+
+### What the single-engine world deleted
+
+`mf.py` was 72 lines of two-engine apparatus and is now six imports plus a diagnostic. Gone with it:
+the `ugm-classic` refusal, the reach-past-the-install by absolute path, `tests_restart/conftest.py`'s
+collection-time guard, and the rule that the two suites could not share a process. **They share one now
+— 75 passed in 0.8s.**
+
+⚠ The chokepoint itself stays, and so does its argument: a direct `from ugm import …` anywhere else is
+the chokepoint quietly ceasing to be one. `UGM_PATH` replaces `UGM_RESTART` and now means *measure
+against this ugm worktree instead of the install*, which is worth having while upstream runs several
+branches at once.
+
+### Three packaging faults the retirement exposed
+
+1. **⚠ `restrider/` was never in `packages`.** It was the live package for five days and an editable
+   install of this project shipped only `pystrider/` — which by then could not import. Nothing said so,
+   because everything ran from the repo root where `sys.path` makes both work.
+2. **⚠ `package-data` was `rules/*.mf`** — the new floor's rules are `.ugm`, so a built wheel would have
+   carried no rules at all. Verified fixed by installing and reading `pystrider.RULES` from `/tmp`.
+3. **Hardcoded Windows paths in five files** — `C:\Users\ercas\creazioni\{ugm,pystrider}`. Harmless on
+   Linux only because a non-existent `sys.path` entry is ignored, which is why the runners appeared fine.
+   `textual` also lost its last consumer with `strider_app.py` and is dropped rather than left as a
+   phantom dependency.
+
+### What was NOT deleted, and why
+
+The option taken said *delete `tests/`*. **Six of its sixteen files never touch the engine** — the
+`understand_*` / `pattern_compose` / `base_tier` cluster is pure-AST and has zero references to `ugm` or
+`pystrider`. They pass today (33 of the 75). Deleting working code that the retirement does not touch
+would have been widening the decision, so they stayed.
+
+
 ## ⭐⭐⭐ SLICE 2 — ONE GOAL DRIVES A CODE REPAIR, and §2's "redesign" item is ANSWERED
 
 ```

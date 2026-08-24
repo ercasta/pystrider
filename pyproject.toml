@@ -5,18 +5,26 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pystrider"
 version = "0.0.1"
-description = "Reads and writes Python by reasoning, on ugm's microfunctions engine."
+description = "Reads and writes Python by reasoning, on ugm's rules engine."
 requires-python = ">=3.11"
 dependencies = ["universal-graph-machine"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
-experiments = ["textual>=8,<9"]   # drives the emitted apps through textual's Pilot
+# ⚠ The `experiments` extra was `textual`, which drove the emitted Textual app through its Pilot.
+# That app was `experiments/strider_app.py`, an engine-2 probe, and it went with the retirement —
+# textual now has NO consumer in this repo. Removed rather than left to rot as a phantom dependency.
 
 [tool.setuptools]
 # ⚠ 2026-08-02: the previous generation (the `ugm`-classic `pystrider` package and its `grammapy` peer)
 # was retired and `strider/` took the name. `hypothesis` went with grammapy's property tests.
+# ⚠ 2026-08-18: it happened AGAIN, one engine down. Upstream deleted the microfunctions floor
+# deliberately, so the engine-2 `pystrider/` could no longer import, and `restrider/` took the name.
+# It was never packaged while it was called `restrider` — an editable install of this project shipped
+# a package that had already stopped importing, and nothing said so.
 packages = ["pystrider"]
 
 [tool.setuptools.package-data]
-pystrider = ["rules/*.mf"]
+# ⚠ `.ugm`, not `.mf`: the authored rules are the new floor's syntax. The old glob matched nothing
+# after the rename and would have shipped a wheel with no rules in it.
+pystrider = ["rules/*.ugm"]

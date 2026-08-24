@@ -10,7 +10,7 @@
 # the goal unmet, so the search still discovers the order. The difference is that
 # the condition is now an ordinary ANTECEDENT MEMBER rather than a type on a
 # parameter, which means it is arguable and another author can write a different
-# one. `experiments/restrider_repair.py` measures the control — with the `unmet`
+# one. `experiments/strider_repair.py` measures the control — with the `unmet`
 # member removed, the repair fires on CORRECT code too.
 #
 # ⚠ IMAGINATION DERIVES, REALITY EXECUTES — carried over deliberately. What a case

@@ -1,10 +1,11 @@
 """Slice 1 — the spine on the new floor: intake → recognize → emit, on real code.
 
-    python experiments/restrider_spine.py
+    python experiments/strider_spine.py
 
-⚠ A RUNNER, not a pytest module. Importing `restrider` re-points `import ugm` to
-`restart` for the whole process, so a test doing this would silently hand every
-other test in the run the wrong engine. See `restrider/mf.py`.
+⚠ A RUNNER, not a pytest module — and it stays one because the printed derivations
+ARE the evidence; `tests/test_spine.py` pins the same claims for CI. It used to be a
+runner for a second reason, that importing it re-pointed `import ugm` for the whole
+process; engine 2 was deleted upstream, so that reason is gone. See `pystrider/mf.py`.
 
 WHAT SLICE 0 LEFT OPEN, and this answers: slice 0 proved the bet on a HAND-WRITTEN
 fixture — `fact +for_stmt(loop1)` and friends, authored by me, in the same file as
@@ -21,18 +22,20 @@ renders them back to text.
 """
 from __future__ import annotations
 
+import os
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, r"C:\Users\ercas\creazioni\pystrider")
+#: Run me from anywhere: the repo root is this file's parent, not a machine-specific path.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from restrider import corpus                      # noqa: E402
-from restrider.emit import Unrenderable, emit     # noqa: E402
-from restrider.facts import Facts                 # noqa: E402
-from restrider.intake import intake               # noqa: E402
-from restrider.mf import ENGINE, PLUS             # noqa: E402
+from pystrider import corpus                      # noqa: E402
+from pystrider.emit import Unrenderable, emit     # noqa: E402
+from pystrider.facts import Facts                 # noqa: E402
+from pystrider.intake import intake               # noqa: E402
+from pystrider.mf import ENGINE, PLUS             # noqa: E402
 
 SOURCE = '''\
 def total(items):
@@ -68,7 +71,7 @@ def run() -> int:
         failures += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
 
-    print(f"restrider slice 1 — the spine\n  engine {ENGINE}\n")
+    print(f"pystrider slice 1 — the spine\n  engine {ENGINE}\n")
 
     # 1 --------------------------------------------------------------------
     f, taken = _load(SOURCE, origin="<slice1>")

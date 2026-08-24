@@ -1,6 +1,6 @@
 """Slice 1's pins — intake → recognize → emit, on real parsed code.
 
-The narrative version with its printed evidence is `experiments/restrider_spine.py`.
+The narrative version with its printed evidence is `experiments/strider_spine.py`.
 These are the claims that must not quietly stop being true.
 
 ⚠ Read `conftest.py` first: this suite runs in its own pytest invocation.
@@ -11,10 +11,10 @@ import ast
 
 import pytest
 
-from restrider import corpus
-from restrider.emit import Unrenderable, emit
-from restrider.facts import Facts
-from restrider.intake import intake
+from pystrider import corpus
+from pystrider.emit import Unrenderable, emit
+from pystrider.facts import Facts
+from pystrider.intake import intake
 
 SOURCE = '''\
 def total(items):
@@ -191,7 +191,7 @@ def test_a_gap_is_recorded_ONCE_per_label():
 
 
 def test_the_SAME_rule_read_backwards_asks_for_the_STRUCTURE():
-    from restrider.mf import PLUS
+    from pystrider.mf import PLUS
 
     f = Facts(corpus("patterns"), scope="w")
     subject = f.node("loop_to_build")
@@ -301,7 +301,7 @@ def test_intake_and_the_patterns_share_NO_vocabulary():
     text = corpus("patterns")
     authored = {ln for ln in text.splitlines() if ln.startswith("rule ")}
     assert authored, "the corpus must contain rules for this to mean anything"
-    src = ast.parse(open("restrider/intake.py", encoding="utf-8").read())
+    src = ast.parse(open("pystrider/intake.py", encoding="utf-8").read())
     assert src is not None
     for neutral in ("iteration", "item", "sequence", "does", "choice", "tests"):
         f = Facts(text, scope=f"v{neutral}")

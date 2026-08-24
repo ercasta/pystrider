@@ -12,3 +12,6 @@ site/
 # CI-generated site assets (built in the docs workflow)
 docs/wheels/
 docs/play/
+
+# the bootstrapped interpreter for this worktree (no pip on the box; see HANDOFF)
+.venv/

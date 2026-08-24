@@ -1,8 +1,16 @@
-"""How much Python `restrider` can read and write back — the reach measurement.
+"""How much Python `pystrider` can read and write back — the reach measurement.
 
-    python experiments/restrider_reach.py [path-glob]
+    python experiments/strider_reach.py [path-glob]
 
-⚠ A RUNNER, not a pytest module (see `restrider/mf.py`).
+⚠⚠ IT SWEEPS THIS REPO'S OWN SOURCE BY DEFAULT, SO THE NUMBER MOVES WHEN THE REPO DOES.
+On 2026-08-18 the engine-2 retirement took a third of the corpus with it and reach went
+18/587 -> 0/229 while the membrane did not change at all: every function that round-tripped
+lived in the deleted code, and what survives is annotated throughout (`arg.annotation` and
+`FunctionDef.returns` are the top two blockers). Controlled against the restored old corpus,
+it still gives 18. See `pystrider/HANDOFF.md`. ⚠ `UNSTABLE` is the number that must be zero;
+the percentage is a property of the corpus at least as much as of this package.
+
+⚠ A RUNNER, not a pytest module (see `pystrider/mf.py`).
 
 **WHY THIS FILE EXISTS AT ALL, and it is the one lesson from the last generation
 that cost a decision:** engine 2's stated bar for retiring the generation before it
@@ -36,17 +44,19 @@ from __future__ import annotations
 import ast
 import collections
 import glob
+import os
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, r"C:\Users\ercas\creazioni\pystrider")
+#: Run me from anywhere: the repo root is this file's parent, not a machine-specific path.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from restrider import corpus                      # noqa: E402
-from restrider.emit import Unrenderable, emit     # noqa: E402
-from restrider.facts import Facts                 # noqa: E402
-from restrider.intake import intake               # noqa: E402
+from pystrider import corpus                      # noqa: E402
+from pystrider.emit import Unrenderable, emit     # noqa: E402
+from pystrider.facts import Facts                 # noqa: E402
+from pystrider.intake import intake               # noqa: E402
 
 
 def sweep(pattern: str = "**/*.py") -> dict:

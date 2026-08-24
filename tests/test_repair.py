@@ -1,6 +1,6 @@
 """Slice 2's pins — one goal drives a code repair.
 
-The narrative version with its printed evidence is `experiments/restrider_repair.py`.
+The narrative version with its printed evidence is `experiments/strider_repair.py`.
 
 ⚠ Read `conftest.py` first: this suite runs in its own pytest invocation.
 """
@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from restrider import corpus
-from restrider.emit import emit
-from restrider.evaluator import evaluate, register
-from restrider.facts import Facts
-from restrider.intake import intake
-from restrider.mf import PLUS
+from pystrider import corpus
+from pystrider.emit import emit
+from pystrider.evaluator import evaluate, register
+from pystrider.facts import Facts
+from pystrider.intake import intake
+from pystrider.mf import PLUS
 
 BUG = "def classify(age):\n    if age > 18:\n        return 'adult'\n    return 'minor'\n"
 CORRECT = "def classify(age):\n    if age >= 18:\n        return 'adult'\n    return 'minor'\n"
