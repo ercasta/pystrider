@@ -1,5 +1,9 @@
 # Feedback for `../ugm@restart` — from `pystrider`/`restrider`, 2026-08-13
 
+> **⚠ 2026-08-20 — §5 IS NEW AND IT IS A REGRESSION, not a request.** Measured against
+> `a3b5474`. §1's fix is intact; the table loop reintroduced the *other* quadratic on the shape §1
+> measured as linear. Everything above §5 is the original 08-13 filing, kept as written.
+
 Measured against `restart` @ `c05d5b3`. Framed as **hypotheses**, per our standing practice with this
 project: four of our confident diagnoses were inverted last generation because we reason from the
 consumer's side and cannot see the engine's. Every repro below is runnable from this repo.
@@ -149,3 +153,55 @@ would close it better.
 `support`, `binding` revision, and loop detection all look right to us and none of them is something we
 have a live need for yet. Your own §7 rule — *adopt against a live need, never for coverage* — is one
 we have been burned by ignoring, so we are leaving them.
+
+
+---
+
+## §5 ⚠⚠⚠ 2026-08-20 — the table loop put a quadratic back on the `edge` shape
+
+**Measured against `a3b5474`, bracketed to one commit, and it is not the one §1 fixed.**
+
+`b1f7891 flip` — `Machine.run` becoming the table loop — took the `edge` chain from **5,009 `unify`
+calls at n=1,000 to 3,012,011**, and 0.30s to 7.96s. Four snapshots, `rules.unify` wrapped and counted
+exactly as §1 counts it, same machine, same fixture file:
+
+| fixture | n | `ee129ba` join | `96595ca` preflip | **`b1f7891` flip → `a3b5474`** |
+|---|---|---|---|---|
+| broad self-join | 1,000 | 3,014 | 3,015 | **9,029** — 3× constant, still LINEAR |
+| `edge` chain | 250 | 1,008 | 1,259 | **190,511** |
+| `edge` chain | 500 | 2,008 | 2,509 | **756,011** |
+| `edge` chain | 1,000 | 4,008 | 5,009 | **3,012,011** — 4× per doubling |
+
+    rule <s1> = implies( { +edge(?p, ?x) }, { +seen(?x) } )
+    fact +edge(base, item)
+    ...N inert `edge` facts
+
+⭐ **§1's index is intact and this is the other axis.** The self-join is still linear, which is the shape
+that disqualified our port and that `join` rescued — that result survives the loop switch with a 3×
+constant. What looks lost is **delta narrowing ACROSS ticks**: the `edge` chain is 1,003 ticks over n
+facts, and the counts say each tick now re-derives against the whole state rather than against what
+arrived. §1's quadratic was *within* one tick; this one is `ticks × facts`.
+
+**Why we think nobody has seen it, offered as the reason it is worth a look rather than as a criticism:**
+`tools_sweep.sh` runs corpora, and a corpus does not run a thousand ticks. It needs a fixture whose tick
+count grows with the fact count, which is exactly the one §1 built for the opposite purpose.
+
+⚠ **What it does NOT do, measured before filing:** it does not disqualify anything of ours. Twelve real
+modules in one machine went 0.07s → 0.45s for the rules run at 47,376 nodes, because our ticks are
+bounded by description sites (128) and not by graph size. The shape that would bite us is
+`anchor` at 10% density — 402 ticks over 4,000 facts — which went **0.10s → 1.74s** and is quadratic
+again where it was linear. `anchor` at 2% is still cheap.
+
+⚠ **We are confident about the measurement and have NOT diagnosed the cause.** We did not read the
+2,383-line `machine.py` diff; the commit was found by running four snapshots. Our standing practice
+holds — four of our confident diagnoses were inverted last generation, so the hypothesis above
+(*the delta pivot is not reaching the table loop's match*) is offered as a place to look and nothing
+more.
+
+⚠ **And your own number for `join` was *+16% on the `edge` chain*, stated not buried.** This is 601× on a
+different commit, so we are reporting it in the same spirit: not as a cost you hid, but as one that
+looks like it was never measured, because the instrument that would show it is a scale fixture rather
+than a corpus.
+
+**Repro:** `experiments/restart_scale.py`'s `pinpoint`, run against snapshots extracted with
+`git archive <ref>`. ⚠ The runner hardcodes a Windows path; ours is patched at the top constant.

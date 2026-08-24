@@ -103,3 +103,53 @@ rule <lower> = implies(
   { -unmet(?p, evaluated(?f, ?c, ?v)),
     -literal(?r, 18), +literal(?r, 17), +lowered(?r),
     +again(evaluate(?f, ?c), lowered(?r)) } )
+
+# ⭐⭐⭐ WHICH REPAIR — AUTHORED, BECAUSE OTHERWISE IT IS DECLARATION ORDER.
+#
+# Both families above genuinely fix the bug, and until this rule existed **which
+# one fired was never chosen**. It was the table's answer, and the table's answer
+# is rank: swap `<relax>` and `<lower>` in this file, change nothing else, and the
+# emitted artefact changes from `if age >= 18:` to `if age > 17:`. Measured, in
+# `experiments/restrider_attention.py`, not reasoned.
+#
+# ⚠ That is engine 2's defect exactly — it pinned its winner BY NAME and the pin
+# went silently vacuous when upstream's tie-break moved. `family()` deriving the
+# winner from the graph stopped us pinning a lie; it never made the winner a
+# choice. This does.
+#
+# ⭐⭐ AND IT IS SAYABLE ONLY BECAUSE ATTENTION NAMES A NODE. `prefer(<R>, ...)`
+# and `boost` name a RULE, so the same statement would have been *prefer <relax>*
+# — keyed on an identity that goes stale the moment a family is renamed, composed
+# or joined by a third. Upstream retired them for that reason. What we want to say
+# is not about a rule at all:
+#
+# > **The case named 18. A repair may not move a boundary the case itself named.**
+#
+# So the antecedent states the coincidence rather than asserting the conclusion:
+# the value the case GIVES is the literal the guard compares against. When that
+# holds, the disagreement is about the COMPARISON, and `?o` — the operator node —
+# is what the repair is about. `<relax>` is the family that binds it, so it is the
+# family that lifts. Nothing here names `<relax>`.
+#
+# ⚠ ANOTHER AUTHOR MAY DISAGREE, WHICH IS THE POINT, and the disagreement is one
+# line: `attend(?r, 1)` instead — the threshold node — and the same corpus emits
+# `if age > 17:` under either declaration order. Both are pinned.
+#
+# ⚠ The weight is 1 BECAUSE IT IS INERT HERE, and that is worth saying so nobody
+# reads a bigger number as load-bearing: 1, 2 and 3 all produce this result. A
+# weight discriminates between several attended nodes and we attend one.
+#
+# ⚠⚠ THE NODE MUST BE ONE THAT EXACTLY ONE FAMILY BINDS, and there are two ways to
+# get that wrong. `attend(?o, 1)` works because `<relax>` binds `?o` in
+# `+operator(?g, gt)` and `<lower>` does not. Attend `?f`, `?g` or `?c` and NOTHING
+# moves — both families bind those, so the lift is equal and rank decides again.
+# Attend the function's body block and nothing moves either — no family binds it at
+# all. **Both failures are silent**: the policy rule still fires, the trail looks
+# exactly like the working one, and the artefact is whatever rank gives. Pinned as
+# controls, because the positive arm alone cannot tell any of these apart.
+rule <boundary> = implies(
+  { +wants(?f, ?c, ?v), +given(?c, ?x), +guard(?f, ?g),
+    +right(?g, ?r), +literal(?r, ?x), +operator(?g, ?o) },
+  { +boundary(?c, ?r) } )
+
+after <boundary> => attend(?o, 1)

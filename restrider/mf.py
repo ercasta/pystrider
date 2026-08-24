@@ -62,8 +62,20 @@ def _engine():
 _ugm = _engine()
 
 from ugm import PLUS, MINUS, Graph, Machine, Rule, RuleSet  # noqa: E402
-from ugm.text import load  # noqa: E402
-from ugm.text import Loader  # noqa: E402
+
+# ⭐⭐ 2026-08-20, `f632cc4 retire`: upstream repackaged 46 modules into `core`,
+# `gates`, `learning` and `probes`, and **the whole of it reaches us as this one
+# line** — `ugm.text` is `ugm.core.text` now. The names re-exported from `ugm`
+# itself did not move, which is the difference between a package layout and an
+# interface, and is exactly what this file exists to absorb. Third time paid off.
+#
+# ⚠ NOT hedged with a `try`/`except ImportError` over both layouts, deliberately.
+# The one thing this file must never do is answer *some engine loaded* — a shim
+# that accepts either layout is a shim that cannot say which one it got, and
+# survey §0 cost this project three wrong readings for exactly that. An engine
+# from before the refactor now fails HERE, by name, on its first import.
+from ugm.core.text import load  # noqa: E402
+from ugm.core.text import Loader  # noqa: E402
 
 #: The path this resolved to, so a probe can PRINT which engine it measured
 #: rather than assert it and hope.

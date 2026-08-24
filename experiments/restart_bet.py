@@ -70,7 +70,7 @@ def _engine():
         f"expected the restart engine, resolved {ugm.__file__} — is creazioni/ugm on `main`?"
     )
     from ugm import Machine, PLUS
-    from ugm.text import load
+    from ugm.core.text import load          # ⚠ `ugm.text` until `f632cc4 retire`
 
     return Machine, PLUS, load
 

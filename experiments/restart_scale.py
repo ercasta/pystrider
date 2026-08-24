@@ -57,7 +57,8 @@ def _engine():
     assert "ugm-classic" not in ugm.__file__, (
         f"expected the restart engine, resolved {ugm.__file__} — is creazioni/ugm on `main`?"
     )
-    from ugm import Machine, text
+    from ugm import Machine
+    from ugm.core import text     # ⚠ `from ugm import text` until `f632cc4 retire`
 
     return Machine, text
 
@@ -193,9 +194,16 @@ def pinpoint(sizes=(250, 500, 1000)) -> None:
     `proposed` 18 and `applied` 1 throughout. No option set, no arbitration and no
     candidate walk is involved, which is why none of the four commits touched it.
 
-    Reported upstream as `docs/feedback_restart.md` §1.
+    Reported upstream as `docs/feedback_restart.md` §1. ⚠ And §5 — `b1f7891` put a
+    quadratic back on the `edge` column this probe exists to contrast against.
     """
-    import ugm.rules as rules_module
+    # ⚠⚠ `ugm.core.rules` since `f632cc4 retire`, AND THE OLD SPELLING IS THE
+    # DANGEROUS KIND OF WRONG: `ugm/rules/` is now the CORPORA directory, so
+    # `import ugm.rules` still SUCCEEDS — as an implicit namespace package with no
+    # `unify` in it. What used to be the matcher is now a folder of `.ugm` files
+    # wearing its name. This one happens to fail loudly at the attribute read; a
+    # `setattr` at the same line would have patched nothing and counted zero.
+    import ugm.core.rules as rules_module
 
     real = rules_module.unify
     calls = [0]

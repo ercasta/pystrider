@@ -1,5 +1,85 @@
 # Handoff — `strider/`, 2026-08-01
 
+## ⭐⭐⭐ 2026-08-20 — THE ENGINE MOVED AGAIN, AND THE REPAIR IS NOW A CHOICE
+
+> **⚠ LATER THE SAME DAY — `f632cc4 retire` repackaged upstream into `core`/`gates`/`learning`/`probes`,
+> and it reached us as ONE line**: `ugm.text` is `ugm.core.text`. Everything below still measures, on the
+> new layout: **56 passed**, 11/15/17 checks. ⚠ The local `../ugm` checkout is still on `a3b5474` and must
+> be fast-forwarded, or `mf.py` refuses at the first import — by name, on purpose, rather than by shim.
+> **⚠⚠ And `experiments/restart_bet.py` — the artefact holding survey §7 — has been dark since
+> 2026-08-14** for an unrelated reason, `5d7218d trigger`. `docs/restart_port_survey.md` §11.
+
+```
+PYTHONPATH=. UGM_RESTART=/home/ercasta/projects/Universal-Graph-Machine \
+    python3 -m pytest tests_restart/ -q          # 56 passed, 1.9s
+    python3 -u experiments/restrider_attention.py # 17 checks, 0 failing
+    python3 -u experiments/restrider_repair.py    # 15 checks, 0 failing
+    python3 -u experiments/restrider_spine.py     # 11 checks, 0 failing
+```
+
+⚠ **Those two environment variables are not optional on this machine** — `../ugm` is
+`/home/ercasta/projects/Universal-Graph-Machine`, the runners hardcode a Windows path, and there is no
+editable install. **`pystrider/` and `tests/` cannot run here at all**: they need engine 2
+(`ugm-classic`), which does not exist on this box. `docs/restart_port_survey.md` §10.0.
+
+**`../ugm` is 160 commits and +22,370 lines further on, and nothing we ask of it broke** — 11/0 and 15/0
+on five engine snapshots, from `join` (what §9 measured) through to `a3b5474`. The whole delta went into
+the loop and the instruments, and we import nothing that had an opinion about how a move is chosen. The
+full survey is **`docs/restart_port_survey.md` §10**; three things came out of it.
+
+### ⭐⭐⭐ 1. The winner of a repair was DECLARATION ORDER, and now it is authored
+
+Slice 2 said out loud that the winning family was *an undeclared tie-break wearing a result's clothes*,
+and defended itself by DERIVING the winner instead of naming it — so no pin could go vacuous the way
+engine 2's did. **That defence was real and it was not a choice.** Swap `<relax>` and `<lower>` in
+`repair.ugm`, change nothing else, and the emitted artefact goes from `if age >= 18:` to `if age > 17:`.
+Every check slice 2 owns passes in both columns.
+
+⭐⭐ **Upstream's `attention` makes it sayable because it names a NODE.** `prefer`/`boost` name a RULE,
+so the same statement would have been *prefer `<relax>`* — an identity that goes stale the moment a
+family is renamed or composed, which is why upstream is retiring them. What we want to say is not about a
+rule at all:
+
+> **The case named 18. A repair may not move a boundary the case itself named.**
+
+`<boundary>`'s antecedent states that coincidence — the value the case GIVES is the literal the guard
+compares against — and its postcondition attends the OPERATOR node. `<relax>` is the family that binds it,
+so it is the family that lifts. **Nothing in the corpus names `<relax>`,** and another author disagrees in
+one line: `attend(?r, 1)` gives `if age > 17:` under either declaration order. Both pinned.
+
+* ⚠⚠ **TWO WAYS TO ATTEND NOTHING, AND BOTH ARE SILENT.** A node BOTH families bind (`?f`, `?g`, `?c`)
+  lifts them equally and rank decides again; a node NEITHER binds (the function's body block) does
+  nothing at all. In every case the policy rule still fires and the trail looks exactly like the working
+  one. **The survey's own probe attended a container and its null result was read as a finding for a full
+  cycle.** Pinned as controls — the positive arm cannot tell any of these apart.
+* ⚠ **The weight is 1 because it is inert here** — 1, 2 and 3 all give this result. A weight
+  discriminates between several attended nodes and we attend one. Said so nobody reads a bigger number as
+  load-bearing.
+* ⭐ **The mutation test is the evidence the pins are worth anything:** comment the postcondition out and
+  exactly three go red — the swapped positive arm, the rival, and the control. The UNSWAPPED arm stays
+  green, because rank agrees. That is the shape of the defect, reproduced in our own suite.
+
+### ⚠⚠⚠ 2. The table loop put a quadratic back, and it is not the one they fixed
+
+`b1f7891 flip` took the `edge` chain from **5,009 `unify` calls at n=1,000 to 3,012,011** — 601×, 0.30s →
+7.96s — bracketed to that one commit by running four snapshots. §1's argument index is intact and the
+self-join is still linear; what looks lost is **delta narrowing ACROSS ticks**. The cost is
+`ticks × facts`, where §4's was within one tick.
+
+⚠ **It does not disqualify anything today**: twelve real modules went 0.07s → 0.45s at 47,376 nodes,
+because our ticks are bounded by description sites (128) rather than by graph size. **The boundary, named
+in advance:** the shape that bites is a description applying at *every* site — `anchor` at 10% went 0.10s
+→ 1.74s and is quadratic again. What keeps us in the cheap column is `readable` abstaining, which means
+**reach and cost now move together**. Filed as `docs/feedback_restart.md` §5.
+
+### ⚠⚠ 3. Left alone deliberately: `restrider/mf.py` and the hardcoded paths
+
+The two-engines-named-`ugm` apparatus guards a collision that cannot happen here, and every runner
+hardcodes `C:\Users\ercas\creazioni\...`. **That is a pass of its own** — it is survey §0's *the same
+import resolves to two different engines depending on where you stand*, and re-pointing it casually is
+how you get a green suite that measured the wrong engine.
+
+
 ## ⭐⭐⭐ SLICE 2 — ONE GOAL DRIVES A CODE REPAIR, and §2's "redesign" item is ANSWERED
 
 ```
