@@ -36,12 +36,15 @@ from __future__ import annotations
 import ast
 import collections
 import glob
+import os
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, r"C:\Users\ercas\creazioni\pystrider")
+# The repo root, so this runs from anywhere — it was an absolute Windows
+# path, which made the runner machine-specific for no reason.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from restrider import corpus                      # noqa: E402
 from restrider.emit import Unrenderable, emit     # noqa: E402
@@ -49,11 +52,21 @@ from restrider.facts import Facts                 # noqa: E402
 from restrider.intake import intake               # noqa: E402
 
 
-def sweep(pattern: str = "**/*.py") -> dict:
+#: ⚠ The default corpus is THE REPO, resolved from this file — not `**/*.py`
+#: against whatever the cwd happens to be. It was the latter, so running the
+#: runner from anywhere else swept those files instead and printed a reach
+#: number for a corpus nobody chose, in the same format as the real one. An
+#: explicit glob argument still wins.
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def sweep(pattern: str = None) -> dict:
     rules = corpus("patterns")
     total = ok = unstable = 0
     gaps: collections.Counter = collections.Counter()
     diverged = []
+    if pattern is None:
+        pattern = os.path.join(REPO, "**", "*.py")
     for path in glob.glob(pattern, recursive=True):
         try:
             tree = ast.parse(open(path, encoding="utf-8").read())
@@ -90,7 +103,7 @@ def sweep(pattern: str = "**/*.py") -> dict:
 
 
 def main() -> int:
-    pattern = sys.argv[1] if len(sys.argv) > 1 else "**/*.py"
+    pattern = sys.argv[1] if len(sys.argv) > 1 else None
     r = sweep(pattern)
     total = r["total"] or 1
     print(f"functions      {r['total']}")

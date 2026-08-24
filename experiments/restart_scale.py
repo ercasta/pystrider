@@ -1,4 +1,4 @@
-"""The three probes behind `docs/restart_port_survey.md` §4 — what `../ugm@restart` costs.
+"""The three probes behind `docs/restart_port_survey.md` §4 — what `../ugm` costs.
 
     python experiments/restart_scale.py
 
@@ -7,14 +7,18 @@ recommendation is *re-take this decision when upstream fixes the quadratic*, and
 recommendation with an unrunnable measurement behind it is a recommendation nobody
 can check.
 
-⚠ THIS RUNS THE OTHER ENGINE. `pystrider` runs on ugm `main` via the `ugm-classic`
-worktree; this file reaches past the editable install to `creazioni/ugm` (branch
-`restart`) BY PATH, and asserts it got the one it meant. It imports nothing from
-`pystrider` and nothing here is on the package's import path.
+⚠ THIS RUNS THE OTHER ENGINE. `pystrider` runs on engine 2 via the `ugm-classic`
+worktree; this file reaches past that install to `../ugm` BY PATH, and asserts it
+got the one it meant. It imports nothing from `pystrider` and nothing here is on
+the package's import path.
 
-⚠ It is also branch-sensitive in a way an ordinary test is not: if `creazioni/ugm`
-is checked out on `main` these probes fail at `from ugm import Machine`, which is
-correct rather than a flake — there is nothing to measure there.
+⚠⚠ **THE BRANCH-SENSITIVITY NOTE THAT USED TO BE HERE WAS INVERTED BY THE MERGE.**
+It said: *if `../ugm` is checked out on `main` these probes fail, which is correct
+rather than a flake.* Upstream merged `restart` into `main` on 2026-08-20 and kept
+developing there, so `main` is now the engine these probes WANT, and the branch
+called `restart` is 77 commits stale. Acting on the old note — checking out
+`restart` to make the probes "work" — measures a stale engine, and a stale engine
+answers instead of erroring. `restrider/mf.py` carries the full note.
 
 WHAT THE FOUR ESTABLISH, in order:
 
@@ -40,13 +44,46 @@ import time
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-UGM_RESTART = r"C:\Users\ercas\creazioni\ugm"
+import os
+
+
+def _resolve_engine_path() -> str:
+    """Where the engine lives, for a probe that must not import `restrider`.
+
+    ⚠ DUPLICATED FROM `restrider/mf.py` ON PURPOSE, and the duplication is the
+    same one the engine assert below already carries: this file is a standalone
+    runner, and importing `restrider.mf` to borrow a constant would couple slice
+    0's measurement to the package it exists to justify.
+
+    ⚠⚠ `restart` IS `main` NOW — upstream merged it on 2026-08-20 and kept going
+    on `main`, so the `restart` branch is 77 commits stale. This file used to say
+    that resolving on `main` meant the WRONG engine. That is inverted now.
+    """
+    env = os.environ.get("UGM_RESTART")
+    if env:
+        return env
+    here = os.path.abspath(os.path.dirname(__file__))
+    while True:
+        parent = os.path.dirname(here)
+        for name in ("Universal-Graph-Machine", "ugm"):
+            cand = os.path.join(parent, name)
+            if os.path.isfile(os.path.join(cand, "ugm", "__init__.py")):
+                return cand
+        if parent == here:
+            raise ImportError(
+                "cannot find the ugm engine; set UGM_RESTART to the checkout "
+                "(on `main`, NOT the stale `restart` branch)"
+            )
+        here = parent
+
+
+UGM_RESTART = _resolve_engine_path()
 
 
 def _engine():
     """Import the restart engine by path, and refuse the wrong one loudly.
 
-    ⚠ A cwd inside `creazioni/ugm` puts `''` on `sys.path` and the local package
+    ⚠ A cwd inside `../ugm` puts `''` on `sys.path` and the local package
     directory wins over the install — which is how this session first mistook a
     shell artefact for pystrider being dark (survey §0). The assertion below is
     that mistake made impossible in the one direction that matters here.
@@ -55,7 +92,9 @@ def _engine():
     import ugm
 
     assert "ugm-classic" not in ugm.__file__, (
-        f"expected the restart engine, resolved {ugm.__file__} — is creazioni/ugm on `main`?"
+        f"expected engine 3, resolved {ugm.__file__} — that is `ugm-classic`, "
+        f"which is engine 2. ⚠ Being on `main` is CORRECT: `restart` was merged "
+        f"there on 2026-08-20 and the branch of that name is now stale."
     )
     from ugm import Machine, text
 
@@ -106,16 +145,29 @@ _SELECTIVE = """
 rule <s1> = implies( { +child(?p, ?x), +tagged(?x) }, { +b(?x) } )
 rule <s2> = implies( { +b(?x) }, { +c(?x) } )
 rule <s3> = implies( { +c(?x) }, { +d(?x) } )
-fact +child(root, item)
+fact +child(tree0, item)
 fact +tagged(item)
 """
+
+# ⚠ `tree0`, NOT `root`. Upstream's 2026-08-20 engine reserves `root` for one of
+# its six request relations (`<root>` — *is this what I was asked for?*), so a
+# fixture written with it names THE ENGINE'S node rather than a fresh atom of
+# ours, and the load says so on stderr:
+#
+#     note: root name reserved nodes, so an argument written with one is that
+#     node and not a fresh atom of yours -- rename if you meant your own
+#
+# ⚠⚠ It did not change the numbers here — these fixtures only ever join `child`
+# against itself, so one shared node is still one node — but a SCALE fixture
+# quietly sharing a node with the apparatus is the exact shape that makes a
+# measurement mean something other than it says. Renamed rather than silenced.
 
 # The bad case, and the reason it is the bad case: one AST relation joined against
 # itself is not a corner of what we do, it is what RECOGNITION is. Every pattern in
 # `pystrider/rules/patterns.mf` reads a description as a body against structure.
 _BROAD = """
 rule <s1> = implies( { +child(?p, ?x), +child(?x, ?y) }, { +grand(?p, ?y) } )
-fact +child(root, item)
+fact +child(tree0, item)
 fact +child(item, leaf)
 """
 
@@ -173,7 +225,7 @@ def anchor(n: int, density: float = 0.02) -> dict:
 
 _SPREAD = """
 rule <s1> = implies( { +edge(?p, ?x) }, { +seen(?x) } )
-fact +edge(root, item)
+fact +edge(tree0, item)
 """
 
 

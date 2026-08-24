@@ -1,13 +1,13 @@
-"""Slice 0 on `../ugm@restart` — does THE BET survive the new floor?
+"""Slice 0 on `../ugm` — does THE BET survive the new floor?
 
     python experiments/restart_bet.py
 
 ⚠ THIS RUNS THE OTHER ENGINE, by path, exactly as `restart_scale.py` does, and for
-the same reason: `pystrider` itself runs on ugm `main` via the `ugm-classic`
+the same reason: `pystrider` itself runs on engine 2 via the `ugm-classic`
 worktree. It imports nothing from `pystrider`.
 
-⚠ AND IT IS NOT A TEST MODULE, DELIBERATELY. Putting `creazioni/ugm` on `sys.path`
-makes `import ugm` resolve to `restart` for the WHOLE PROCESS, so a pytest module
+⚠ AND IT IS NOT A TEST MODULE, DELIBERATELY. Putting `../ugm` on `sys.path`
+makes `import ugm` resolve to engine 3 for the WHOLE PROCESS, so a pytest module
 doing this would silently re-point every other test in the run at an engine they
 were not written for. That is survey §0's trap — *the same import resolves to two
 different engines depending on where you stand* — arriving from the third
@@ -59,7 +59,40 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-UGM_RESTART = r"C:\Users\ercas\creazioni\ugm"
+import os
+
+
+def _resolve_engine_path() -> str:
+    """Where the engine lives, for a probe that must not import `restrider`.
+
+    ⚠ DUPLICATED FROM `restrider/mf.py` ON PURPOSE, and the duplication is the
+    same one the engine assert below already carries: this file is a standalone
+    runner, and importing `restrider.mf` to borrow a constant would couple slice
+    0's measurement to the package it exists to justify.
+
+    ⚠⚠ `restart` IS `main` NOW — upstream merged it on 2026-08-20 and kept going
+    on `main`, so the `restart` branch is 77 commits stale. This file used to say
+    that resolving on `main` meant the WRONG engine. That is inverted now.
+    """
+    env = os.environ.get("UGM_RESTART")
+    if env:
+        return env
+    here = os.path.abspath(os.path.dirname(__file__))
+    while True:
+        parent = os.path.dirname(here)
+        for name in ("Universal-Graph-Machine", "ugm"):
+            cand = os.path.join(parent, name)
+            if os.path.isfile(os.path.join(cand, "ugm", "__init__.py")):
+                return cand
+        if parent == here:
+            raise ImportError(
+                "cannot find the ugm engine; set UGM_RESTART to the checkout "
+                "(on `main`, NOT the stale `restart` branch)"
+            )
+        here = parent
+
+
+UGM_RESTART = _resolve_engine_path()
 
 
 def _engine():
@@ -67,7 +100,9 @@ def _engine():
     import ugm
 
     assert "ugm-classic" not in ugm.__file__, (
-        f"expected the restart engine, resolved {ugm.__file__} — is creazioni/ugm on `main`?"
+        f"expected engine 3, resolved {ugm.__file__} — that is `ugm-classic`, "
+        f"which is engine 2. ⚠ Being on `main` is CORRECT: `restart` was merged "
+        f"there on 2026-08-20 and the branch of that name is now stale."
     )
     from ugm import Machine, PLUS
     from ugm.text import load
@@ -107,6 +142,34 @@ fact +body(loop1, blk1)
 # It satisfies upstream's criterion for an occasion — *warranted only if re-asking
 # cannot produce one* — because the tool declines a goal it has already filled, so
 # the second ask produces no second `built`.
+# ⚠⚠ THE TOOL NO LONGER OWNS `check`, AND THIS RULE IS WHY IT DOES NOT HAVE TO.
+# Upstream's 2026-08-20 engine binds SIX apparatus requests as facts, and one of
+# them is `<settle>` on `check` — *is this goal already satisfied, in these
+# bindings?*. `Loader.answerer` now REFUSES a corpus tool on a request the
+# apparatus already answers, at registration:
+#
+#     ParseError: 'check' is already answered by settle -- a corpus tool may not
+#     share a request relation with the apparatus
+#
+# It is right to refuse. `_answer` calls EVERY answerer bound to a relation, so
+# the old registration gave this fixture's minter a silent share of a request the
+# planner ACTS ON, and the two coexisted only because each declined the other's
+# arity — coincidence, not design.
+#
+# ⭐ So the trigger becomes AUTHORED, which is what this file already argued a
+# tool's occasion should be: `fill` is our own request, `<needs>` says which
+# occasion warrants it, and the tool answers a relation the corpus owns. Nothing
+# about what is measured changes — the minter still sees every checked subgoal —
+# but the share is now a rule anything can read, argue with, or deny.
+#
+# ⚠ It is NOT true that the engine mints this for us now. `settle_structure`
+# exists and is about stratum-0 rules; with the minter removed entirely the write
+# half fails 4 of 11 checks (nothing minted, every subgoal blocked). Measured,
+# not assumed.
+FILL = """
+rule <needs> = implies( { +check(?p, ?w) }, { +fill(?p, ?w) } )
+"""
+
 REASK = """
 rule <reask> = implies( { +check(?p, ?w), +built(?w) },
                         { +again(check(?p, ?w), built(?w)) } )
@@ -173,12 +236,12 @@ def _write(reask: bool):
     the silent-wrong shape, not a missing feature.
     """
     m = Machine()
-    kb = load(m, PATTERN + (REASK if reask else ""))
+    kb = load(m, PATTERN + FILL + (REASK if reask else ""))
     minted, filled_for = [], set()
 
     def mint(_m, frame, e):
         g = m.g
-        if g.relation_of(e.proposition) is not m.CHECK or e.sign != PLUS:
+        if g.relation_of(e.proposition) is not kb.atom("fill") or e.sign != PLUS:
             return None
         _plan, goal = g.members(e.proposition)
         if goal in filled_for:
@@ -198,7 +261,7 @@ def _write(reask: bool):
         m.gate.write(frame, g.rel(kb.atom("built"), goal), PLUS, source=m.KB, mention=True)
         return None
 
-    kb.answerer("minter", "check", mint)
+    kb.answerer("minter", "fill", mint)
     goal = kb.term(f"iteration({GOAL_SUBJECT})")
     m.gate.write(m.focus, m.g.rel(m.GOAL, goal), PLUS, mention=True)
     m.run(limit=4000)
@@ -221,7 +284,7 @@ def run() -> int:
         failures += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
 
-    print("THE BET on ../ugm@restart — one description, read two ways\n")
+    print("THE BET on ../ugm — one description, read two ways\n")
 
     # 1 --------------------------------------------------------------------
     m, verdict, why = recognize()

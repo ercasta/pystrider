@@ -1,4 +1,4 @@
-"""Slice 2 — ONE GOAL DRIVES A CODE REPAIR, on `../ugm@restart`.
+"""Slice 2 — ONE GOAL DRIVES A CODE REPAIR, on `../ugm`.
 
     python experiments/restrider_repair.py
 
@@ -34,12 +34,15 @@ WHAT EACH SECTION ESTABLISHES:
 """
 from __future__ import annotations
 
+import os
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-sys.path.insert(0, r"C:\Users\ercas\creazioni\pystrider")
+# The repo root, so this runs from anywhere — it was an absolute Windows
+# path, which made the runner machine-specific for no reason.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from restrider import corpus                    # noqa: E402
 from restrider.emit import emit                 # noqa: E402

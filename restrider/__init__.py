@@ -1,4 +1,4 @@
-"""`restrider` — pystrider on `../ugm@restart`. Generation three.
+"""`restrider` — pystrider on `../ugm`. Generation three.
 
 **THE BET, unchanged across three engines:** one authored description, read one way
 RECOGNIZES code, read the other way WRITES it. What changed each time is what the
@@ -10,6 +10,11 @@ substrate lets a description be.
                                  versus its effects. That is `pystrider/`.
     engine 3  `restart`          pattern-matching rules are back, AND a backward
                                  reader over the same rules ships. This package.
+
+⚠ **`restart` IS `main` NOW.** Upstream merged it on 2026-08-20 and kept going on
+`main`; the branch called `restart` has not moved since 2026-08-16 and is 77
+commits behind. Engine 3 means *`../ugm` on `main`* — see `mf.py`, which resolves
+it and says why the old "are you on `main`?" diagnostic was exactly inverted.
 
 ⭐⭐⭐ **On this floor the bet is NATIVE** (`docs/restart_port_survey.md` §7,
 `experiments/restart_bet.py`, 11 checks). `driver.establishes` — the module the
@@ -33,7 +38,7 @@ The handoff records that plainly: *we did not measure it.* So:
 Until then `pystrider/` remains the only running account of what this is supposed
 to do, and it stays green — `python -m pytest tests/ -q`, 219 passed.
 
-## ⚠⚠ TWO ENGINES NAMED `ugm` — READ `mf.py` BEFORE RUNNING ANYTHING
+## ⚠⚠ TWO ENGINES CAN BE NAMED `ugm` — READ `mf.py` BEFORE RUNNING ANYTHING
 
 `restrider` and `pystrider` **cannot share a process**: importing `restrider.mf`
 re-points `import ugm` for everything after it. `tests/` and `tests_restart/` are

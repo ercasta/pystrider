@@ -1,9 +1,13 @@
 """⚠⚠ THIS SUITE MUST RUN IN ITS OWN PYTEST INVOCATION.
 
     python -m pytest tests/ -q            # pystrider — engine 2, via ugm-classic
-    python -m pytest tests_restart/ -q    # restrider — engine 3, via ../ugm@restart
+    python -m pytest tests_restart/ -q    # restrider — engine 3, via ../ugm@main
 
-Two engines are installed under the name `ugm` (see `restrider/mf.py`), and
+⚠ `@main`, not `@restart`: upstream merged `restart` into `main` on 2026-08-20
+and kept developing there, so the branch of that name is now 77 commits stale.
+`restrider/mf.py` carries the full note.
+
+Two engines may be installed under the name `ugm` (see `restrider/mf.py`), and
 `import ugm` resolves to whichever the process found first. Running both suites in
 one invocation does not fail at import — it hands one of them an engine it was not
 written for, which shows up as wrong answers rather than as an error.
