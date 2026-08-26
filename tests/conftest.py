@@ -26,7 +26,13 @@ import os
 
 import pytest
 
-import harneskills
+# ⚠ The SUBMODULE, not the package. `harneskills/__init__.py` eagerly imports
+# `engine`, `repl` and `save` as of 47dd9a2 ("Split the engine from the channels"),
+# so a bare `import harneskills` drags a terminal and a thread-owning engine into a
+# batch test run that uses neither. Nothing is wrong with them — but a suite that
+# imports a tty layer it never exercises is a suite that can go red for a reason
+# that has nothing to do with what it measures.
+import harneskills.world as harneskills
 
 
 @pytest.fixture(scope="session", autouse=True)

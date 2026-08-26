@@ -79,6 +79,14 @@ from harneskills.world import Component, Entity, World
 #: with set-semantics attach and a loop that settles, and if the list ever grows
 #: much past this, the adapter has started leaking.
 #:
+#: ⚠ `harneskills.Engine` is deliberately NOT in this list. As of 47dd9a2 upstream
+#: splits the loop from the CHANNELS attached to it — one thread owning the world,
+#: with terminals and WebSocket clients posting into it. That is the right shape for
+#: a session someone is sitting at, and the wrong one for a derivation: pystrider
+#: settles a world and reads the answer, with no channel to route a `Reply` to and
+#: nothing that may block. So this package keeps calling `Loop.run` directly, and
+#: `Engine` is an available door it has no reason to open.
+#:
 #: ⚠ A name here that upstream renames is a loud refusal naming the checkout. It is
 #: NOT a version pin and does not check behaviour — `attach` comparing before it
 #: stores is load-bearing (it is what makes the world settle) and no assertion here
