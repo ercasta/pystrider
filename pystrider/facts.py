@@ -1,337 +1,459 @@
-"""The substrate adapter: what `intake` and `emit` are written against.
+"""The substrate adapter: propositions, on `harneskills`' entity-component world.
 
-Engine 2 gave us an attributed mutable graph — `mint(kind, **attrs)`, `link`,
-`attr`, `targets`. Engine 3 gives **interned propositions and nothing else**: no
-attributes, no mutation, no removal, no name lookup. Survey §2 counted our ~90
-call sites against that and called it a total loss.
+Engine 4 was `ugm`'s scratchpad — interned propositions, a name table, and a
+matcher. This is engine 5, and it is not an engine at all: `harneskills` is an
+entity-component world plus a loop that calls every system until nothing changes.
+What had to be re-derived is the MAPPING, once, here:
 
-⭐ It is not, and this file is why. Every one of those call sites goes through
-five helpers in `intake` and a reader in `emit`. What has to be re-derived is the
-MAPPING, once, here:
+    ugm scratchpad                    harneskills
+    --------------------------------  ------------------------------------------
+    `g.atom("for_stmt@3")`        ->  `world.spawn(Printed(...))` — an ENTITY
+    `for_stmt(n)`                 ->  the entity carries the `for_stmt` component
+    `name(n, f)`                  ->  ... carrying one ROW, `(f,)`
+    `stmt(b, s1)`, `stmt(b, s2)`  ->  ... carrying two rows, in order
+    `Loader.atom(name)`           ->  a Python CLASS, one per relation name
 
-    engine 2                        engine 3
-    ------------------------------  ----------------------------------------
-    g.mint("for_stmt")          ->  a fresh node, plus `for_stmt(n)`
-    g.attr(n, "name") = "f"     ->  `name(n, f)`     — an ordinary proposition
-    g.link(parent, "body", ch)  ->  `body(parent, ch)` — the same shape
-    g.targets(n, "body")        ->  read `body(n, ?x)` back
+> ⭐⭐ **A kind, an attribute and an edge were three mechanisms on engine 2, ONE
+> proposition on engine 4, and here they are one COMPONENT.** A relation is a
+> component type; the objects are its rows. A kind is the same thing with a single
+> empty row — nothing to say about the subject except that it is one.
 
-> ⭐⭐ **A kind, an attribute and an edge were three mechanisms; here they are one.**
-> That is not a workaround — it is the reason the bet is native (survey §7): a
-> pattern's antecedent can name a kind, an attribute and an edge in one breath
-> because on this floor they are the same kind of thing.
+**⭐ WHAT THIS FLOOR DELETES, and it is the largest thing the port removes.**
 
-**⚠ THE TWO TRAPS THIS FILE EXISTS TO MAKE IMPOSSIBLE.**
+1. **THE TWIN TRAP IS STRUCTURALLY GONE.** `Graph.atom(name)` minted a fresh node
+   every call, so a relation built in Python was a TWIN of the one an authored rule
+   used, nothing matched, and the run reported a contented quiescence having done
+   nothing. It cost this project four recorded readings. Here a relation IS a
+   Python class, interned by name in `_RELATIONS` — two `relation("body")` calls
+   are the same object because Python says so, and there is no second table to
+   drift from. There is nothing left to get wrong, so there is no warning to carry.
 
-1. **The twin.** `Graph.atom(name)` mints a FRESH node every call — names are for
-   printing and never for identity (§3). So a relation built in Python is a TWIN
-   of the one an authored rule uses, nothing matches, and the run reports a
-   contented quiescence having done nothing. Upstream's most-recorded trap; it
-   has now cost this project three separate readings. **Every name here goes
-   through `Loader.atom`, the one table that resolves them**, and the rules are
-   loaded under the same scope.
-2. **Two scopes.** Two `load` calls build two tables. The corpus is loaded ONCE,
-   in `__init__`, and everything after it is deposited through that loader.
+2. **THE `no <own conclusion>` PREMISE IS NO LONGER LOAD-BEARING.** ugm had no
+   inert set: an application that changed nothing was offered again, so a rule that
+   did not stop itself never stopped, and the symptom was a run burning its whole
+   budget on the first applicable rule while every later rule never fired. The
+   `harneskills` loop settles on `world.revision`, and `World.attach` compares
+   before it stores — so **re-deriving a fact that already holds is not a change**,
+   and a rule that keeps concluding the same thing lets the world settle anyway.
+   Systems still say `without=` where they mean *only the ones not yet described*,
+   because that is the honest reading of the query; they no longer say it to avoid
+   a hang.
 
-**⚠ Facts are deposited from Python, not generated as corpus text**, and the
-reason is `emit`'s: intaken code carries arbitrary string literals, and routing
-them through a text surface means inventing an escape. Rules stay authored text;
-facts are built against the loader's scope, which is the same table either way.
+3. **THE HAND-ROLLED INDEX IS GONE.** `Facts` used to keep its own
+   `(relation, subject) -> propositions` map, catching up off `g.instances_of`,
+   because the engine's matcher was quadratic in the instances a rule joins.
+   `World._by_type` already is that index: `of()` is a dict lookup and `subjects()`
+   walks one bucket. ⚠ The defect that map once had is worth keeping in mind —
+   it indexed only what `fact()` wrote, so **a reader could not see what a RULE had
+   concluded** — and it cannot recur here, because there is one store and both
+   write to it.
 
-**⭐ AND THE READS ARE OURS TO INDEX.** Survey §6 measured the engine's matcher as
-quadratic in the instances of a relation a rule joins. That cost is in RULE
-matching. A Python-side read is not matching, so `of()` keeps its own index and
-answers in O(1) — `emit` walking a 600-node file is not paying anything upstream
-charges for.
+**⚠ WHAT DID NOT CHANGE, because it was never the engine's doing.**
+
+`word` and `value` are still different kinds of node. Conflating them is what made
+`operator` store as `'gt'` — quoted — so a rule naming the bare `gt` could never
+match and one of two repair families was dead while the suite stayed green. That
+distinction is about what a symbol MEANS, not about how it is stored, so it
+survives the substrate change untouched.
 """
 from __future__ import annotations
 
 import ast
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from .mf import Loader, Machine
+from harneskills.loop import Loop
+from harneskills.world import Component, Entity, World
+
+#: ⚠⚠ **WHAT THIS PACKAGE USES OF `harneskills`, ASSERTED ON IMPORT.**
+#:
+#: `mf.py` did exactly this for `ugm` and it paid off four times — a packaging fix,
+#: a rename, a rewrite, and an engine collapse — because the alternative is an
+#: `AttributeError` three frames into a run, or worse, a method that still exists
+#: and means something else. `harneskills` is a SIBLING CHECKOUT under active
+#: development, not a pinned dependency, so the surface it offers can move between
+#: one run and the next.
+#:
+#: ⭐ The whole dependency is these fourteen names. That is the number worth
+#: keeping small: everything `pystrider` needs of its substrate is an entity store
+#: with set-semantics attach and a loop that settles, and if the list ever grows
+#: much past this, the adapter has started leaking.
+#:
+#: ⚠ A name here that upstream renames is a loud refusal naming the checkout. It is
+#: NOT a version pin and does not check behaviour — `attach` comparing before it
+#: stores is load-bearing (it is what makes the world settle) and no assertion here
+#: can see that. `test_the_world_SETTLES` is what catches it.
+_NEEDS = {
+    "World": ("spawn", "attach", "detach", "get", "each", "revision"),
+    "Loop": ("system", "run", "errors", "systems"),
+    "Component": ("__eq__",),
+    "Entity": ("id",),
+}
+
+
+def _check_substrate() -> None:
+    """⚠ Checked on an INSTANCE, not on the class.
+
+    `revision`, `errors` and `systems` are assigned in `__init__`, so
+    `hasattr(World, "revision")` is False and a class-level check reports the
+    substrate broken when it is fine. That is not a detail — a guard that
+    false-alarms gets deleted, and then the real drift goes unnoticed.
+    """
+    import harneskills.loop as _loop
+    import harneskills.world as _world
+
+    try:
+        instances = {"World": _world.World(), "Loop": _loop.Loop(),
+                     "Component": _world.Component(), "Entity": _world.Entity(None, 0)}
+    except Exception as error:            # noqa: BLE001 — any failure means drift
+        raise ImportError(
+            f"`harneskills` at {os.path.dirname(_world.__file__)} could not be "
+            f"constructed as this package expects: {error!r}"
+        ) from error
+
+    missing = [f"{name}.{member}"
+               for name, members in _NEEDS.items()
+               for member in members
+               if not hasattr(instances[name], member)]
+    if missing:
+        raise ImportError(
+            f"`harneskills` at {os.path.dirname(_world.__file__)} is missing "
+            f"{', '.join(missing)} — that is not the substrate this package is "
+            f"written against. It is a sibling checkout rather than a pinned "
+            f"dependency, so it moves; see `_NEEDS` in this module for the whole "
+            f"surface pystrider uses."
+        )
+
+
+_check_substrate()
+
+#: Where the substrate resolved to, so a probe can PRINT what it measured rather
+#: than assert it and hope.
+import harneskills.world as _world_module  # noqa: E402
+SUBSTRATE = os.path.dirname(_world_module.__file__)
 
 #: Attribute payloads are stored as their `repr`, which round-trips exactly for
 #: every constant Python's grammar can express (`str`, `bytes`, `int`, `float`,
 #: `complex`, `bool`, `None`, and the ellipsis). ⚠ The value therefore lives IN
-#: the graph as a node's name rather than in a Python dict beside it — a side map
-#: would be state the rules cannot see, which is the thing this substrate is for.
+#: the world as an entity's printed name rather than in a Python dict beside it —
+#: a side map would be state the systems cannot see, which is the thing this
+#: substrate is for.
 _ELLIPSIS = "..."
 
 
-class Facts:
-    """One machine, one scope, one corpus — and the propositions built against it."""
+class Printed(Component):
+    """What an entity is called when something has to show it to a person.
 
-    def __init__(self, corpus: str = "", scope: str = "code") -> None:
-        self.m = Machine()
-        self.g = self.m.g
-        #: ⚠ ONE loader. Everything that binds a name goes through it.
-        self.kb = Loader(self.m, scope=scope)
-        self.kb.load(corpus)
-        #: Our own indices — see the module note on why the reads are ours to index
-        #: and cost nothing upstream charges for.
-        #:
-        #: ⚠⚠ THEY ARE BUILT FROM THE GRAPH, NOT FROM A LOG OF OUR OWN DEPOSITS, and
-        #: that was a real defect: the first version indexed only what `fact()`
-        #: wrote, so **a reader could not see anything a RULE had concluded.** Slice
-        #: 2's evaluator asked for `guard(f, c)` — derived by an authored rule — got
-        #: nothing, and answered *no guard* about a function whose guard the graph
-        #: plainly held. ⭐ 29 pins passed, because slice 1 only ever reads back what
-        #: intake itself deposited. **A Python-side reader over its own writes is not
-        #: a reader of the graph**, and the difference is invisible until a rule
-        #: derives something Python needs.
-        self._index: Dict[Tuple[int, int], List[int]] = {}
-        #: How far into `g.instances_of(rel)` each relation has been indexed, so the
-        #: catch-up below is O(new) rather than O(everything) per read.
-        self._indexed: Dict[int, int] = {}
+    ⚠ For PRINTING, never for identity — an AST node is not a name a corpus wrote,
+    and two `x`s in two functions are two entities that happen to print the same.
+    `word()` and `value()` are the two places identity does go by name.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+class Relation(Component):
+    """One relation, on one subject: the ordered rows of objects it relates it to.
+
+    `body(n, b)` is one row, `(b,)`. `stmt(block, s1)` and `stmt(block, s2)` are two
+    rows on the same component, in deposit order — **a body is an ordered thing**,
+    and describing a three-line loop by its first statement is the bug that
+    ordering exists to prevent.
+
+    A KIND (`for_stmt(n)`) is the degenerate case: one row with no objects. There
+    is nothing to say about the subject except that it is one.
+
+    ⚠ Rows are DEDUPED, which is `ugm`'s interning arriving as an ordinary set
+    check. It is what makes `fact()` idempotent, and `attach` comparing before it
+    stores is what turns that into *the loop settles*. See the module note.
+    """
+
+    def __init__(self, rows: Tuple[Tuple[Entity, ...], ...] = ()) -> None:
+        self.rows = tuple(rows)
+
+
+#: relation name -> its component class. ⭐ The name table that used to be
+#: `Loader`'s, and the reason the twin trap cannot recur: interning is Python's.
+_RELATIONS: Dict[str, type] = {}
+
+
+def relation(name: str) -> type:
+    """The component class for this relation. The SAME class every call.
+
+    ⭐ This is what a system names: `world.each(relation("for_stmt"), ...)`. A
+    domain that wants to read well binds them once at module scope —
+    `ForStmt = relation("for_stmt")` — and its systems then look like the
+    `harneskills` examples, because they are.
+    """
+    cls = _RELATIONS.get(name)
+    if cls is None:
+        # ⚠ `type()` takes the relation's own name so a stray `repr` in a traceback
+        # says `body(...)` rather than `Relation(...)` about four different things.
+        cls = _RELATIONS[name] = type(name, (Relation,), {"relation": name})
+    return cls
+
+
+class Facts:
+    """One world, one loop, and the propositions deposited into it."""
+
+    def __init__(self, *domains, budget: int = 400) -> None:
+        self.world = World()
+        self.loop = Loop(self.world, budget=budget)
+        #: Interning tables. ⚠ Per-world, because an entity belongs to a world:
+        #: `Entity.__eq__` checks `other.world is self.world`, so a word shared
+        #: between two worlds would compare unequal to itself.
+        self._words: Dict[str, Entity] = {}
+        self._values: Dict[str, Entity] = {}
+        for domain in domains:
+            self.install(domain)
+
+    # -- domains ----------------------------------------------------------
+
+    def install(self, domain):
+        """Hand this loop to a domain's `install(loop, facts)`.
+
+        ⚠ Two arguments where `harneskills` passes one: a domain here needs the
+        naming table as well as the world, because a system that wants to deposit
+        `iteration(n)` needs the same `Facts` the reader will ask.
+        """
+        return domain(self.loop, self)
+
+    def system(self, fn=None, *, name=None):
+        """Register one system. `Loop.system`'s signature, forwarded."""
+        return self.loop.system(fn, name=name)
 
     # -- naming -----------------------------------------------------------
 
-    def rel(self, name: str) -> int:
-        """A relation, resolved in the corpus's table — never minted beside it."""
-        return self.kb.atom(name)
+    def node(self, printed: str) -> Entity:
+        """A fresh individual. The name is for printing; identity is the entity."""
+        return self.world.spawn(Printed(printed))
 
-    def node(self, printed: str) -> int:
-        """A fresh individual. The name is for printing; identity is the node.
-
-        ⚠ Deliberately NOT `kb.atom`: an AST node is not a name a corpus wrote,
-        and interning by name would make two `x`s in two functions one thing.
-        """
-        return self.g.atom(printed)
-
-    def value(self, payload: Any) -> int:
-        """A node standing for a literal, named by its `repr` so `emit` recovers it.
-
-        ⚠⚠ INTERNED, through the corpus's table — and this was the TWIN TRAP in our
-        own code, for the fourth time in this project, written three lines under a
-        comment warning about it. `Graph.atom` mints a FRESH node every call, so
-        `value("gt")` twice was two nodes, and:
-
-          * `holds("operator", n, value("gt"))` answered **None** about a fact we
-            had just deposited — the query built a different proposition;
-          * denying `operator(cmp, gt)` could not name the entry to deny, which is
-            the whole mechanism a repair needs on an append-only chain;
-          * a rule joining on a literal (`+operator(?c, gt)`) could never fire.
-
-        **29 pins passed throughout**, because `emit` reads the payload back with
-        `g.show` and never compares two literals — so the bug was invisible to
-        everything the spine does, and appeared the moment slice 2 asked a question
-        *about* a value. ⚠ A pin that only ever round-trips cannot see identity.
-
-        ⭐ Interning is also the RIGHT identity, not just the working one: two `10`s
-        in two functions are the same *value*, while the two `constant` nodes
-        holding them stay distinct because those come from `node()`. Identity of a
-        value is its value; identity of an occurrence is the occurrence.
-        """
-        return self.kb.atom(_ELLIPSIS if payload is Ellipsis else repr(payload))
-
-    def word(self, text: str) -> int:
-        """A VOCABULARY word — an operator, an identifier, an attribute name.
+    def word(self, text: str) -> Entity:
+        """A VOCABULARY word — an operator, an identifier, a CNL atom.
 
         ⚠⚠ **Not a literal, and conflating the two made a corpus unable to talk
         about code.** `value()` encodes by `repr`, so the operator `gt` was stored
-        under the name `'gt'` — quoted — while an authored rule naming `gt` resolves
-        the bare word. The two never matched, so
-
-            rule <relax> = implies( { ..., +operator(?g, gt) }, ... )
-
-        could not fire **ever**, and the only reason the slice looked healthy is
-        that its rival keys on an integer, where `repr(18)` and the token `18` agree
-        by luck.
+        under the name `'gt'` — quoted — while a rule naming `gt` means the bare
+        word. The two never matched, so one of two repair families could never fire
+        **ever**, and the only reason the suite looked healthy is that its rival
+        keys on an integer, where `repr(18)` and the token `18` agree by luck.
 
         ⭐ The distinction is real rather than a workaround: `age > 18` holds one
         Python literal, `18`. `gt` is not a value the program computes with — it is
         a word from our vocabulary, and words are what rules are made of.
-
-        ⚠ A word interns to the same node as a relation of that name (`word("body")`
-        IS `rel("body")`), which the substrate permits on purpose — *nothing
-        structural tells an individual from a relation, and the difference is how it
-        is used*. Harmless here, and worth knowing before it is surprising.
         """
-        return self.kb.atom(text)
+        got = self._words.get(text)
+        if got is None:
+            got = self._words[text] = self.world.spawn(Printed(text))
+        return got
 
-    def word_of(self, n: int) -> str:
-        """The word back out of the node. The inverse of `word`."""
-        return self.g.show(n)
+    #: CNL's name for the same thing. A block's `premium` is a word.
+    atom = word
 
-    def payload(self, n: int) -> Any:
-        """The literal back out of the node. The inverse of `value`."""
-        text = self.g.show(n)
-        if text == _ELLIPSIS:
-            return Ellipsis
-        return ast.literal_eval(text)
+    def known(self, text: str) -> Optional[Entity]:
+        """The word for this text IF it has already been interned, else None.
+
+        ⚠⚠ **THE ONE READ THAT MUST NOT MINT, and minting here is a world that never
+        settles.** `word()` spawns on a miss, so a matcher that resolved an atom
+        through it would `spawn` on every failed unification — the revision moves,
+        the loop calls that a firing system, and it ticks until the budget runs out
+        having concluded nothing. It is the old no-inert-set hang arriving through a
+        different door, so the door is closed rather than documented: a system reads
+        the vocabulary, it does not extend it.
+        """
+        return self._words.get(text)
+
+    def value(self, payload: Any) -> Entity:
+        """An entity standing for a literal, named by its `repr` so a reader recovers it.
+
+        ⭐ Interned, and it is the RIGHT identity rather than merely the working
+        one: two `10`s in two functions are the same *value*, while the two
+        `constant` nodes holding them stay distinct because those come from
+        `node()`. Identity of a value is its value; identity of an occurrence is
+        the occurrence.
+        """
+        text = _ELLIPSIS if payload is Ellipsis else repr(payload)
+        got = self._values.get(text)
+        if got is None:
+            got = self._values[text] = self.world.spawn(Printed(text))
+        return got
+
+    def show(self, n: Entity) -> str:
+        got = self.world.get(n, Printed)
+        return repr(n) if got is None else got.text
+
+    #: The word back out of the entity. The inverse of `word`.
+    word_of = show
+
+    def payload(self, n: Entity) -> Any:
+        """The literal back out of the entity. The inverse of `value`."""
+        text = self.show(n)
+        return Ellipsis if text == _ELLIPSIS else ast.literal_eval(text)
 
     # -- writing ----------------------------------------------------------
 
-    def fact(self, relation: str, *members: int) -> int:
-        """Deposit `relation(members...)` and return the proposition node.
+    def fact(self, name: str, subject: Entity, *objects: Entity) -> Entity:
+        """Deposit `name(subject, objects...)`, and return the SUBJECT.
 
-        Returns the PROPOSITION, not the subject, so a caller can be about it —
-        which is how `unreadable` and the gap vocabulary get somewhere to hang.
+        ⚠ Engine 4 returned the proposition, because a proposition was a node and
+        `unreadable`/the gap vocabulary needed somewhere to hang. Here a relation
+        is not a thing in the world — it is a component ON the subject — so there
+        is nothing to hand back but the subject. Where a claim ABOUT a claim is
+        wanted, the subject is minted for it (`reify`).
         """
-        prop = self.g.rel(self.rel(relation), *members)
-        # ⚠ 2026-08-23: this was `gate.write(focus, prop, PLUS, source=KB, mention=True)`
-        # and all four of those arguments are gone, not renamed. Under the scratchpad
-        # there is one graph and it IS the state, so there is no focus to write into, no
-        # sign to carry, and no source to attribute to — a proposition is anchored or it
-        # is absent. `docs/transplant.md`.
-        self.m.gate.write(prop)
-        return prop
+        cls = relation(name)
+        row = tuple(objects)
+        held = self.world.get(subject, cls)
+        rows = () if held is None else held.rows
+        if row not in rows:
+            # ⭐ A new component rather than a mutated one — `attach` compares by
+            # value, and a component mutated in place is a change nothing can see.
+            self.world.attach(subject, cls(rows + (row,)))
+        return subject
 
-    # -- the index ---------------------------------------------------------
+    def state(self, name: str, subject: Entity, *objects: Entity) -> Entity:
+        """Deposit `name(subject, objects...)` as the ONLY row of that relation.
 
-    def _catch_up(self, rel: int) -> List[int]:
-        """Index whatever has appeared under `rel` since the last look.
+        ⭐ `fact()` appends, which is what a body of statements needs; this
+        REPLACES, which is what a conclusion that can be revised needs. A system
+        that re-resolves a screen shape every tick must not leave both answers
+        standing — `one()` would then refuse to pick between them, correctly, about
+        a question that has exactly one answer.
 
-        The graph interns every proposition and files it by relation, so this is
-        the authoritative list of what could be claimed — whoever built it, a
-        Python deposit or a rule's conclusion. Only the tail is walked.
+        ⚠ Still idempotent: `attach` compares before it stores, so restating the
+        same answer does not move `revision` and the world still settles.
         """
-        known = self.g.instances_of(rel)
-        start = self._indexed.get(rel, 0)
-        for prop in known[start:]:
-            members = self.g.members(prop)
-            if members:
-                self._index.setdefault((rel, members[0]), []).append(prop)
-        self._indexed[rel] = len(known)
-        return known
+        self.world.attach(subject, relation(name)((tuple(objects),)))
+        return subject
+
+    def deny(self, name: str, subject: Entity, *objects: Entity) -> bool:
+        """Withdraw `name(subject, objects...)`. True if it was there to withdraw.
+
+        ⚠ Engine 4's chain was append-only, so *change this* had to be spelled
+        `-old, +new` and a reader that walked its own deposit log would see BOTH —
+        engine 2 shipped a repair that "succeeded" while emitting byte-identical
+        source, and only an independent gate caught it. Here there is one store and
+        removal is removal, so a reader cannot see a withdrawn claim at all. The
+        deny-then-assert SHAPE stays because it is what a repair means; the hazard
+        it guarded against is gone.
+        """
+        cls = relation(name)
+        held = self.world.get(subject, cls)
+        if held is None or tuple(objects) not in held.rows:
+            return False
+        rows = tuple(r for r in held.rows if r != tuple(objects))
+        if rows:
+            self.world.attach(subject, cls(rows))
+        else:
+            self.world.detach(subject, cls)
+        return True
+
+    def reify(self, name: str, *members: Entity) -> Entity:
+        """An entity standing for the proposition `name(members...)`, interned.
+
+        For the places a claim is made ABOUT a claim — `unmet($p, evaluated(...))`.
+        ⚠ Interned on its printed form, so asking twice about the same proposition
+        gets the same subject and the rules join.
+        """
+        key = "%s(%s)" % (name, ", ".join(self.show(m) for m in members))
+        got = self._values.get(key)
+        if got is None:
+            got = self._values[key] = self.world.spawn(Printed(key))
+            self.fact("proposition", got)
+            self.fact("about", got, self.word(name), *members)
+        return got
 
     # -- reading ----------------------------------------------------------
 
-    def of(self, relation: str, subject: int) -> List[Tuple[int, ...]]:
-        """Every `relation(subject, ...)` that CURRENTLY holds, in deposit order.
+    def of(self, name: str, subject: Entity) -> List[Tuple[Entity, ...]]:
+        """Every `name(subject, ...)` that holds, in deposit order.
 
-        Insertion-ordered, because a body is an ordered thing and the substrate's
-        own promise (§3) is that nothing derived is read out of a set.
-
-        **⚠⚠ AND IT ASKS `holds`, WHICH IS WHAT MAKES REPAIR POSSIBLE AT ALL.** The
-        chain is append-only: nothing is mutated and nothing is removed, so the
-        substrate's own answer to *change this* is to **deny the old claim and
-        assert the new one** (§9's `-` entry). A reader over its own deposit log
-        would see both and hand `emit` the code that was just repaired — the
-        repair would run, report success, and change nothing, which is
-        indistinguishable from a real fix unless something inspects the artefact.
-        Engine 2 hit exactly that (a plan that "succeeded" while emitting
-        byte-identical source) and caught it only with an independent gate.
-
-        ⚠ So this is the one read that is NOT ours to index freely: the index says
-        what was ever deposited, and `holds` says what is claimed now.
+        Insertion-ordered, because a body is an ordered thing.
         """
-        rel = self.rel(relation)
-        self._catch_up(rel)
-        return [self.g.members(p)[1:]
-                for p in self._index.get((rel, subject), ())
-                if self.m.holds(p)]
+        held = self.world.get(subject, relation(name))
+        return [] if held is None else list(held.rows)
 
-    def one(self, relation: str, subject: int) -> Optional[int]:
+    def one(self, name: str, subject: Entity) -> Optional[Entity]:
         """The single object of a relation, or None. Refuses to guess between two.
 
-        ⚠ Engine 2's `targets(n, label)[0]` silently described a three-line loop
-        by its first statement, and later described `f(a, b)` by its first
-        argument after a gap renumbered the rest. Taking the first of several is
-        the shape of both bugs, so this will not do it.
+        ⚠ Engine 2's `targets(n, label)[0]` silently described a three-line loop by
+        its first statement, and later described `f(a, b)` by its first argument
+        after a gap renumbered the rest. Taking the first of several is the shape of
+        both bugs, so this will not do it.
         """
-        got = self.of(relation, subject)
+        got = self.of(name, subject)
         if not got:
             return None
         if len(got) > 1:
             raise ValueError(
-                f"{relation} of {self.g.show(subject)} has {len(got)} objects — "
+                f"{name} of {self.show(subject)} has {len(got)} objects — "
                 f"`one` refuses to pick; the caller wants `of`"
             )
         if len(got[0]) != 1:
-            # ⚠ The same refusal in the other direction, and it was missing: a
+            # ⚠ The same refusal in the other axis, and it was once missing: a
             # THREE-place relation has two objects, and this quietly returned the
-            # first. `text("wants", f)` handed back the CASE where the caller meant
+            # first — `text("wants", f)` handed back the CASE where the caller meant
             # the value, and the error surfaced two frames away in `literal_eval`.
-            # One object means one — in both axes.
             raise ValueError(
-                f"{relation} of {self.g.show(subject)} is {len(got[0]) + 1}-place — "
+                f"{name} of {self.show(subject)} is {len(got[0]) + 1}-place — "
                 f"`one` answers about a single object; the caller wants `of`"
             )
         return got[0][0]
 
-    def subjects(self, relation: str) -> List[int]:
-        """Every node this relation was asserted of, in deposit order.
+    def subjects(self, name: str) -> List[Entity]:
+        """Every entity this relation is asserted of, in spawn order."""
+        return [e for e, _ in self.world.each(relation(name))]
 
-        The `find me the loops` reader. ⚠ It answers off OUR index, not by asking
-        the engine — survey §6's quadratic is in RULE matching, and a Python walk
-        is not matching. Emit crossing a 600-node file pays nothing upstream
-        charges for; only what the rules join does.
-        """
-        return [self.g.members(p)[0] for p in self._catch_up(self.rel(relation))
-                if self.g.members(p) and self.m.holds(p)]
+    def has(self, name: str, subject: Entity) -> bool:
+        """Whether `name(subject)` — a kind, or any claim at all — holds now."""
+        held = self.world.get(subject, relation(name))
+        return held is not None and bool(held.rows)
 
-    def has(self, relation: str, subject: int) -> bool:
-        """Whether `relation(subject)` — a kind, or any one-place claim — holds now.
+    def holds(self, name: str, subject: Entity, *objects: Entity) -> bool:
+        """Whether this exact proposition holds right now."""
+        held = self.world.get(subject, relation(name))
+        return held is not None and tuple(objects) in held.rows
 
-        ⚠ Asks `holds` like the other two readers. Nothing denies a kind today, but
-        a reader that answers about the deposit log through one door and about the
-        current claim through another is a reader nobody can reason about — and
-        which door a caller happened to use is not a thing to have to remember.
-        """
-        rel = self.rel(relation)
-        self._catch_up(rel)
-        return any(self.m.holds(p)
-                   for p in self._index.get((rel, subject), ()))
+    def text(self, name: str, subject: Entity) -> Optional[str]:
+        """A WORD-valued attribute (`name`, `id`, `attr`, `operator`), back as a `str`."""
+        n = self.one(name, subject)
+        return None if n is None else self.show(n)
 
-    def text(self, relation: str, subject: int) -> Optional[str]:
-        """A WORD-valued attribute (`name`, `id`, `attr`, `operator`), back as a `str`.
-
-        ⚠ Reads the node's name directly — these are vocabulary words, not literals,
-        so there is nothing to decode. `literal` is the one that goes through
-        `payload`, and keeping the two readers apart is what keeps the two kinds of
-        node apart.
-        """
-        n = self.one(relation, subject)
-        return None if n is None else self.word_of(n)
-
-    def literal(self, relation: str, subject: int) -> Any:
+    def literal(self, name: str, subject: Entity) -> Any:
         """A VALUE-valued attribute (`literal`, `origin`, `source_line`), decoded.
 
         The counterpart to `text`, and named so a caller has to say which kind it
-        expects — reaching for the wrong one now fails loudly instead of handing
-        back `"'gt'"` where `"gt"` was meant.
+        expects — reaching for the wrong one fails loudly instead of handing back
+        `"'gt'"` where `"gt"` was meant.
         """
-        n = self.one(relation, subject)
+        n = self.one(name, subject)
         return None if n is None else self.payload(n)
 
     # -- running ----------------------------------------------------------
 
-    def run(self, limit: int = 4000):
-        """Let the authored rules read what was deposited."""
-        return self.m.run(limit=limit)
+    def run(self, budget: Optional[int] = None):
+        """Call every system until a whole pass changes nothing.
 
-    def holds(self, relation: str, *members: int) -> bool:
-        """Whether this proposition is anchored right now.
-
-        ⚠ A BOOL since 2026-08-23, where it used to be a sign (`"+"`, `"-"`, or None).
-        Under the scratchpad a retraction is a deletion, so there is no third answer to
-        give: `not holds(...)` covers both *denied* and *never said*, and the corpus
-        says which it meant by anchoring `not($p)` when it means the first.
+        ⚠⚠ **A system that raised is RE-RAISED here, which `harneskills` does not
+        do.** Its loop records the exception on `loop.errors` and carries on,
+        because a typo in one domain should not take a person's REPL down with it.
+        That is right for a prompt and wrong for a derivation: a rule that raised
+        did not fire, so the world settles *looking* quiescent while the conclusion
+        it owed is simply absent — which is the exact shape of the silence this
+        project has already paid for four times. A batch caller gets the error.
         """
-        return self.m.holds(self.g.rel(self.rel(relation), *members))
-
-    def why(self, relation: str, *members: int) -> List[str]:
-        """REFUSED, by name, because the engine no longer keeps a history to read.
-
-        ⚠⚠ This is not a stub waiting to be filled in — it is a capability that LEFT,
-        and it was the headline of the generation this package came from: *recognition
-        arrives EXPLAINED, which engine 2 could not do.* `Machine.why` walked a
-        belief's support back to what it rested on, and upstream deleted it with the
-        chain: *"both were readings of a history, and there is no history"*
-        (`../ugm/ugm/__main__.py`). Their README still advertises `--why`; it is stale.
-
-        It raises rather than returning `[]` because an explanation facility that
-        quietly answers *no reason* is worse than one that is missing: the caller
-        cannot tell a derivation with no premises from an engine with no memory.
-        Upstream parks the replacement behind a future memory system.
-        """
-        raise NotImplementedError(
-            "`why` needs a support trail, and the scratchpad engine keeps none — "
-            "see docs/transplant.md. Nothing here can answer WHY a proposition holds; "
-            "ask `holds` for WHETHER it does."
-        )
-
-    def show(self, n: int) -> str:
-        return self.g.show(n)
+        settled = self.loop.run(budget=budget)
+        if self.loop.errors:
+            name, error = self.loop.errors[0]
+            raise RuntimeError(
+                f"the system {name!r} raised, so whatever it concludes is missing "
+                f"from a world that otherwise looks settled: {error!r}"
+            ) from error
+        if settled.hot:
+            raise RuntimeError(
+                f"the world did not settle in {settled.ticks} ticks — still firing: "
+                f"{', '.join(settled.hot)}. Two systems are feeding each other, or "
+                f"one concludes something it cannot recognise as already concluded."
+            )
+        return settled

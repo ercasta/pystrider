@@ -110,18 +110,25 @@ postcondition of the encoder rather than a claim about Python.
 ⚠ A word may therefore contain spaces (`type_comment`), which no `.ugm` surface can
 spell. Such a constant is reachable by a rule through a variable and not by name.
 
-## ⚠⚠ `names` — the one collision, and it would have been silent
+## ⚠⚠ `names` — the collision that WAS here, and why it is gone
 
-`Machine.reserved` maps a name to the engine's own node, so `Loader.atom("names")`
-hands back the node the engine uses for `names(<rule>, ...)`. `Import.names`,
-`Global.names` and `Nonlocal.names` would then deposit into the engine's rule-naming
-relation: loud nowhere, wrong everywhere downstream. It is renamed below, and
-`check_vocabulary()` re-derives the collision set from THIS interpreter's `ast` and
-THIS engine's `reserved` on every run, so the next reserved word upstream adds is a
-refusal by name rather than the same silence again.
+`Machine.reserved` mapped a name to `ugm`'s own node, so `Loader.atom("names")`
+handed back the node the engine used for `names(<rule>, ...)`. `Import.names`,
+`Global.names` and `Nonlocal.names` therefore deposited into the engine's
+rule-naming relation: loud nowhere, wrong everywhere downstream. It was renamed to
+`py_names` for four generations.
 
-That is `docs/transplant.md`'s recorded lesson turned into a guard: when ugm syncs,
-reserved-name collisions are where the breakage lives.
+⭐ **On `harneskills` there is no reserved table to collide with.** A relation is a
+Python class interned by its own name in `facts._RELATIONS`, and no machinery lives
+in that namespace — so `names` is just a relation called `names`. The rename is
+retired and `_RENAMED` is empty.
+
+⚠ `check_vocabulary()` stays, RETARGETED: what a new AST field can still collide
+with is this module's OWN vocabulary (`ast_node`, `syntax`, `seq`, `item`, ...). It
+re-derives the set from THIS interpreter's `ast` on every run, so the next field
+Python adds is a refusal by name rather than a silence — `docs/transplant.md`'s
+lesson kept pointed at the live hazard instead of a dead one.
+
 """
 from __future__ import annotations
 
@@ -130,15 +137,26 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
 from .facts import Facts
-from .mf import Machine
 
 #: AST field names this cannot deposit under their own name, and what they become.
-#: ⚠ A rename is a LIE the bridge has to undo, so there is exactly one and it is
-#: here rather than spread through the walk. `detransliterate` reads the same table.
-_RENAMED = {"names": "py_names"}
+#: ⚠⚠ **EMPTY SINCE THE HARNESKILLS PORT, and the entry that was here is worth
+#: keeping in the record.** `names` used to be renamed to `py_names`, because
+#: `Machine.reserved` mapped it to the ENGINE's own node — so `Import.names`,
+#: `Global.names` and `Nonlocal.names` would deposit into `ugm`'s rule-naming
+#: relation: loud nowhere, wrong everywhere downstream.
+#:
+#: ⭐ There is no such table now. A relation is a Python class interned in
+#: `facts._RELATIONS` by its own name, and nothing else lives in that namespace, so
+#: no AST field can collide with machinery. The rename is gone rather than kept
+#: "just in case": a lie the bridge has to undo is worth exactly the hazard it
+#: averts, and the hazard is retired. `detransliterate` reads the same (empty) table,
+#: so restoring an entry needs no other change.
+_RENAMED: Dict[str, str] = {}
 
-#: Our own relations. Checked against the engine's table for the same reason the
-#: field names are — a collision here is a deposit into engine machinery.
+#: Our own relations — the vocabulary this module describes an AST node WITH, as
+#: opposed to the field names it reads OFF one. ⚠ `check_vocabulary` guards exactly
+#: this set: a Python that grew an AST field called `syntax` or `item` would have a
+#: transliterated node overwrite the relation describing it, and nothing would say so.
 _OURS = ("ast_node", "syntax", "seq", "item", "origin", "source_line", "from_code")
 
 #: The fields carrying a VALUE rather than a name. `facts.py`'s distinction, and the
@@ -182,22 +200,26 @@ def _ast_field_names() -> Set[str]:
 
 
 def check_vocabulary() -> None:
-    """Refuse, by name, any relation this would deposit into engine machinery.
+    """Refuse, by name, any relation this module would deposit into another's.
 
-    ⚠ Run before the first deposit rather than at import: it builds a `Machine` to
-    read `reserved` from, and paying that on `import pystrider.transliterate` would
-    make a module import an engine start-up.
+    ⚠ Retargeted rather than deleted. It used to guard `Machine.reserved` — the
+    engine's own relation names — which is the collision that actually bit
+    (`Import.names`). There is no engine and no reserved table now, so what is left
+    to collide with is OUR OWN vocabulary: if `ast` ever grows a field called
+    `syntax` or `item`, a transliterated node would overwrite the relation this
+    module uses to describe it, and nothing would say so.
+
+    ⭐ The set is re-derived from THIS interpreter's `ast` on every run, so the
+    next field Python adds is a refusal by name rather than a silence. That is
+    `docs/transplant.md`'s recorded lesson kept pointed at the live hazard instead
+    of at a dead one.
     """
-    reserved = set(Machine().reserved)
-    clash = sorted((_ast_field_names() - set(_RENAMED)) & reserved)
-    clash += sorted(set(_OURS) & reserved)
-    clash += sorted(set(_RENAMED.values()) & reserved)
+    clash = sorted(_ast_field_names() & set(_OURS))
     if clash:
         raise RuntimeError(
-            f"these relation names are reserved by the engine: {clash}. "
-            f"`Loader.atom` resolves a reserved name to the engine's OWN node, so "
-            f"depositing under it writes into engine machinery and nothing says so. "
-            f"Add each to `_RENAMED` in this module — see the module note."
+            f"this Python's `ast` declares field(s) {clash}, which are also the "
+            f"relation names this module deposits its own structure under — a "
+            f"transliterated node would overwrite them. Add each to `_RENAMED`."
         )
 
 

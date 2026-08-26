@@ -1,0 +1,24 @@
+# =============================================================================
+# UX building block — confirming transactions, showing discounts
+# =============================================================================
+# Your UX rules, in the UX vocabulary. This block knows about "confirmation
+# steps" and "showing a discount" — but NOT about Textual widgets (that is the
+# library block) and NOT about pricing (that is the business block). It reads the
+# business block's `has_benefit` and emits UX FEATURES the app must provide.
+#
+# The link from a UX feature to a concrete widget is made ONLY in the bridge —
+# so this same UX block would drive a web UI if you swapped the library block.
+
+#-- Confirming a transaction (a deontic rule) ---------------------------------
+# An IRREVERSIBLE action carries an OBLIGATION to confirm — a modality, not a
+# mere flag. `action_irreversible` is a fact the cart carries (a KNOB); the
+# obligation it fires is what forces a confirmation step into the app.
+?cart obliged confirm when ?cart action_irreversible yes
+?cart requires_feature confirmation_step when ?cart obliged confirm
+
+#-- What it MEANS to "show a discount" ----------------------------------------
+# Showing a discount is not just printing a number — the UX rule is that a
+# granted discount must be displayed PROMINENTLY, i.e. HIGHLIGHTED. So a business
+# benefit (`has_benefit discount`) requires a `highlighted_discount` feature.
+# Change this line to require a plain display instead and the emitted UI changes.
+?cart requires_feature highlighted_discount when ?cart has_benefit discount

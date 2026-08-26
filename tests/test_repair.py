@@ -1,14 +1,21 @@
-"""Slice 2's pins — one goal drives a code repair.
+"""Slice 2's pins — a diagnosis drives a code repair.
 
-The narrative version with its printed evidence is `experiments/pystrider_repair.py`.
+⭐⭐ **SEVEN OF THESE WERE `xfail(strict=True)` ON `ugm` AND PASS HERE**, and the
+reason is worth stating so nobody reads it as more than it is. They were blocked on
+`unmet`, which backward reading produced; the scratchpad deleted the goal apparatus
+and nothing replaced it. `repair.diagnose` derives the same occasion FORWARD — *the
+case wants `v`, the code was read and does not produce `v`*.
 
-⚠ Read `conftest.py` first: this suite runs in its own pytest invocation.
+⚠ That is a narrower thing than backward reading, and `repair.py`'s note says so:
+no goal expansion, no subgoal search, no choice of which tap to try. It reaches this
+shape of problem and would not reach a goal needing more than one subgoal to be
+found unmet. The slice works; the general capability is still absent.
 """
 from __future__ import annotations
 
 import pytest
 
-from pystrider import corpus
+from pystrider import patterns, repair
 from pystrider.emit import emit
 from pystrider.evaluator import evaluate, register
 from pystrider.facts import Facts
@@ -18,38 +25,18 @@ BUG = "def classify(age):\n    if age > 18:\n        return 'adult'\n    return 
 CORRECT = "def classify(age):\n    if age >= 18:\n        return 'adult'\n    return 'minor'\n"
 
 
-def world(source: str = BUG, rules: str = "", scope: str = "r", given=18, wants="adult"):
-    f = Facts(rules or corpus("patterns", "repair"), scope=scope)
+def world(source: str = BUG, given=18, wants="adult", **repair_options):
+    """Intake, seed the case, and settle. `repair_options` reach `repair.install`."""
+    f = Facts(patterns.install,
+              lambda loop, ff: repair.install(loop, ff, **repair_options))
     taken = intake(source, f, "<test>")
     function = f.subjects("function")[0]
     case = f.node("case")
     f.fact("case", case)
     f.fact("given", case, f.value(given))
     f.fact("wants", function, case, f.value(wants))
-    register(f)
     f.run()
     return f, taken, function, case
-
-
-#: ⚠⚠ EVERY TEST BELOW THAT CALLS THIS IS `xfail(strict=True)`, and the mark is on the
-#: test rather than here so each one still says what it was checking. The three lines
-#: this used to be are not repairable in place:
-#:
-#:     f.m.gate.write(f.m.focus, f.g.rel(f.m.GOAL, goal), PLUS, mention=True)
-#:                      ^^^^^             ^^^^^^         ^^^^   ^^^^^^^
-#:                      gone              gone           gone   gone
-#:
-#: A goal was the engine's own relation and drove backward reading; under the
-#: scratchpad it is an ordinary corpus relation with no machinery behind it. STRICT so
-#: that the day a backward reader is authored, these XPASS loudly instead of sitting
-#: green-but-skipped — a pin that cannot tell you the world changed is not a pin.
-NEEDS_GOALS = ("the engine no longer manages goals — see docs/transplant.md; a backward "
-               "reader has to be authored in rules/ before this can pass again")
-
-
-def pursue(f: Facts, function: int, case: int):
-    """Assert the goal and let the rules chase it. NOT AVAILABLE on this engine."""
-    raise NotImplementedError(NEEDS_GOALS)
 
 
 def ran(source: str):
@@ -63,102 +50,94 @@ def ran(source: str):
 
 def test_what_the_code_does_is_DERIVED_FROM_STRUCTURE_not_by_running_it():
     f, _, function, case = world()
-    assert evaluate(f, function, case).value == "minor"
+    # ⚠ Asked of the ORIGINAL structure would say 'minor'; by now the repair has
+    # run, so what the derivation reports is the repaired code. Both readings are
+    # in `evaluated` — see the CHANGE-then-OBSERVE pin below.
+    assert f.holds("evaluated", function, case, f.value("minor"))
 
 
-@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
-def test_the_goal_comes_to_hold_and_the_repair_reaches_the_REAL_graph():
+def test_the_diagnosis_finds_the_goal_UNMET_and_the_repair_reaches_the_REAL_world():
     f, _, function, case = world()
-    assert f.m.holds(pursue(f, function, case)) == PLUS
+    assert f.holds("agrees", function, case), "the goal comes to hold after repair"
+    assert f.holds("repaired", function, case)
 
 
-@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 def test_CHANGE_then_OBSERVE_the_evaluation_is_re_derived_after_the_change():
     """A repair is not done until its effect is observed. Two evaluations, not one."""
     f, _, function, case = world()
-    pursue(f, function, case)
     assert len(f.of("evaluated", function)) == 2
 
 
 # -- the artefact ---------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 def test_the_emitted_source_RUNS_and_answers_the_case():
     """⚠⚠ THE INDEPENDENT GATE. Engine 2 shipped a plan that "succeeded" while
     emitting BYTE-IDENTICAL source: a plan that changes nothing is
     indistinguishable from a real fix unless something inspects the artefact."""
-    f, taken, function, case = world()
-    pursue(f, function, case)
+    f, taken, _, _ = world()
     repaired = emit(f, taken.module)
     assert repaired.strip() != BUG.strip()
     assert ran(repaired)(18) == "adult"
     assert ran(repaired)(5) == "minor"
 
 
-@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 def test_exactly_ONE_repair_family_fires():
-    """⚠⚠ It was TWO, and the emitted code read `if age >= 17` — two independent
-    fixes for one bug, correct by luck and wrong as a repair.
+    """⚠⚠ It was TWO on `ugm`, and the emitted code read `if age >= 17` — two
+    independent fixes for one bug, correct by luck and wrong as a repair.
 
-    `unmet` is a FACT and a fact is not an event: on an append-only chain it stays
-    written, so after the first repair fixed the code the second was still
-    proposable off the same stale occasion. Each repair now DENIES the occasion it
-    acted on. If this goes red, over-repair is back.
+    There, `unmet` was a fact on an append-only chain and stayed written after the
+    first repair. Here a SYSTEM re-runs every tick, so denying the occasion is not
+    enough on its own — `repaired($f, $c)` is the durable mark that makes it stick.
+    If this goes red, over-repair is back through the new door.
     """
-    f, _, function, case = world()
-    pursue(f, function, case)
+    f, _, _, _ = world()
     assert len(f.subjects("relaxed")) + len(f.subjects("lowered")) == 1
 
 
 # -- the rivals -----------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
-@pytest.mark.parametrize("dropped", ["relax", "lower"])
-def test_EITHER_repair_family_alone_genuinely_fixes_it(dropped):
+@pytest.mark.parametrize("only", ["relax", "lower"])
+def test_EITHER_repair_family_alone_genuinely_fixes_it(only):
     """⚠ Engine 2 pinned its winner BY NAME and the pin went silently vacuous when
-    upstream's tie-break flipped — it passed while exercising the family the
-    planner had just chosen. Both families are checked here, so which one wins is
-    free to change; it already did once, mid-slice.
-    """
-    text = corpus("patterns", "repair")
-    start = text.index(f"rule <{dropped}>")
-    i, depth = text.index("(", start), 0
-    while True:
-        depth += 1 if text[i] == "(" else -1 if text[i] == ")" else 0
-        if depth == 0:
-            break
-        i += 1
-    f, taken, function, case = world(rules=text[:start] + text[i + 1:], scope=dropped)
-    pursue(f, function, case)
+    the tie-break flipped — it passed while exercising the family the planner had
+    just chosen. Both are checked here, so which one wins is free to change."""
+    f, taken, _, _ = world(families={only})
     classify = ran(emit(f, taken.module))
     assert classify(18) == "adult" and classify(5) == "minor"
+
+
+def test_the_two_families_reach_DIFFERENT_source_and_both_are_correct():
+    """"found A" must not be read as "B is wrong"."""
+    relaxed = emit(*_module(world(families={"relax"})))
+    lowered = emit(*_module(world(families={"lower"})))
+    assert relaxed != lowered
+    assert "age >= 18" in relaxed and "age > 17" in lowered
+
+
+def _module(built):
+    f, taken, _, _ = built
+    return f, taken.module
 
 
 # -- ⭐ what makes a repair unproposable ----------------------------------------
 
 
-def test_WITHOUT_the_unmet_member_a_repair_damages_CORRECT_code():
+def test_WITHOUT_the_diagnosis_a_repair_damages_CORRECT_code():
     """⭐⭐ The measurement this slice exists for.
 
     Survey §2 lists *a rule's condition is its parameter type* as the one item that
-    is a REDESIGN rather than a port. The answer measured here is `+unmet($p, ...)`:
-    a repair is proposable only once backward reading has found the goal unmet, and
-    the condition is an ordinary antecedent member rather than a type — so it is
-    arguable, and another author can write a different one.
+    is a REDESIGN rather than a port. The answer is that the condition is an
+    ordinary query term — so it is arguable, and another author can write a
+    different one. `gated=False` removes it and the repair fires on correct code.
     """
-    ungated = corpus("patterns", "repair").replace(
-        "+unmet($p, evaluated($f, $c, $v))", "+wants($f, $c, $v)"
-    ).replace("-unmet($p, evaluated($f, $c, $v)),\n    ", "")
-    f, taken, _function, _case = world(CORRECT, rules=ungated, scope="ungated")
-    f.run()
+    f, taken, _, _ = world(CORRECT, gated=False)
     assert emit(f, taken.module).strip() != CORRECT.strip()
 
 
 def test_WITH_it_correct_code_is_left_alone():
-    f, taken, _function, _case = world(CORRECT, scope="gated")
-    f.run()
+    f, taken, _, _ = world(CORRECT)
     assert emit(f, taken.module).strip() == CORRECT.strip()
     assert not f.subjects("relaxed") and not f.subjects("lowered")
 
@@ -172,43 +151,49 @@ def test_an_unmodelled_operator_is_refused_BY_NAME_and_nothing_is_concluded():
     answering `'minor'` about code that plainly returns `'adult'`. **A membrane
     described in prose is not a membrane.**"""
     src = "def classify(age):\n    if age is 18:\n        return 'adult'\n    return 'minor'\n"
-    f, _, function, case = world(src, scope="membrane")
+    f, _, function, case = world(src)
     verdict = evaluate(f, function, case)
-    assert verdict.refused == "unmodelled_operator:is"
-    assert verdict.value is None
+    assert verdict.refused == "unmodelled_operator:is" and verdict.value is None
     assert not f.of("evaluated", function)
+    assert f.of("could_not_evaluate", function), "the refusal is DEPOSITED, not swallowed"
 
 
 def test_CONTROL_an_operator_that_IS_modelled_is_not_refused():
     """Or the pin above would pass for a function it simply could not read."""
     src = "def classify(age):\n    if age < 18:\n        return 'minor'\n    return 'adult'\n"
-    f, _, function, case = world(src, scope="modelled", given=5, wants="minor")
+    f, _, function, case = world(src, given=5, wants="minor")
     assert evaluate(f, function, case).refused is None
 
 
 # -- the substrate the repair rests on ------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason=NEEDS_GOALS)
 def test_repair_is_DENY_then_ASSERT_and_the_reader_sees_the_CURRENT_claim():
-    """⚠⚠ The chain is append-only: nothing is mutated and nothing is removed, so
-    *change this* is `-old, +new`. A reader over its own deposit log would see both
-    and hand `emit` the code that was just repaired."""
-    f, _, function, case = world()
+    """⚠⚠ On `ugm` the chain was append-only, so *change this* was `-old, +new` and
+    a reader over its own deposit log would see BOTH and emit the code that was just
+    repaired. Here removal is removal — but the DENY still has to happen, and this
+    is what catches a repair that only ever added."""
+    f, _, function, _ = world()
     guard = f.of("guard", function)[0][0]
-    assert f.text("operator", guard) == "gt"
-    pursue(f, function, case)
-    operators = [f.word_of(o) for (o,) in f.of("operator", guard)]
-    assert len(operators) == 1, f"a denied claim is still visible: {operators}"
+    operators = [f.show(o) for (o,) in f.of("operator", guard)]
+    assert operators == ["ge"], f"a withdrawn claim is still visible: {operators}"
 
 
-def test_a_WORD_and_a_LITERAL_are_different_kinds_of_node():
+def test_a_WORD_and_a_LITERAL_are_different_kinds_of_entity():
     """⚠⚠ Conflating them made a corpus unable to talk about code: the operator was
-    stored `repr`-encoded as `'gt'`, so `+operator($g, gt)` in an authored rule
-    could never match and one of the two repair families was **dead**. The suite
-    could not tell, because the other family keys on an integer, where `repr(18)`
-    and the token `18` agree by luck."""
-    f, _, function, _case = world()
+    stored `repr`-encoded as `'gt'`, so a rule naming the bare `gt` could never
+    match and one of the two repair families was **dead**. The suite could not
+    tell, because the other keys on an integer, where `repr(18)` and the token `18`
+    agree by luck."""
+    f, _, function, _ = world(CORRECT)
     guard = f.of("guard", function)[0][0]
-    assert f.one("operator", guard) == f.word("gt")
-    assert f.one("operator", guard) != f.value("gt")
+    assert f.one("operator", guard) == f.word("ge")
+    assert f.one("operator", guard) != f.value("ge")
+
+
+def test_the_answerer_TABLE_is_gone_and_says_so_rather_than_binding_nothing():
+    """⚠ A caller that still registers a tool expects one to run. Answering
+    *nothing was bound* by silently binding nothing is how a dead evaluator stays
+    green."""
+    with pytest.raises(NotImplementedError, match="system now"):
+        register(Facts())

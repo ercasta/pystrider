@@ -1,19 +1,28 @@
 # pystrider
 
-> **⚠ 2026-08-02 — THIS README DESCRIBES THE RETIRED GENERATION AND HAS NOT BEEN RE-AUTHORED.**
-> The `pystrider` package it documents (CNL rules, `grammapy`, the browser playgrounds, the whole
-> `ugm`-classic engine) was **deleted**, and the rewrite that was living in `strider/` took the name.
-> The thesis below still holds; the mechanisms named in it largely do not — the new generation authors
-> ugm **microfunctions** (`pystrider/rules/*.mf`) rather than CNL, and there is no `grammapy` half.
-> The live site is frozen at its last deploy for the same reason.
+> **2026-08-26 — REWRITTEN ONTO `harneskills`; `../ugm` IS GONE.**
+> There is no engine under this project any more. `harneskills` is an entity-component world and a
+> loop that calls every system in order until nothing changes — which *is* forward chaining, so a
+> rule needs no machinery beneath it, only a function. `pystrider/mf.py` (the single-import surface,
+> the `UGM` env var, the engine assertion) and `pystrider/rules/*.ugm` are both deleted.
 >
-> **Current front door: [`pystrider/HANDOFF.md`](pystrider/HANDOFF.md).** Verify with
-> `python -m pytest tests/ -q` (216 passing).
+> **⭐ The playground below is LIVE again**, and it is the reason for the rewrite: the four authored
+> blocks are back, joined by a fifth (`design.cnl`), and `grammapy`'s composition combinators are
+> re-derived as systems on the *same loop* as the business rules — one settle from
+> `cart customer_tier premium` to a driven-green Textual app.
+>
+> ⚠ **What the rewrite costs, stated once:** `patterns.py`'s descriptions are Python functions now,
+> and a function has no antecedent to read backwards — so the *write* half of the bet is gone, not
+> parked. The CNL blocks stayed text precisely because swapping one is the whole demonstration;
+> `pystrider/cnl.py` explains why the answer differs there, and is the worked example for making
+> descriptions data again. Verify with `PYTHONPATH=../harneskills python -m pytest tests/ -q`
+> (120 passing, 2 xfailed).
 
 **Bring your own rules — business, UX, your favorite Python library — keep them in separate files,
 bridge them, and brew a _working, verified_ UI.** No wizards, no hardcoded engine, no LLMs: every
-line is derived by reasoning on the [Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine),
-and trusted because pystrider _runs_ what it built and watches it behave.
+line is derived by forward-chaining the authored blocks over
+[harneskills](https://github.com/ercasta/harneskills)' entity-component world, and trusted because
+pystrider _runs_ what it built and watches it behave.
 
 **Live site & playgrounds → [ercasta.github.io/pystrider](https://ercasta.github.io/pystrider/)** — read the
 argument, and _run the engine in your browser_: edit CNL and watch the code **generate**; paste code and
@@ -90,12 +99,15 @@ highlighted_discount realized_by styled_label
 **Brew them together:**
 
 ```bash
-python demos/playground/playground.py          # reason -> compose -> emit -> DRIVE
+PYTHONPATH=../harneskills python -m demos.playground.playground --flip
 ```
 
-pystrider loads the four blocks, reasons across them (grounding the spend-vs-threshold comparison,
-then asking `who admitted_for cart`), composes the derived features with [grammapy](docs/deep_dive.md#layout)'s
-proven combinators, and **emits a real Textual app**:
+pystrider loads the five blocks and forward-chains them to quiescence — each authored `head when body`
+rule compiled to exactly one system — grounding the spend-vs-threshold comparison, deriving
+`admitted_for`, and resolving every design decision in the *same* settle: the widget set
+(writes pairwise disjoint), the screen shape (`confirm_screen` is **forced** by the capability the UX
+obligation demands), and effect reachability (an emitted `needs_confirmation` with no handler above it
+**refuses to emit an app at all**). Then it **emits a real Textual app**:
 
 ```python
 class CheckoutApp(App):
@@ -162,12 +174,12 @@ Clone the repo and turn the knobs in the **playground** — a card-trader-style 
 `CONFIG` block (or any `.cnl` file) and re-run:
 
 ```bash
-python demos/playground/playground.py           # the narrated walkthrough
-python demos/playground/playground.py --run      # launch the emitted app to click through it
+PYTHONPATH=../harneskills python -m demos.playground.playground          # the narrated walkthrough
+PYTHONPATH=../harneskills python -m demos.playground.playground --flip   # ...and the same cart made irreversible
 ```
 
-See [`demos/playground/`](demos/playground/) and the big **§ PLAYGROUND** knob menu at the bottom of
-[`playground.py`](demos/playground/playground.py): move the discount threshold, add a loyalty tier,
+See [`demos/playground/`](demos/playground/) and the `Cart` knobs at the top of
+[`brew.py`](demos/playground/brew.py): move the discount threshold, add a loyalty tier,
 change what "show a discount" means, take a capability away from the toolkit and watch the honest "your
 toolkit can't do that yet" gap appear — all without touching engine code, because there is none to
 touch.
@@ -201,17 +213,24 @@ The full technical tour — the reasoning axes, the generation loop, the layout,
 
 ## How does it work?
 
-**No wizards, no hardcoded engine processing, no LLMs.** Everything above is powered by the
-[Universal Graph Machine](https://github.com/ercasta/Universal-Graph-Machine) — a tiny, general rule
-engine that does one thing: reason over a graph of facts by firing declarative rules, on demand,
-keeping a trace. Your business rules, UX rules, library facts, and bridges are all just facts and rules
-_in that one graph_. "Does this cart get a discount?", "which features must the app have?", "does this
-set of widgets compose without interference?", "did the app behave?" are all the _same_ kind of
-question — a backward query — answered by the _same_ engine.
+**No wizards, no hardcoded engine processing, no LLMs — and as of 2026-08-26, no engine at all.**
+Everything above runs on [harneskills](https://github.com/ercasta/harneskills): an *entity* is an
+identity with no data, a *component* is data with no identity, and a *system* is a Python function
+that asks for the entities carrying a set of components. The loop calls every system in order until a
+whole pass changes nothing — and that **is** forward chaining, which is why the rule engine that used
+to sit here could simply be deleted rather than replaced.
+
+Your business rules, UX rules, library facts and bridges are all facts and rules in _that one world_.
+"Does this cart get a discount?", "which features must the app have?", "does this set of widgets
+compose without interference?", "is the emitted signal handled?" are all the same kind of question,
+answered in the same settle. ⚠ They are answered FORWARD, not by backward query: the world holds
+every consequence of the blocks once it has settled, so what used to be `ask_goal` is now a read.
+What that costs is the proof journal — `cnl.explain` re-derives an answer rather than remembering
+one, and says so.
 
 pystrider itself owns **no** engine code. It materializes graph structure from Python's `ast`, emits
 source, and runs things (the honest tool boundaries); everything in between — the analysis semantics,
-the composition algebra ([grammapy](docs/deep_dive.md#layout)), the cross-vocabulary bridges — is
+the composition checks (`demos/playground/design.py`), the cross-vocabulary bridges — is
 CNL rules over the public firmware. Nothing is trusted because a tool _claimed_ it; every conclusion is
 checked by re-running the reasoning, and every emitted app by _driving it_.
 
@@ -238,11 +257,12 @@ ways. That is why:
 ## Run
 
 ```bash
-pip install -e ../ugm -e .    # the ugm sibling + this package (grammapy ships in-repo)
+pip install -e . && pip install textual    # ⚠ harneskills is a SIBLING CHECKOUT, not a dependency:
+                                           #    PYTHONPATH=../harneskills
 pip install textual            # for the playground (the driven Textual app)
 
-python demos/playground/playground.py          # THE PLAYGROUND — bring rules, bridge, brew a UI
-python demos/playground/playground.py --run     # launch the emitted app interactively
+python -m demos.playground.playground          # THE PLAYGROUND — bring rules, bridge, brew a UI
+python -m demos.playground.playground --flip    # flip one knob; watch the screen shape follow
 
 python -m pystrider.demo                        # the packaged analysis/repair walkthrough
 python demos/run.py                             # five focused analysis/repair demos

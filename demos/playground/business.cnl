@@ -1,0 +1,29 @@
+# =============================================================================
+# BUSINESS building block — prices, discounts, loyal customers
+# =============================================================================
+# Your business rules, in your OWN vocabulary. This block knows nothing about a
+# UI, about Textual, or about confirmation dialogs — it only knows commerce. It
+# composes with the other blocks through shared predicates (`grants_discount`,
+# `has_benefit`), and through the bridge. Swap this whole file for a different
+# pricing policy and everything downstream re-derives.
+#
+# Two shapes of knowledge live here: FACTS (bare `subject predicate object`
+# triples) and RULES (`HEAD when BODY and BODY ...`). The brew engine sorts them.
+
+#-- The discount policy, as data (the numbers are KNOBS — edit them) ----------
+# An order must clear this spend to qualify for the loyalty discount; a qualifying
+# premium order is discounted by `rate` percent. The engine reads these constants
+# to ground the comparison (arithmetic is the tool's job) and to price the cart.
+discount_policy threshold 100
+discount_policy rate 10
+
+#-- Who earns a discount (the loyalty rule) -----------------------------------
+# A loyal (premium-tier) customer whose order QUALIFIES earns a discount.
+# `order_qualifies` is grounded by the engine from the cart's spend vs. the
+# threshold above — a real number crossing a boundary, not a hand-set flag.
+?cart grants_discount yes when ?cart customer_tier premium and ?cart order_qualifies yes
+
+#-- A granted discount is a benefit the checkout must surface -----------------
+# This is the seam the UX block reads: a business BENEFIT the interface has to
+# show. Business says *what* the customer earns; UX says *how* it is presented.
+?cart has_benefit discount when ?cart grants_discount yes

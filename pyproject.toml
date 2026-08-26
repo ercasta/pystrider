@@ -5,21 +5,31 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pystrider"
 version = "0.0.1"
-description = "Reads and writes Python by reasoning, on ugm's scratchpad engine."
+description = "Reads and writes Python by reasoning, on harneskills' entity-component world."
 requires-python = ">=3.11"
-dependencies = ["universal-graph-machine"]
+
+# ⚠⚠ `universal-graph-machine` is GONE from this list, and the whole of `../ugm` with
+# it. `harneskills` is deliberately NOT listed here either: it is a sibling checkout
+# under active development, not a release, so pinning it in metadata would promise a
+# version that does not exist. What guards the dependency instead is `_NEEDS` in
+# `pystrider/facts.py` — twelve names asserted on import, which fails by NAME when
+# the substrate moves rather than three frames into a run.
+#
+#   PYTHONPATH=../harneskills python -m pytest tests/ -q
+#
+# ⭐ Nothing here defaults to a path any more. `mf.py`'s `UGM` env var (and its
+# hard-coded `C:\Users\...` fallback) is gone with the module.
+dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest"]
-experiments = ["textual>=8,<9"]   # drives the emitted apps through textual's Pilot
+# ⚠ `demos/playground` DRIVES the app it emits — the verification is a real Textual
+# app under Pilot, not an inspection of the source. Without this the bridge suite
+# skips rather than passing vacuously.
+playground = ["textual>=8,<9"]
 
 [tool.setuptools]
-# ⚠ 2026-08-23: engine 2 was deleted and `restrider/` took the `pystrider` name (docs/transplant.md).
-# The 2026-08-02 note this replaces recorded the previous such move, one generation earlier.
+# ⚠ 2026-08-26: `rules/` is gone — the descriptions are systems in `patterns.py` and
+# `repair.py` now. The one authored-text surface left is `demos/playground/*.cnl`,
+# which is a demo rather than package data, and `cnl.py` says why that one stayed text.
 packages = ["pystrider"]
-
-[tool.setuptools.package-data]
-# ⚠⚠ `.ugm`, NOT `.mf`. This said `rules/*.mf` until 2026-08-23 and would have shipped a wheel
-# with NO RULES IN IT — every corpus file is `.ugm` on this engine, and `corpus()` reads them off
-# disk, so the failure would have been an empty rule set rather than a missing-file error.
-pystrider = ["rules/*.ugm"]

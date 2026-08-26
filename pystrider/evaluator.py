@@ -112,31 +112,23 @@ def _returned(f: Facts, if_stmt: int, taken: bool) -> Optional[int]:
 
 
 def register(f: Facts) -> None:
-    """Bind this as the answerer for the `evaluate` request, in the corpus's scope.
+    """⚠ RETIRED — the evaluator is a SYSTEM now; see `repair.answer`.
 
-    ⚠ Through `Loader.answerer`, never `Machine.answerer` — a request is a relation
-    and a relation is a name, so registering outside the table that resolves names
-    mints a SECOND `evaluate` and the tool waits for a request nobody can make.
+    It used to bind this module as the answerer for the `evaluate` request through
+    `Loader.answerer`, which had to be the corpus's loader and not the machine's: a
+    request was a relation, a relation was a name, and registering outside the table
+    that resolved names minted a SECOND `evaluate` whose tool waited for a request
+    nobody could make.
+
+    ⭐ There is no binding to get wrong. A `harneskills` system is already *a Python
+    function the loop calls*, so `repair.answer` reads the `evaluate` requests and
+    deposits what it derived — the same tool, without the registration.
+
+    It raises rather than doing nothing, because a caller that still registers a
+    tool is a caller expecting one to run, and answering *nothing was bound* by
+    silently binding nothing is how a dead evaluator stays green.
     """
-
-    # ⚠ 2026-08-23: the callback was `(machine, frame, entry)` and is now
-    # `(machine, proposition)`. A frame is no longer a thing an answerer is handed, and
-    # the entry's SIGN is gone with the chain — a proposition that reaches an answerer
-    # is anchored, so there is nothing left to check it against. The engine binds this
-    # signature strictly (`inspect.signature(fn).bind(None, None)`), so a stale
-    # three-argument answerer is refused at registration rather than at call time.
-    def answer(machine, proposition):
-        g = f.g
-        if g.relation_of(proposition) is not f.rel("evaluate"):
-            return None
-        function, case = g.members(proposition)
-        result = evaluate(f, function, case)
-        if result.refused is not None:
-            # ⚠ The refusal is DEPOSITED rather than swallowed, so a goal that
-            # stays unmet can say why. Nothing concludes a value.
-            f.fact("could_not_evaluate", function, case, f.value(result.refused))
-            return None
-        f.fact("evaluated", function, case, f.value(result.value))
-        return None
-
-    f.kb.answerer("evaluator", "evaluate", answer)
+    raise NotImplementedError(
+        "the evaluator is a system now — install `pystrider.repair`, which "
+        "registers `repair.answer`. There is no answerer table to bind to."
+    )

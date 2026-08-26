@@ -1,0 +1,17 @@
+# =============================================================================
+# LIBRARY building block — what the Textual toolkit can build (absorbed facts)
+# =============================================================================
+# Your rules for a favorite Python library, as FACTS about its surface. In the
+# real system these are *absorbed* from the library's own type hints
+# (`pystrider.absorb`) rather than hand-written; here they are spelled out so the
+# playground is self-contained and the block is easy to swap.
+#
+# Each fact names a CAPABILITY the framework supports. Nothing here mentions
+# business or UX — it is pure "what widgets exist". The bridge is what marries a
+# UX feature to one of these capabilities; swap this file for a `web.cnl` and the
+# same business + UX blocks re-target a different toolkit.
+
+modal_confirm supported_by textual    # push_screen(ModalScreen)  -> a confirmation gate
+styled_label  supported_by textual    # Static + a Rich style     -> HIGHLIGHTED text
+input_value   supported_by textual    # Input.value               -> read the order amount
+button_widget supported_by textual    # Button                    -> the checkout action

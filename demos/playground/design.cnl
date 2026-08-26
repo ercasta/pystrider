@@ -1,0 +1,60 @@
+# =============================================================================
+# DESIGN building block — widgets, screen shapes, and the control tree
+# =============================================================================
+# What `grammapy` used to hold as Python combinator objects, authored as facts in
+# the same shape as the other four blocks. The CHECKS over these facts are systems
+# (`design.py`) because each one needs something a `head when body` rule cannot
+# say — a universal ("provides EVERY required capability"), a negation ("no
+# handler covers this signal"), or a pairwise comparison ("two widgets, and not
+# the same one"). Everything that IS expressible as a rule is a rule, here.
+#
+# ⭐ Swapping `textual.cnl` for a `web.cnl` means editing the `writes` lines here
+# too — the widget vocabulary is the toolkit's, and this block is where the design
+# layer meets it.
+
+#-- Each widget and the screen slot it WRITES ---------------------------------
+# The frame rule: a set of widgets composes iff their writes are pairwise
+# disjoint. Two widgets claiming one slot is interference, caught at design time
+# rather than as a UI that overwrites itself.
+input_value    writes screen.amount
+button_widget  writes screen.checkout
+result_label   writes screen.result
+styled_label   writes screen.result.style
+modal_confirm  writes screen.gate
+
+#-- The widgets every checkout screen carries, whatever the rules derive ------
+input_value   always_placed yes
+button_widget always_placed yes
+result_label  always_placed yes
+
+?w placed_for ?cart when ?w always_placed yes and ?cart has_checkout yes
+
+#-- ...and the widget a bridge-ADMITTED feature brings with it ----------------
+# This is the seam back to the bridge: a UX feature is realized by a capability,
+# and an admitted capability is a widget on the screen. Delete `styled_label
+# supported_by textual` from the library block and this places nothing.
+?cap placed_for ?cart when ?feat admitted_for ?cart and ?feat realized_by ?cap
+
+#-- The screen shapes on offer, and what each PROVIDES ------------------------
+one_screen     produces screen
+confirm_screen produces screen
+one_screen     is_default screen
+confirm_screen provides confirmation
+
+#-- What a UX feature DEMANDS of the screen shape -----------------------------
+# `confirmation_step` is not satisfied by any old screen: it needs one that
+# provides a confirmation. That is what FORCES the shape to flip.
+confirmation_step demands confirmation
+
+#-- The control tree: who emits the signal, and who handles it ----------------
+# The completion leaf emits `needs_confirmation` exactly when the action is
+# irreversible; the confirm screen is the only thing that handles it. A design in
+# which the signal is emitted and nothing above it handles it is REJECTED.
+complete_purchase emits_if action_irreversible
+confirm_screen    handles  needs_confirmation
+
+?n emits ?sig when ?n emits_if action_irreversible and ?cart action_irreversible yes and needs_confirmation is_signal ?sig
+needs_confirmation is_signal needs_confirmation
+
+# A node sits INSIDE a handler only when that handler is the chosen screen.
+?n inside ?s when ?n emits ?sig and ?s handles ?sig and ?s chosen_for ?cart

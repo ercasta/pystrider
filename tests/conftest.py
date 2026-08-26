@@ -1,45 +1,41 @@
-"""One suite again.
+"""One suite, and the substrate it measured named out loud.
 
     python -m pytest tests/ -q
 
-⚠ This file used to do something much louder, and the reason it no longer needs to is
-worth one paragraph. Two engines were installed under the name `ugm` — `pystrider/` on
-`ugm-classic` and `restrider/` on `../ugm` — and `import ugm` resolved to whichever the
-process found first. Running both suites in one invocation did not fail at import; it
-handed one of them an engine it was not written for, which shows up as wrong answers
-rather than as an error. That failure mode cost this project three separate wrong
-readings, so collection refused any mixed run outright.
+⚠ This file has twice guarded against a hazard that no longer exists, and the
+history is the reason it still says anything at all. It once refused a run that
+mixed two engines both installed under the name `ugm`, because `import ugm`
+resolved to whichever the process found first — which does not fail at import, it
+hands one suite an engine it was not written for and shows up as WRONG ANSWERS.
+That cost this project three separate readings. It then shrank to asserting which
+single `ugm` the process had, for the same reason in miniature: a sibling checkout
+can win over an install.
 
-On 2026-08-23 engine 2 was deleted and `restrider/` became `pystrider/`
-(`docs/transplant.md`), so there is one engine, one package, and one suite. The
-collection guard went with the situation it was guarding against.
+**Both are retired, because `ugm` is gone.** `pystrider` is written on
+`harneskills` — an entity-component world and a loop, with no path lookup, no name
+table, and nothing resolvable to the wrong copy. There is no engine to assert.
 
-**What stays is the assertion, because the underlying hazard did not go away:** an
-install still resolves `ugm` by whatever the process finds first, and a sibling
-checkout can still win over an install. So the suite says out loud, once, which engine
-it measured — an unasserted engine is exactly how the three wrong readings happened.
+**What replaces it is smaller and still worth saying**: `harneskills` is not
+installed as a dependency of this package, it is a sibling checkout on
+`PYTHONPATH`, so a run can silently measure a DIFFERENT `harneskills` than the one
+beside it. The fixture names the one it got.
 """
 from __future__ import annotations
 
-import sys
+import os
 
 import pytest
 
+import harneskills
+
 
 @pytest.fixture(scope="session", autouse=True)
-def engine():
-    """Name the engine this run measured, and refuse a stale one."""
-    from pystrider.mf import ENGINE
+def substrate():
+    """Name the `harneskills` this run measured."""
+    where = os.path.dirname(harneskills.__file__)
+    assert hasattr(harneskills, "__file__"), "harneskills is not importable"
+    return where
 
-    # ⚠ Not `"ugm" in ENGINE` — that is true of every candidate including the retired
-    # worktree. The check that bites is identity: the module the process actually holds
-    # must be the one `mf.py` resolved and asserted the names of.
-    assert sys.modules["ugm"].__file__ == ENGINE, (
-        f"`ugm` in this process is {sys.modules['ugm'].__file__}, but mf.py resolved "
-        f"{ENGINE} — something imported a different engine first."
-    )
-    assert "ugm-classic" not in ENGINE, (
-        f"resolved the RETIRED engine-2 worktree at {ENGINE}; nothing here is written "
-        f"for it (docs/transplant.md)."
-    )
-    return ENGINE
+
+def pytest_report_header(config):
+    return f"substrate: harneskills at {os.path.dirname(harneskills.__file__)}"

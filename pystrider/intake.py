@@ -221,7 +221,11 @@ class Intake:
         # twice otherwise — once where the handler is missing, once when `part`
         # sees the placeholder is partial — and `unknown_part` listed `iterated`
         # TWICE for one comprehension. Harmless to read and wrong to count.
-        marker = self.f.rel(label)
+        # ⚠ A WORD, where this was `f.rel(label)` on the scratchpad. A relation was a
+        # node there, so the label could be the relation itself; here a relation is a
+        # Python CLASS and cannot be a member of anything. The label is vocabulary —
+        # which is what `word()` is for, and what it always meant.
+        marker = self.f.word(label)
         if marker not in [m for (m,) in self.f.of("unknown_part", parent)]:
             self.f.fact("unknown_part", parent, marker)
         if not self.f.has("partial", parent):

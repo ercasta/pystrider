@@ -1,82 +1,70 @@
-"""`pystrider` — reading and writing Python by reasoning, on `../ugm`.
+"""`pystrider` — reading and writing Python by reasoning, on `harneskills`.
 
-**THE BET, unchanged across four engines:** one authored description, read one way
+**THE BET, across five substrates:** one authored description, read one way
 RECOGNIZES code, read the other way WRITES it. What changed each time is what the
-substrate lets a description be.
+substrate lets a description BE.
 
     engine 1  `ugm` classic      a CNL rule's BODY recognizes, its HEAD writes
     engine 2  `microfunctions`   pattern matching deleted, so `driver.establishes`
                                  reconstructed the duality from a function's body
                                  versus its effects
     engine 3  `restart`          pattern-matching rules are back, AND a backward
-                                 reader over the same rules ships. This package was
-                                 written here
-    engine 4  the scratchpad     one graph that IS the state. The forward half is
-                                 untouched; the BACKWARD reader went into the engine's
-                                 bin and has to be re-authored in `rules/`
+                                 reader over the same rules ships
+    engine 4  the scratchpad     one graph that IS the state; the backward reader
+                                 went into the engine's bin
+    engine 5  `harneskills`      no engine at all — an entity-component world and a
+                                 loop that calls every system until nothing changes
 
-⭐ The forward half is native on this floor and stays native: an antecedent is
-literally what `driver.establishes` spent engine 2 reconstructing.
+## ⚠⚠ WHAT ENGINE 5 COSTS, STATED FIRST
 
-⚠⚠ **The backward half is currently a debt, not a feature.** `Machine.why` and the
-whole goal apparatus (`GOAL`, `SUBGOAL`, `backward.py`, `Machine.focus`) were deleted
-upstream on the way to the scratchpad, and goal management is now something a corpus
-authors for itself (`../ugm/ugm/rules/bundle.ugm` is the worked example). Nine tests
-are `xfail(strict=True)` against exactly that, so the day it is authored they XPASS
-rather than staying quietly green.
+**A description is a Python function here, and a Python function has no antecedent
+to read backwards.** On engine 3 a rule was DATA, so the same authored implication
+was both a recognizer and a work order. That is gone — not parked behind a missing
+feature this time, but given up by the shape of the substrate. `patterns.py` says
+so at the top, and `test_spine.py` keeps the expectation a backward reader would
+have to satisfy so that whoever restores it has the target in hand.
 
-## Where the reach went, and what is owed
+⭐ Restoring it does not mean going back to `ugm`: it means making descriptions
+data again — a small matcher over `Facts`, with each authored description compiled
+to a system exactly as `cnl.py` already compiles a `head when body` rule. **That
+path is open and `cnl.py` is the worked example**, which is why the CNL blocks
+stayed text while these did not.
 
-This package absorbed `restrider/` on 2026-08-23 and the engine-2 `pystrider/` was
-deleted the same day. That was a decision to stop maintaining a private fork of a dead
-engine, **not** a claim that this one caught up: measured on one corpus that day,
-engine 2 round-tripped **68.3 %** of 587 functions and this package round-trips
-**3.1 %**, both with UNSTABLE 0.
+## ⭐ WHAT ENGINE 5 PAYS FOR
 
-⭐ The gap is collectable rather than lost. Engine 2's 923-line `intake.py` + `emit.py`
-— the entirety of what produced the 68.3 % — imported `ast` and nothing else, and the
-whole engine surface they touched was seven graph methods that `facts.py` already
-offers under other names. **`docs/transplant.md` holds the measurement, the runner,
-and the git ref to lift them from.** It is written down precisely because this project
-has already once deleted the artifact holding the measurement in the same commit that
-took the decision it gated.
-
-> The bar: re-run `experiments/pystrider_reach.py`. It must clear 68.3 % with UNSTABLE
-> still 0 before this repo reads as much Python as it did on 2026-08-23.
-
-## ⚠ THE TRAP THIS ENGINE CARRIES — read `mf.py` before authoring a rule
-
-There is no inert set. A rule without a `no <its own conclusion>` premise re-fires for
-ever, and the symptom is a silent one: the run burns its whole budget on the first
-applicable rule while every later rule never fires.
+* **The twin trap is structurally gone.** A relation is a Python class interned by
+  name, so a relation built in Python cannot be a twin of one a rule uses. Four
+  recorded wrong readings came from that, and there is nothing left to get wrong.
+* **The `no <own conclusion>` premise is retired.** There is no inert set on `ugm`,
+  so a rule that did not stop itself hung the run — silently, by burning the budget
+  on the first applicable rule. `World.attach` compares before it stores, so
+  re-deriving what already holds is not a change and the world settles.
+* **One store, one settle.** `demos/playground` reasons from a business fact to an
+  admitted screen design in a single fixpoint, because the composition checks are
+  systems on the same loop as the block rules.
+* **No path lookup, no name table, no engine to resolve to the wrong copy.** The
+  whole of `mf.py` — the single-import-surface bet, the engine assertion, the
+  refusal of a sibling checkout — went away with the thing it guarded.
 
 ## What exists
 
 | module | role |
 |---|---|
-| `mf.py` | the single import surface, the engine assertion, and the trap above |
-| `facts.py` | the substrate adapter — kind, attribute and edge are ONE thing here |
+| `facts.py` | the substrate adapter — a relation is a component, its objects are rows |
+| `cnl.py` | authored `head when body` blocks, each rule compiled to ONE system |
 | `intake.py` | Python → propositions, with provenance and gaps named |
+| `transliterate.py` | Python → propositions, TOTALLY — no membrane, nothing refused |
 | `emit.py` | propositions → Python, via `ast.unparse` |
-| `evaluator.py` | the tool that answers what a function does for a case |
-| `rules/patterns.ugm` | the descriptions — and the bridges, which are now the same statement |
-| `rules/repair.ugm` | diagnosis and the two repair families |
+| `patterns.py` | the neutral descriptions (the forward half of the bet) |
+| `repair.py` | diagnosis, the evaluator-as-system, and the two repair families |
+| `evaluator.py` | what a function returns for a case, derived from structure |
+
+⚠ `demos/playground` is the headline: business, UX and toolkit rules in separate
+authored files, joined only by `bridge.cnl`, composed and driven green through
+Textual's Pilot. It is the one place the CNL surface is load-bearing, and
+`cnl.py`'s note says why the answer differs there.
 """
 from __future__ import annotations
 
-import os
-
-RULES = os.path.join(os.path.dirname(__file__), "rules")
-
-
-def corpus(*names: str) -> str:
-    """Read authored rule files, to be loaded in ONE call.
-
-    ⚠ One call, always. Two `load`s build two name tables, so the facts' relations
-    are TWINS of the rules' and nothing matches — while the run reports a contented
-    quiescence having done nothing. Upstream's most-recorded trap, and it has cost
-    this project three separate wrong readings.
-    """
-    return "\n".join(
-        open(os.path.join(RULES, f"{n}.ugm"), encoding="utf-8").read() for n in names
-    )
+__all__ = ["cnl", "emit", "evaluator", "facts", "intake", "patterns", "repair",
+           "transliterate"]
