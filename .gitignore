@@ -12,3 +12,7 @@ site/
 # CI-generated site assets (built in the docs workflow)
 docs/wheels/
 docs/play/
+
+# ⚠ Claude Code worktrees live here and are git repos of their own — `git add -A`
+# turns one into a broken gitlink that no clone can resolve. It did once (0fb1b96).
+.claude/
