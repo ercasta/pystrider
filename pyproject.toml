@@ -9,13 +9,23 @@ description = "Reads and writes Python by reasoning, on harneskills' entity-comp
 requires-python = ">=3.11"
 
 # ⚠⚠ `universal-graph-machine` is GONE from this list, and the whole of `../ugm` with
-# it. `harneskills` is deliberately NOT listed here either: it is a sibling checkout
-# under active development, not a release, so pinning it in metadata would promise a
-# version that does not exist. What guards the dependency instead is `_NEEDS` in
-# `pystrider/facts.py` — twelve names asserted on import, which fails by NAME when
-# the substrate moves rather than three frames into a run.
+# it -- that checkout, at that path, is retired. `ugm` is back as a DIFFERENT
+# thing (harneskills 37d6fca): the entity-component engine `harneskills` used to
+# carry itself, carved into its own package and embedded at `../harneskills/engine`
+# (import name `ugm`; see `tests/conftest.py`'s own account of why this name is
+# worth this much caution). `harneskills` is deliberately NOT listed here either,
+# and neither is `ugm`: both are a sibling checkout under active development, not
+# a release, so pinning either in metadata would promise a version that does not
+# exist. What guards the dependency instead is `_NEEDS` in `pystrider/facts.py` —
+# names asserted on import, which fails by NAME when the substrate moves rather
+# than three frames into a run.
 #
-#   PYTHONPATH=../harneskills python -m pytest tests/ -q
+#   PYTHONPATH=../harneskills/engine:../harneskills python -m pytest tests/ -q
+#
+# ⚠ This machine also has an UNRELATED project also called `ugm`
+# (`../Universal-Graph-Machine`) sitting beside this one. Putting it on
+# `PYTHONPATH` ahead of `../harneskills/engine` is exactly the old twin-`ugm`
+# hazard back again with a new source -- see `tests/conftest.py`.
 #
 # ⭐ Nothing here defaults to a path any more. `mf.py`'s `UGM` env var (and its
 # hard-coded `C:\Users\...` fallback) is gone with the module.

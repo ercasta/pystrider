@@ -18,11 +18,11 @@ by all of them):
 
 The obvious choice is the good one — put pystrider's facts in the SHARED world, so
 a business rule and a file listing are entities side by side and one settle covers
-both. `harneskills.engine`'s whole argument is *one world, several doors*. Two
+both. `ugm.engine`'s whole argument is *one world, several doors*. Two
 things make it wrong here, and both are properties of what pystrider stores rather
 than of the idea:
 
-1. **The shared world is PERSISTED.** `harneskills.save` writes it on every settle.
+1. **The shared world is PERSISTED.** `ugm.save` writes it on every settle.
    Intaking one Python file spawns a few hundred entities and transliterating a real
    module spawns thousands, none of which anyone wants in `world.json` — which is
    7 KB today and is meant to be the thing the session KNEW, not a syntax tree it
@@ -59,7 +59,7 @@ from __future__ import annotations
 import os
 import traceback
 
-from harneskills.world import Component, Reply, Said
+from ugm.world import Component, Reply, Said
 
 #: What the prompt should pull a typo towards. `world.learn` is autocorrect only —
 #: nothing here changes what a system finds.
@@ -68,7 +68,7 @@ WORDS = ("blocks", "brew", "why", "read", "drive", "irreversible", "basic",
 
 
 # -- the goals a typed line becomes ---------------------------------------------
-# ⚠ Ordinary module-level classes, on purpose: `harneskills.save` resolves a
+# ⚠ Ordinary module-level classes, on purpose: `ugm.save` resolves a
 # component by `module:qualname`, so these survive a restart where a
 # `facts.relation()` class would not. See the module note.
 

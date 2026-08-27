@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from harneskills.world import Entity
+from ugm.world import Entity
 
 from pystrider.facts import Facts, relation
 

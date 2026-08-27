@@ -62,30 +62,33 @@ import ast
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from harneskills.loop import Loop
-from harneskills.world import Component, Entity, World
+from ugm.loop import Loop
+from ugm.world import Component, Entity, World
 
-#: ⚠⚠ **WHAT THIS PACKAGE USES OF `harneskills`, ASSERTED ON IMPORT.**
+#: ⚠⚠ **WHAT THIS PACKAGE USES OF `ugm`, ASSERTED ON IMPORT.**
 #:
-#: `mf.py` did exactly this for `ugm` and it paid off four times — a packaging fix,
-#: a rename, a rewrite, and an engine collapse — because the alternative is an
-#: `AttributeError` three frames into a run, or worse, a method that still exists
-#: and means something else. `harneskills` is a SIBLING CHECKOUT under active
-#: development, not a pinned dependency, so the surface it offers can move between
-#: one run and the next.
+#: `mf.py` did exactly this for the FIRST `ugm` and it paid off four times — a
+#: packaging fix, a rename, a rewrite, and an engine collapse — because the
+#: alternative is an `AttributeError` three frames into a run, or worse, a method
+#: that still exists and means something else. This is a SECOND `ugm`: the graph
+#: substrate `mf.py` guarded is gone; this one is `harneskills`' own engine,
+#: carved back into its own package (harneskills 37d6fca) and reached here as
+#: `../harneskills/engine` on `PYTHONPATH` -- a sibling checkout's sibling
+#: checkout, not a pinned dependency, so the surface it offers can move between
+#: one run and the next just as `harneskills` itself always could.
 #:
 #: ⭐ The whole dependency is these fourteen names. That is the number worth
 #: keeping small: everything `pystrider` needs of its substrate is an entity store
 #: with set-semantics attach and a loop that settles, and if the list ever grows
 #: much past this, the adapter has started leaking.
 #:
-#: ⚠ `harneskills.Engine` is deliberately NOT in this list. As of 47dd9a2 upstream
-#: splits the loop from the CHANNELS attached to it — one thread owning the world,
-#: with terminals and WebSocket clients posting into it. That is the right shape for
-#: a session someone is sitting at, and the wrong one for a derivation: pystrider
-#: settles a world and reads the answer, with no channel to route a `Reply` to and
-#: nothing that may block. So this package keeps calling `Loop.run` directly, and
-#: `Engine` is an available door it has no reason to open.
+#: ⚠ `ugm.Engine` is deliberately NOT in this list. As of harneskills 47dd9a2
+#: upstream splits the loop from the CHANNELS attached to it — one thread owning
+#: the world, with terminals and WebSocket clients posting into it. That is the
+#: right shape for a session someone is sitting at, and the wrong one for a
+#: derivation: pystrider settles a world and reads the answer, with no channel to
+#: route a `Reply` to and nothing that may block. So this package keeps calling
+#: `Loop.run` directly, and `Engine` is an available door it has no reason to open.
 #:
 #: ⚠ A name here that upstream renames is a loud refusal naming the checkout. It is
 #: NOT a version pin and does not check behaviour — `attach` comparing before it
@@ -107,15 +110,15 @@ def _check_substrate() -> None:
     substrate broken when it is fine. That is not a detail — a guard that
     false-alarms gets deleted, and then the real drift goes unnoticed.
     """
-    import harneskills.loop as _loop
-    import harneskills.world as _world
+    import ugm.loop as _loop
+    import ugm.world as _world
 
     try:
         instances = {"World": _world.World(), "Loop": _loop.Loop(),
                      "Component": _world.Component(), "Entity": _world.Entity(None, 0)}
     except Exception as error:            # noqa: BLE001 — any failure means drift
         raise ImportError(
-            f"`harneskills` at {os.path.dirname(_world.__file__)} could not be "
+            f"`ugm` at {os.path.dirname(_world.__file__)} could not be "
             f"constructed as this package expects: {error!r}"
         ) from error
 
@@ -125,11 +128,11 @@ def _check_substrate() -> None:
                if not hasattr(instances[name], member)]
     if missing:
         raise ImportError(
-            f"`harneskills` at {os.path.dirname(_world.__file__)} is missing "
+            f"`ugm` at {os.path.dirname(_world.__file__)} is missing "
             f"{', '.join(missing)} — that is not the substrate this package is "
-            f"written against. It is a sibling checkout rather than a pinned "
-            f"dependency, so it moves; see `_NEEDS` in this module for the whole "
-            f"surface pystrider uses."
+            f"written against. It is a sibling checkout's sibling checkout rather "
+            f"than a pinned dependency, so it moves; see `_NEEDS` in this module "
+            f"for the whole surface pystrider uses."
         )
 
 
@@ -137,7 +140,7 @@ _check_substrate()
 
 #: Where the substrate resolved to, so a probe can PRINT what it measured rather
 #: than assert it and hope.
-import harneskills.world as _world_module  # noqa: E402
+import ugm.world as _world_module  # noqa: E402
 SUBSTRATE = os.path.dirname(_world_module.__file__)
 
 #: Attribute payloads are stored as their `repr`, which round-trips exactly for
