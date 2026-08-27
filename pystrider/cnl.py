@@ -282,7 +282,7 @@ def install(blocks: Sequence[Block]):
                 f.fact(triple.predicate, f.word(triple.subject), f.word(triple.object))
         for block in blocks:
             for rule in block.rules:
-                loop.system(_system_for(rule, f), name=rule.name)
+                f.system(_system_for(rule, f), name=rule.name)
 
     return installer
 

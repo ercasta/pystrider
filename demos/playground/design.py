@@ -239,6 +239,6 @@ def install(loop, f: Facts) -> None:
     matter of how many ticks it takes — the loop runs to quiescence either way —
     but reading the trace is much easier when it flows the way the argument does.
     """
-    loop.system(resolve_screen(f), name="design.resolve_screen")
-    loop.system(check_interference(f), name="design.check_interference")
-    loop.system(check_coverage(f), name="design.check_coverage")
+    f.system(resolve_screen(f), name="design.resolve_screen")
+    f.system(check_interference(f), name="design.check_interference")
+    f.system(check_coverage(f), name="design.check_coverage")

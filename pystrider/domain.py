@@ -59,6 +59,7 @@ from __future__ import annotations
 import os
 import traceback
 
+from ugm.delta import destroy, spawn
 from ugm.world import Component, Reply, Said
 
 #: What the prompt should pull a typo towards. `world.learn` is autocorrect only —
@@ -97,8 +98,8 @@ class ReadWanted(Component):
         self.path = path
 
 
-def _say(w, text: str) -> None:
-    w.spawn(Reply("user", text))
+def _say(text: str):
+    return spawn(Reply("user", text))
 
 
 # -- what a typed line means ----------------------------------------------------
@@ -111,20 +112,25 @@ def hear(w):
     `harneskills.examples.fs` without either domain having to know the other's
     vocabulary.
     """
+    deltas = []
     for entity, said in w.each(Said):
-        if _understand(w, said.text):
-            w.destroy(entity)
+        understood = _understand(said.text)
+        if understood is not None:
+            deltas.extend(understood)
+            deltas.append(destroy(entity))
+    return deltas
 
 
-def _understand(w, text: str) -> bool:
+def _understand(text: str):
+    """The deltas this line asks for, if this domain has a reading of it
+    -- `None` if it does not."""
     words = text.strip().split()
     if not words:
-        return False
+        return None
     verb, rest = words[0].lower(), words[1:]
 
     if verb == "blocks":
-        w.spawn(BlocksWanted())
-        return True
+        return [spawn(BlocksWanted())]
 
     if verb == "brew":
         wanted = BrewWanted()
@@ -141,56 +147,57 @@ def _understand(w, text: str) -> bool:
                 try:
                     wanted.spend = float(rest[i + 1])
                 except ValueError:
-                    _say(w, "spend wants a number, e.g. `brew spend 50`")
-                    return True
+                    return [_say("spend wants a number, e.g. `brew spend 50`")]
                 i += 1
             else:
-                _say(w, f"`brew` does not know {rest[i]!r} — try: irreversible, "
-                        f"basic, premium, drive, spend <n>")
-                return True
+                return [_say(f"`brew` does not know {rest[i]!r} — try: irreversible, "
+                             f"basic, premium, drive, spend <n>")]
             i += 1
-        w.spawn(wanted)
-        return True
+        return [spawn(wanted)]
 
     if verb == "why" and len(rest) == 3:
-        w.spawn(WhyWanted(*rest))
-        return True
+        return [spawn(WhyWanted(*rest))]
 
     if verb == "read" and len(rest) == 1:
-        w.spawn(ReadWanted(rest[0]))
-        return True
+        return [spawn(ReadWanted(rest[0]))]
 
-    return False
+    return None
 
 
 # -- the handlers ---------------------------------------------------------------
 
 def _blocks(w):
-    for entity, _ in w.each(BlocksWanted):
-        w.destroy(entity)
+    deltas = []
+    for entity, _tag in w.each(BlocksWanted):
+        deltas.append(destroy(entity))
         try:
             from demos.playground.brew import BLOCKS, _HERE
             from pystrider import cnl
             loaded = cnl.load_all(_HERE, BLOCKS)
         except Exception as error:                     # noqa: BLE001
-            _say(w, f"could not load the blocks: {error!r}")
+            deltas.append(_say(f"could not load the blocks: {error!r}"))
             continue
-        _say(w, f"{len(loaded)} authored blocks, joined only by bridge.cnl:")
+        deltas.append(_say(f"{len(loaded)} authored blocks, joined only by bridge.cnl:"))
         for block in loaded:
-            _say(w, f"  {block.name}.cnl  {len(block.facts)} facts, "
-                    f"{len(block.rules)} rules")
-        _say(w, f"  = {sum(len(b.rules) for b in loaded)} rules, each compiled to "
-                f"one system")
+            deltas.append(_say(f"  {block.name}.cnl  {len(block.facts)} facts, "
+                               f"{len(block.rules)} rules"))
+        deltas.append(_say(f"  = {sum(len(b.rules) for b in loaded)} rules, each "
+                           f"compiled to one system"))
+    return deltas
 
 
 def _brew(w):
+    deltas = []
     for entity, wanted in w.each(BrewWanted):
-        w.destroy(entity)
+        deltas.append(destroy(entity))
         if wanted.drive:
-            # ⚠ Said BEFORE the block, not after: the reply is drained on the tick
-            # it is spawned, so a person watching sees why the prompt paused.
-            _say(w, "driving the emitted app under Textual's Pilot (~1s, and the "
-                    "world is stopped for every channel while it runs)...")
+            # ⚠ Said BEFORE the block, not after: the reply reaches every
+            # channel once this turn's deltas are applied, so a person
+            # watching sees why the prompt paused before `verify` blocks
+            # for it.
+            deltas.append(_say("driving the emitted app under Textual's Pilot (~1s, "
+                               "and the world is stopped for every channel while "
+                               "it runs)..."))
         try:
             from demos.playground import design
             from demos.playground.brew import Cart, emit, reason, verify
@@ -201,73 +208,81 @@ def _brew(w):
             screen = design.chosen_screen(r.facts) or "one_screen"
             admitted = bool(table) and all(d["admitted"] for d in table)
         except Exception as error:                     # noqa: BLE001
-            _say(w, f"brew failed: {error!r}")
-            _say(w, traceback.format_exc().strip().splitlines()[-1])
+            deltas.append(_say(f"brew failed: {error!r}"))
+            deltas.append(_say(traceback.format_exc().strip().splitlines()[-1]))
             continue
 
-        _say(w, f"CART tier={cart.customer_tier} spend={cart.order_spend} "
-                f"irreversible={cart.irreversible}")
-        _say(w, f"  reason  : discount={r.granted} (rate {r.rate}%), settled in "
-                f"{r.ticks} ticks")
-        _say(w, f"  features: {', '.join(r.features) or '(none admitted)'}")
+        deltas.append(_say(f"CART tier={cart.customer_tier} spend={cart.order_spend} "
+                           f"irreversible={cart.irreversible}"))
+        deltas.append(_say(f"  reason  : discount={r.granted} (rate {r.rate}%), "
+                           f"settled in {r.ticks} ticks"))
+        deltas.append(_say(f"  features: {', '.join(r.features) or '(none admitted)'}"))
         for d in table:
             mark = "ok" if d["admitted"] else "REJECTED"
-            _say(w, f"  {d['point']:8} {d['combinator']:11} {mark:8} {d['value']}"
-                    + (f"  [{d['detail']}]" if d["detail"] else ""))
-        _say(w, f"  screen  : {screen}")
+            deltas.append(_say(f"  {d['point']:8} {d['combinator']:11} {mark:8} "
+                               f"{d['value']}"
+                               + (f"  [{d['detail']}]" if d["detail"] else "")))
+        deltas.append(_say(f"  screen  : {screen}"))
 
         if not admitted:
-            _say(w, "  emit    : nothing — a decision point refused, so no app is "
-                    "claimed.")
+            deltas.append(_say("  emit    : nothing — a decision point refused, so "
+                               "no app is claimed."))
             continue
         source = emit(cart, r, screen)
-        _say(w, f"  emit    : {len(source.splitlines())} lines of Textual"
-                + (", with the confirm gate" if screen == "confirm_screen" else "")
-                + (", with the discount highlight"
-                   if "def _show_discount" in source else ""))
+        deltas.append(_say(f"  emit    : {len(source.splitlines())} lines of Textual"
+                           + (", with the confirm gate"
+                              if screen == "confirm_screen" else "")
+                           + (", with the discount highlight"
+                              if "def _show_discount" in source else "")))
         if not wanted.drive:
-            _say(w, "  (`brew drive` to RUN it and read what actually happened)")
+            deltas.append(_say("  (`brew drive` to RUN it and read what actually "
+                               "happened)"))
             continue
         try:
             v = verify(source, cart, r)
         except Exception as error:                     # noqa: BLE001
-            _say(w, f"  drive   : failed — {error!r}")
+            deltas.append(_say(f"  drive   : failed — {error!r}"))
             continue
-        _say(w, f"  drive   : {v.events}")
-        _say(w, f"  safety(ok)={v.ok} liveness(live)={v.live} shown={v.shown}"
-                f"   => {'WORKS' if v.works else 'FAILS'}")
+        deltas.append(_say(f"  drive   : {v.events}"))
+        deltas.append(_say(f"  safety(ok)={v.ok} liveness(live)={v.live} "
+                           f"shown={v.shown}   => {'WORKS' if v.works else 'FAILS'}"))
+    return deltas
 
 
 def _why(w):
+    deltas = []
     for entity, wanted in w.each(WhyWanted):
-        w.destroy(entity)
+        deltas.append(destroy(entity))
         try:
             from demos.playground.brew import Cart, reason
             r = reason(Cart(irreversible=True))
             lines = r.why(wanted.subject, wanted.predicate, wanted.object)
         except Exception as error:                     # noqa: BLE001
-            _say(w, f"why failed: {error!r}")
+            deltas.append(_say(f"why failed: {error!r}"))
             continue
         if not lines:
-            _say(w, f"nothing derives `{wanted.subject} {wanted.predicate} "
-                    f"{wanted.object}` — it is a stated fact, or it does not hold")
+            deltas.append(_say(f"nothing derives `{wanted.subject} {wanted.predicate} "
+                               f"{wanted.object}` — it is a stated fact, or it does "
+                               f"not hold"))
             continue
         # ⚠ Says RE-DERIVED, not *because*: forward chaining keeps conclusions, not
         # the routes to them. `cnl.explain` names every rule that WOULD derive this,
         # which is a different claim from which one did. See its docstring.
-        _say(w, "re-derived (which rules would conclude this, and from what):")
+        deltas.append(_say("re-derived (which rules would conclude this, and from what):"))
         for line in lines:
-            _say(w, f"  {line}")
+            deltas.append(_say(f"  {line}"))
+    return deltas
 
 
 def _read(w):
+    deltas = []
     for entity, wanted in w.each(ReadWanted):
-        w.destroy(entity)
+        deltas.append(destroy(entity))
         path = os.path.expanduser(wanted.path)
         try:
             source = open(path, encoding="utf-8").read()
         except OSError as error:
-            _say(w, f"cannot read {wanted.path}: {error.strerror}")
+            deltas.append(_say(f"cannot read {wanted.path}: {error.strerror}"))
             continue
         try:
             from pystrider import patterns
@@ -278,26 +293,29 @@ def _read(w):
             taken = intake(source, f, path)
             f.run()
         except Exception as error:                     # noqa: BLE001
-            _say(w, f"could not read {wanted.path}: {error!r}")
+            deltas.append(_say(f"could not read {wanted.path}: {error!r}"))
             continue
         loops = [n for n in f.subjects("for_stmt")]
         described = [n for n in loops if f.has("iteration", n)]
-        _say(w, f"{os.path.basename(path)}: {len(f.subjects('function'))} functions, "
-                f"{len(loops)} loops, {len(described)} recognized as iterations")
+        deltas.append(_say(f"{os.path.basename(path)}: {len(f.subjects('function'))} "
+                           f"functions, {len(loops)} loops, {len(described)} "
+                           f"recognized as iterations"))
         if taken.unmodelled:
             counts: dict = {}
             for name in taken.unmodelled:
                 counts[name] = counts.get(name, 0) + 1
             named = ", ".join(f"{k}x{v}" if v > 1 else k
                               for k, v in sorted(counts.items()))
-            _say(w, f"  unmodelled ({len(taken.unmodelled)}): {named}")
+            deltas.append(_say(f"  unmodelled ({len(taken.unmodelled)}): {named}"))
         else:
-            _say(w, "  nothing unread")
+            deltas.append(_say("  nothing unread"))
         try:
-            _say(w, "  round-trips byte-exact against the source: "
-                    f"{emit(f, taken.module) == source}")
+            deltas.append(_say("  round-trips byte-exact against the source: "
+                               f"{emit(f, taken.module) == source}"))
         except Unrenderable as refusal:
-            _say(w, f"  refuses to write it back: {str(refusal).split(' — ')[-1]}")
+            deltas.append(_say(f"  refuses to write it back: "
+                               f"{str(refusal).split(' — ')[-1]}"))
+    return deltas
 
 
 #: ⚠ `hear` first, then one handler per goal — the order IS the schedule, and a

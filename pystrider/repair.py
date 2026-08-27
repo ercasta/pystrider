@@ -282,13 +282,13 @@ def install(loop, f: Facts, gated: bool = True, families=None) -> None:
     reads the structure and a later one acts on it. The loop reaches the same
     fixpoint either way; the trace is only legible in this order.
     """
-    loop.system(guard(f), name="repair.guard")
-    loop.system(inverses(f), name="repair.inverses")
-    loop.system(ask(f), name="repair.ask")
-    loop.system(answer(f), name="repair.answer")
-    loop.system(checked(f), name="repair.checked")
+    f.system(guard(f), name="repair.guard")
+    f.system(inverses(f), name="repair.inverses")
+    f.system(ask(f), name="repair.ask")
+    f.system(answer(f), name="repair.answer")
+    f.system(checked(f), name="repair.checked")
     if gated:
-        loop.system(diagnose(f), name="repair.diagnose")
+        f.system(diagnose(f), name="repair.diagnose")
     for name, make in FAMILIES.items():
         if families is None or name in families:
-            loop.system(make(f, gated), name=f"repair.{name}")
+            f.system(make(f, gated), name=f"repair.{name}")

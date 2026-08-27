@@ -142,4 +142,4 @@ def install(loop, f: Facts, only=None) -> None:
     """Register the descriptions. `only` names a subset, for a control."""
     for name, make in DESCRIPTIONS.items():
         if only is None or name in only:
-            loop.system(make(f), name=f"patterns.{name}")
+            f.system(make(f), name=f"patterns.{name}")

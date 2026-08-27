@@ -84,7 +84,7 @@ def scenario(cart: Cart):
         f.fact("has_checkout", subject, f.word("yes"))
         if cart.irreversible:
             f.fact("action_irreversible", subject, f.word("yes"))
-        loop.system(ground_qualification(f), name="brew.ground_qualification")
+        f.system(ground_qualification(f), name="brew.ground_qualification")
 
     return installer
 

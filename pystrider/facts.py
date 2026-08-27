@@ -55,13 +55,34 @@ What had to be re-derived is the MAPPING, once, here:
 match and one of two repair families was dead while the suite stayed green. That
 distinction is about what a symbol MEANS, not about how it is stored, so it
 survives the substrate change untouched.
+
+**⚠⚠ ENGINE 5, ONE CONTRACT LATER (harneskills 11c459a).** A system stopped
+touching its world at all — it returns deltas, `Loop.tick` applies them. `patterns.py`,
+`repair.py`, `cnl.py` and every block-driven system did not change one line of
+their own LOGIC: every write already went through `fact`/`state`/`deny`, never
+`world.attach` directly, so the whole adaptation lives here, in this one class.
+`fact`/`state`/`deny` accumulate instead of writing; `system()` wraps a registered
+function to collect what accumulated and hand it back; `_held` lets a `deny` then
+a `fact` on the same (name, subject) — `relax`/`lower` do exactly that, denying an
+operator and asserting its replacement in one turn — see the accumulated write
+rather than the world as of the turn's start. The one genuinely new piece is
+`_mint`: `word`/`value`/`node`/`reify` describe a fresh entity rather than making
+one when called from inside a system (`relax` minting the operator "ge" the first
+time a `>` gets repaired to `>=`, say), and since that description only resolves
+within ITS OWN turn, a LATER turn needing the same text has to find what an
+EARLIER one already made real — `_find`, a scan, and the one place this floor
+pays a cost the old direct-write version did not. `test_repair.py`'s and
+`test_spine.py`'s full suites pass unchanged; nothing about what any system
+concludes moved.
 """
 from __future__ import annotations
 
 import ast
+import functools
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from ugm.delta import Pending, attach, detach, spawn
 from ugm.loop import Loop
 from ugm.world import Component, Entity, World
 
@@ -101,6 +122,14 @@ _NEEDS = {
     "Entity": ("id",),
 }
 
+#: ⚠ `ugm.delta` joined this list the day `Facts` stopped touching its own
+#: `World` from inside a system's turn -- `fact`/`state`/`deny`/`node`/`word`/
+#: `value`/`reify` describe a change now, they no longer make one, and
+#: `Pending` is what lets one of them use the entity another just described
+#: in the SAME turn. A module, not an instance, so it is checked by name
+#: rather than constructed.
+_NEEDS_DELTA = ("Pending", "spawn", "attach", "detach", "destroy")
+
 
 def _check_substrate() -> None:
     """⚠ Checked on an INSTANCE, not on the class.
@@ -110,6 +139,7 @@ def _check_substrate() -> None:
     substrate broken when it is fine. That is not a detail — a guard that
     false-alarms gets deleted, and then the real drift goes unnoticed.
     """
+    import ugm.delta as _delta
     import ugm.loop as _loop
     import ugm.world as _world
 
@@ -126,6 +156,8 @@ def _check_substrate() -> None:
                for name, members in _NEEDS.items()
                for member in members
                if not hasattr(instances[name], member)]
+    missing += [f"delta.{member}" for member in _NEEDS_DELTA
+               if not hasattr(_delta, member)]
     if missing:
         raise ImportError(
             f"`ugm` at {os.path.dirname(_world.__file__)} is missing "
@@ -213,9 +245,18 @@ class Facts:
         self.loop = Loop(self.world, budget=budget)
         #: Interning tables. ⚠ Per-world, because an entity belongs to a world:
         #: `Entity.__eq__` checks `other.world is self.world`, so a word shared
-        #: between two worlds would compare unequal to itself.
+        #: between two worlds would compare unequal to itself. Only ever hold a
+        #: REAL `Entity`, never a `Pending` -- see `_mint`.
         self._words: Dict[str, Entity] = {}
         self._values: Dict[str, Entity] = {}
+        #: THIS TURN's own not-yet-applied writes, or `None` between turns --
+        #: see `system()`. `_pending` is the flat list `ugm.loop.Loop.tick`
+        #: applies; `_overlay` and `_minting` are what let `fact`/`deny`/`word`
+        #: read back what THIS SAME turn already described, before any of it
+        #: is real.
+        self._pending: Optional[list] = None
+        self._overlay: Optional[Dict[Tuple[Entity, type], Optional[Component]]] = None
+        self._minting: Optional[Dict[str, Entity]] = None
         for domain in domains:
             self.install(domain)
 
@@ -231,14 +272,117 @@ class Facts:
         return domain(self.loop, self)
 
     def system(self, fn=None, *, name=None):
-        """Register one system. `Loop.system`'s signature, forwarded."""
-        return self.loop.system(fn, name=name)
+        """Register one system -- wrapped so `fact`/`state`/`deny`/`node`/
+        `word`/`value`/`reify`, called from inside it, describe a change
+        instead of making one.
+
+        ⚠⚠ **This is the whole of what changed for `patterns.py`, `repair.py`
+        and `cnl.py` — nothing in them did.** `harneskills` 11c459a made a
+        system return deltas rather than touch the world; every system this
+        package registers already went through `f.fact(...)`, never
+        `world.attach(...)` directly, so ONE place absorbs the new contract:
+        `f.fact`/`state`/`deny` accumulate instead of writing, this wrapper
+        collects what accumulated and hands it back, and `Loop.tick` applies
+        it exactly as it always applied whatever a system returned.
+
+        `functools.wraps` is load-bearing, not tidiness: `ugm.loop`'s own
+        `_name_of` reads `fn.__module__`/`fn.__name__` to name a system
+        `patterns.iteration` rather than `facts.wrapped`, and the SYSTEMS
+        registry `/systems` prints is only legible if it does.
+        """
+        if fn is None:
+            return lambda f: self.system(f, name=name)
+
+        @functools.wraps(fn)
+        def wrapped(world):
+            self._pending, self._overlay, self._minting = [], {}, {}
+            try:
+                fn(world)
+            finally:
+                pending = self._pending
+                self._pending = self._overlay = self._minting = None
+            return pending
+
+        return self.loop.system(wrapped, name=name)
+
+    # -- reading back THIS TURN's own not-yet-applied writes ---------------
+
+    def _held(self, subject: Entity, cls: type) -> Optional[Component]:
+        """The component of this type on this subject, as of RIGHT NOW —
+        this turn's own writes first (even a `None` recorded there, a
+        `deny` down to nothing), the world under them otherwise.
+
+        `subject` may be a `Pending` from a `spawn`/`node`/`word`/`value`
+        earlier in THIS SAME turn — nothing on the real world yet, so
+        there is nothing to fall back to but what the overlay itself
+        already knows about it.
+        """
+        if self._overlay is not None:
+            key = (subject, cls)
+            if key in self._overlay:
+                return self._overlay[key]
+        if isinstance(subject, Pending):
+            return None
+        return self.world.get(subject, cls)
 
     # -- naming -----------------------------------------------------------
 
+    def _find(self, text: str) -> Optional[Entity]:
+        """A REAL `Printed(text)` already in the world, if one exists.
+
+        The fallback for exactly what `_words`/`_values`/`_minting` do not
+        cover: a word or value first minted mid-turn is a `Pending`, never
+        cached in the global tables (see `_mint`), so a LATER turn -- even
+        the very next tick, the same system reasoning about the same
+        thing again -- has nothing to look up and would otherwise mint a
+        SECOND entity for the same text every single time it asks. That
+        is not a slow path, it is a world that never settles: `answer`
+        deriving `could_not_evaluate(f, c, value(refused))` fresh every
+        tick, each with a DIFFERENT entity for the identical refusal
+        string, so the row never repeats and the system never stops
+        firing -- `test_an_unmodelled_operator_is_refused_BY_NAME` is
+        what this looked like before `_find` existed.
+        """
+        for entity, printed in self.world.each(Printed):
+            if printed.text == text:
+                return entity
+        return None
+
+    def _mint(self, text: str):
+        """A fresh `Printed(text)` -- an `Entity` outside a system's turn
+        (nothing to describe instead of), a `Pending` inside one, the same
+        way `spawn()` itself hands one back. `_find` first, mid-turn: an
+        EARLIER turn's own mint may already be real by now (`Loop.tick`
+        applies a system's deltas the moment it returns, before the next
+        one runs), just not yet reflected in `_words`/`_values`.
+
+        ⚠⚠ **`word`/`value` cache only a REAL entity, never a `Pending`.**
+        `_words`/`_values` are read by ANY system, on ANY later tick — a
+        `Pending` only resolves within the list its own `Spawn` came back
+        in, so caching one globally would hand a LATER turn a token that
+        blows up the moment it is used (`ugm.delta` refuses it by name).
+        `_minting` is the one place a `Pending` IS cached, and only for the
+        rest of THIS turn: `word("ge")` called twice while proposing one
+        repair must return the SAME token both times, or the second call
+        mints a second, different "ge".
+        """
+        if self._pending is not None:
+            cached = self._minting.get(text)
+            if cached is not None:
+                return cached
+            found = self._find(text)
+            if found is not None:
+                return found
+            made = spawn(Printed(text))
+            self._pending.append(made)
+            self._minting[text] = made.entity
+            self._overlay[(made.entity, Printed)] = Printed(text)
+            return made.entity
+        return self.world.spawn(Printed(text))
+
     def node(self, printed: str) -> Entity:
         """A fresh individual. The name is for printing; identity is the entity."""
-        return self.world.spawn(Printed(printed))
+        return self._mint(printed)
 
     def word(self, text: str) -> Entity:
         """A VOCABULARY word — an operator, an identifier, a CNL atom.
@@ -255,9 +399,12 @@ class Facts:
         a word from our vocabulary, and words are what rules are made of.
         """
         got = self._words.get(text)
-        if got is None:
-            got = self._words[text] = self.world.spawn(Printed(text))
-        return got
+        if got is not None:
+            return got
+        made = self._mint(text)
+        if not isinstance(made, Pending):
+            self._words[text] = made
+        return made
 
     #: CNL's name for the same thing. A block's `premium` is a word.
     atom = word
@@ -286,12 +433,15 @@ class Facts:
         """
         text = _ELLIPSIS if payload is Ellipsis else repr(payload)
         got = self._values.get(text)
-        if got is None:
-            got = self._values[text] = self.world.spawn(Printed(text))
-        return got
+        if got is not None:
+            return got
+        made = self._mint(text)
+        if not isinstance(made, Pending):
+            self._values[text] = made
+        return made
 
     def show(self, n: Entity) -> str:
-        got = self.world.get(n, Printed)
+        got = self._held(n, Printed)
         return repr(n) if got is None else got.text
 
     #: The word back out of the entity. The inverse of `word`.
@@ -304,6 +454,28 @@ class Facts:
 
     # -- writing ----------------------------------------------------------
 
+    def _write(self, subject: Entity, component: Component) -> None:
+        """Put this component on that subject -- described as a delta if
+        this is inside a system's turn (staged in the overlay too, so
+        THIS SAME turn reads it back), attached directly otherwise. The
+        one place `fact`/`state` actually write.
+        """
+        cls = type(component)
+        if self._pending is not None:
+            self._pending.append(attach(subject, component))
+            self._overlay[(subject, cls)] = component
+        else:
+            self.world.attach(subject, component)
+
+    def _erase(self, subject: Entity, cls: type) -> None:
+        """Take this component type off that subject entirely -- staged or
+        direct, the same way `_write` is."""
+        if self._pending is not None:
+            self._pending.append(detach(subject, cls))
+            self._overlay[(subject, cls)] = None
+        else:
+            self.world.detach(subject, cls)
+
     def fact(self, name: str, subject: Entity, *objects: Entity) -> Entity:
         """Deposit `name(subject, objects...)`, and return the SUBJECT.
 
@@ -315,12 +487,12 @@ class Facts:
         """
         cls = relation(name)
         row = tuple(objects)
-        held = self.world.get(subject, cls)
+        held = self._held(subject, cls)
         rows = () if held is None else held.rows
         if row not in rows:
             # ⭐ A new component rather than a mutated one — `attach` compares by
             # value, and a component mutated in place is a change nothing can see.
-            self.world.attach(subject, cls(rows + (row,)))
+            self._write(subject, cls(rows + (row,)))
         return subject
 
     def state(self, name: str, subject: Entity, *objects: Entity) -> Entity:
@@ -335,7 +507,7 @@ class Facts:
         ⚠ Still idempotent: `attach` compares before it stores, so restating the
         same answer does not move `revision` and the world still settles.
         """
-        self.world.attach(subject, relation(name)((tuple(objects),)))
+        self._write(subject, relation(name)((tuple(objects),)))
         return subject
 
     def deny(self, name: str, subject: Entity, *objects: Entity) -> bool:
@@ -348,16 +520,20 @@ class Facts:
         removal is removal, so a reader cannot see a withdrawn claim at all. The
         deny-then-assert SHAPE stays because it is what a repair means; the hazard
         it guarded against is gone.
+
+        ⚠ Reads `_held`, not `self.world.get` — `relax`/`lower` `deny` an
+        operator and `fact` its replacement in the SAME turn, and the second
+        call has to see the first's own effect or both rows would stand.
         """
         cls = relation(name)
-        held = self.world.get(subject, cls)
+        held = self._held(subject, cls)
         if held is None or tuple(objects) not in held.rows:
             return False
         rows = tuple(r for r in held.rows if r != tuple(objects))
         if rows:
-            self.world.attach(subject, cls(rows))
+            self._write(subject, cls(rows))
         else:
-            self.world.detach(subject, cls)
+            self._erase(subject, cls)
         return True
 
     def reify(self, name: str, *members: Entity) -> Entity:
@@ -369,20 +545,27 @@ class Facts:
         """
         key = "%s(%s)" % (name, ", ".join(self.show(m) for m in members))
         got = self._values.get(key)
-        if got is None:
-            got = self._values[key] = self.world.spawn(Printed(key))
-            self.fact("proposition", got)
-            self.fact("about", got, self.word(name), *members)
-        return got
+        if got is not None:
+            return got
+        made = self._mint(key)
+        if not isinstance(made, Pending):
+            self._values[key] = made
+        self.fact("proposition", made)
+        self.fact("about", made, self.word(name), *members)
+        return made
 
     # -- reading ----------------------------------------------------------
 
     def of(self, name: str, subject: Entity) -> List[Tuple[Entity, ...]]:
         """Every `name(subject, ...)` that holds, in deposit order.
 
-        Insertion-ordered, because a body is an ordered thing.
+        Insertion-ordered, because a body is an ordered thing. Reads
+        `_held`, not `self.world.get` — a system that `fact`s or `deny`s
+        and then reads the SAME (name, subject) again before its own turn
+        ends must see what it just described, not the world as of the
+        turn's start.
         """
-        held = self.world.get(subject, relation(name))
+        held = self._held(subject, relation(name))
         return [] if held is None else list(held.rows)
 
     def one(self, name: str, subject: Entity) -> Optional[Entity]:
@@ -413,17 +596,27 @@ class Facts:
         return got[0][0]
 
     def subjects(self, name: str) -> List[Entity]:
-        """Every entity this relation is asserted of, in spawn order."""
+        """Every entity this relation is asserted of, in spawn order.
+
+        ⚠ Reads `self.world` straight, NOT `_held` — this asks across every
+        entity there is, and the overlay only ever knows about the ones a
+        single subject-keyed write already named. A system that `fact`s a
+        NEW subject onto `name` and then calls `subjects(name)` in the SAME
+        turn will not see that subject until the next one; nothing
+        currently does both in one turn, and `test_the_world_SETTLES`
+        (`facts.py`'s own guard, not a mention here) is what would catch it
+        if that ever changes.
+        """
         return [e for e, _ in self.world.each(relation(name))]
 
     def has(self, name: str, subject: Entity) -> bool:
         """Whether `name(subject)` — a kind, or any claim at all — holds now."""
-        held = self.world.get(subject, relation(name))
+        held = self._held(subject, relation(name))
         return held is not None and bool(held.rows)
 
     def holds(self, name: str, subject: Entity, *objects: Entity) -> bool:
         """Whether this exact proposition holds right now."""
-        held = self.world.get(subject, relation(name))
+        held = self._held(subject, relation(name))
         return held is not None and tuple(objects) in held.rows
 
     def text(self, name: str, subject: Entity) -> Optional[str]:
