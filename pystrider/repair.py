@@ -44,9 +44,28 @@ is what makes it stick on a floor where every rule is offered again.
 returns is derived from STRUCTURE by `evaluator.evaluate`; running the emitted
 source is a separate, independent gate. A repair you evaluate by running it is
 checked against the same model that proposed it.
+
+## ⚠⚠ THE TIE-BREAK IS NOW A NAMED FACT, NOT REGISTRATION ORDER
+
+`relax`/`lower` used to mutate on sight, the first one registered winning any
+function where both structurally applied — see `docs/decision_patterns.md` for
+the argument against that. Each family now only PROPOSES: `candidate(function,
+family)` plus its own, self-contained `ranked(function, family, priority)` — it
+never checks whether the other family also applies, the same way a
+`design.cnl` production never checks its rivals. `arbitration.commit` (see
+`pystrider/arbitration.py`) is the one place that reads the whole candidate set
+and decides; a family mutates only once it reads back `winner(function,
+family)` as itself. `test_exactly_ONE_repair_family_fires` still pins the
+outcome; which family wins now shows up as an ordinary, `why`-readable fact
+instead of dict iteration order.
+
+⚠ This still keys the occasion on `function` alone, not on `(function, case)` —
+every fixture here wants exactly one case per function, so the simplification
+is real but untested past that shape.
 """
 from __future__ import annotations
 
+from .arbitration import commit
 from .evaluator import evaluate
 from .facts import Facts, relation
 
@@ -234,25 +253,33 @@ def _occasions(f: Facts, world, gated: bool):
 
 
 def relax(f: Facts, gated: bool = True):
-    """`>` was meant to be `>=`. Deny the operator, assert its neighbour."""
+    """`>` was meant to be `>=`. Propose it; apply it once arbitration says it won.
+
+    ⭐ `ranked` here is `relax`'s own, unconditional statement of priority over
+    `lower` when both structurally apply to the same bug — not a check against
+    `lower`'s existence, just a number this family always states about itself.
+    `arbitration.commit` is what turns two such numbers into one winner.
+    """
 
     def system(world) -> None:
         for function, case, wanted in list(_occasions(f, world, gated)):
             for (comparison,) in [r for r in f.of("guard", function) if len(r) == 1]:
                 if not f.holds("operator", comparison, f.word("gt")):
                     continue
-                f.deny("unmet", function, case, wanted)
-                f.deny("operator", comparison, f.word("gt"))
-                f.fact("operator", comparison, f.word("ge"))
-                f.fact("relaxed", comparison)
-                f.fact("repaired", function, case)
-                return
+                f.fact("candidate", function, f.word("relax"))
+                f.fact("ranked", function, f.word("relax"), f.value(2))
+                if f.holds("winner", function, f.word("relax")):
+                    f.deny("unmet", function, case, wanted)
+                    f.deny("operator", comparison, f.word("gt"))
+                    f.fact("operator", comparison, f.word("ge"))
+                    f.fact("relaxed", comparison)
+                    f.fact("repaired", function, case)
 
     return system
 
 
 def lower(f: Facts, gated: bool = True):
-    """The threshold was one too high. Deny the literal, assert its neighbour."""
+    """The threshold was one too high. Propose it; apply it once arbitration says it won."""
 
     def system(world) -> None:
         for function, case, wanted in list(_occasions(f, world, gated)):
@@ -260,18 +287,20 @@ def lower(f: Facts, gated: bool = True):
                 right = f.one("right", comparison)
                 if right is None or not f.holds("literal", right, f.value(18)):
                     continue
-                f.deny("unmet", function, case, wanted)
-                f.deny("literal", right, f.value(18))
-                f.fact("literal", right, f.value(17))
-                f.fact("lowered", right)
-                f.fact("repaired", function, case)
-                return
+                f.fact("candidate", function, f.word("lower"))
+                f.fact("ranked", function, f.word("lower"), f.value(1))
+                if f.holds("winner", function, f.word("lower")):
+                    f.deny("unmet", function, case, wanted)
+                    f.deny("literal", right, f.value(18))
+                    f.fact("literal", right, f.value(17))
+                    f.fact("lowered", right)
+                    f.fact("repaired", function, case)
 
     return system
 
 
-#: ⚠ The order is the tie-break, and it is REGISTRATION ORDER — visible, and the
-#: only thing deciding which family wins. Engine 2's was buried in a planner.
+#: ⚠ No longer the tie-break — see the module note. `ranked` fixed inside each
+#: family is what decides now; this dict is just which ones exist to install.
 FAMILIES = {"relax": relax, "lower": lower}
 
 
@@ -281,6 +310,10 @@ def install(loop, f: Facts, gated: bool = True, families=None) -> None:
     ⚠ Navigation and evaluation are registered BEFORE the repair, so a first tick
     reads the structure and a later one acts on it. The loop reaches the same
     fixpoint either way; the trace is only legible in this order.
+
+    ⭐ `arbitration.commit` is registered once, after whichever families are
+    installed — one generic reader for however many propose, the same way
+    `resolve_screen` needs no change when `design.cnl` grows a production.
     """
     f.system(guard(f), name="repair.guard")
     f.system(inverses(f), name="repair.inverses")
@@ -289,6 +322,8 @@ def install(loop, f: Facts, gated: bool = True, families=None) -> None:
     f.system(checked(f), name="repair.checked")
     if gated:
         f.system(diagnose(f), name="repair.diagnose")
-    for name, make in FAMILIES.items():
-        if families is None or name in families:
-            f.system(make(f, gated), name=f"repair.{name}")
+    installed = [name for name in FAMILIES if families is None or name in families]
+    for name in installed:
+        f.system(FAMILIES[name](f, gated), name=f"repair.{name}")
+    if installed:
+        f.system(commit(f), name="arbitration.commit")

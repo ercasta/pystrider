@@ -121,6 +121,17 @@ def _module(built):
     return f, taken.module
 
 
+def test_which_family_won_is_a_NAMED_FACT_not_registration_order():
+    """docs/decision_patterns.md's claim, pinned: both rivals are on the
+    record as `candidate`s, and which one fired is a `winner`/`verdict`
+    fact `why` could read, not an artefact of `FAMILIES` dict order."""
+    f, _, function, _ = world()
+    proposed = {f.show(o) for (o,) in f.of("candidate", function)}
+    assert proposed == {"relax", "lower"}
+    assert f.text("winner", function) == "relax"
+    assert f.text("verdict", function) == "forced"
+
+
 # -- ⭐ what makes a repair unproposable ----------------------------------------
 
 
