@@ -32,6 +32,7 @@ exclude_docs: |
   the_case.md
   ast_representation_findings.md
   vocabulary_bridge.md
+  decision_patterns.md
 
 theme:
   name: material
