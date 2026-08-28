@@ -52,7 +52,7 @@ class of bug is gone. `without=` survives below because it is the honest reading
 """
 from __future__ import annotations
 
-from .facts import Facts, relation
+from ugm.facts import Facts, relation
 
 #: The vocabulary these systems read and write, bound once so the queries read like
 #: the `harneskills` examples they are.

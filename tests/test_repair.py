@@ -18,7 +18,7 @@ import pytest
 from pystrider import patterns, repair
 from pystrider.emit import emit
 from pystrider.evaluator import evaluate, register
-from pystrider.facts import Facts
+from ugm.facts import Facts
 from pystrider.intake import intake
 
 BUG = "def classify(age):\n    if age > 18:\n        return 'adult'\n    return 'minor'\n"
@@ -122,7 +122,7 @@ def _module(built):
 
 
 def test_which_family_won_is_a_NAMED_FACT_not_registration_order():
-    """docs/decision_patterns.md's claim, pinned: both rivals are on the
+    """../harneskills/engine/DECISION_PATTERNS.md's claim, pinned: both rivals are on the
     record as `candidate`s, and which one fired is a `winner`/`verdict`
     fact `why` could read, not an artefact of `FAMILIES` dict order."""
     f, _, function, _ = world()

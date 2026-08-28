@@ -36,7 +36,7 @@ from typing import List, Optional
 
 from ugm.world import Entity
 
-from pystrider.facts import Facts, relation
+from ugm.facts import Facts, relation
 
 #: The three decision points, in the order the runner prints them.
 POINTS = ("widgets", "screen", "effect")

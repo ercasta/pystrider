@@ -30,7 +30,7 @@ sys.path.insert(0, r"C:\Users\ercas\creazioni\pystrider")
 
 from pystrider import corpus                      # noqa: E402
 from pystrider.emit import Unrenderable, emit     # noqa: E402
-from pystrider.facts import Facts                 # noqa: E402
+from ugm.facts import Facts                 # noqa: E402
 from pystrider.intake import intake               # noqa: E402
 from pystrider.mf import ENGINE                   # noqa: E402
 

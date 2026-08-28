@@ -49,7 +49,7 @@ if hasattr(sys.stdout, "reconfigure"):
 # has already cost this project a round of copy-to-/tmp-and-patch.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pystrider.facts import Facts                                    # noqa: E402
+from ugm.facts import Facts                                    # noqa: E402
 from pystrider.transliterate import render, transliterate            # noqa: E402
 
 

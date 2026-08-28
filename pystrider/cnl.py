@@ -64,7 +64,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
-from .facts import Facts, relation
+from ugm.facts import Facts, relation
 
 
 @dataclass(frozen=True)

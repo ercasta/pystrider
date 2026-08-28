@@ -30,7 +30,7 @@ than of the idea:
 
 2. **⚠ `save` could not read them back anyway.** It names a component
    `module:qualname` and resolves it with `getattr`, and `facts.relation()` builds
-   its classes with `type()` — so `pystrider.facts:for_stmt` serialises fine and
+   its classes with `type()` — so `ugm.facts:for_stmt` serialises fine and
    raises `AttributeError` on load. It would not crash: `save.load` collects that as
    a *problem* and drops the component. **A world that silently comes back
    thinner is worse than one that refuses**, and this package has paid for exactly
@@ -41,10 +41,14 @@ becomes, and the `Reply` it produces. Those are ordinary module-level classes,
 `getattr`-resolvable and small. The derivation happens in a `Facts` of its own and
 is thrown away with its answer already spoken.
 
-⚠ If pystrider's facts should one day live in the shared world, the fix is upstream
-and specific: `save` needs a registry a domain can put a class factory in, so
-`pystrider.facts:for_stmt` resolves to `relation("for_stmt")`. That is a small
-change and it is not this module's to make.
+⚠ If pystrider's facts should one day live in the shared world, the fix is specific:
+`save` needs a registry a domain can put a class factory in, so `ugm.facts:for_stmt`
+resolves to `relation("for_stmt")`. ⭐ That got NEARER, not further, when the
+vocabulary moved into `ugm`: `save.py` and `relation()` are siblings in one package
+now, so the two halves of this hole are finally on the same side of a repo boundary
+— `relation` could register every class it interns and `save` could look there
+before `getattr`. Still upstream of here, and still not this module's to make, but
+it is no longer a change across two checkouts.
 
 ## ⚠ NOTHING HERE BLOCKS, except when you ask it to
 
@@ -287,7 +291,7 @@ def _read(w):
         try:
             from pystrider import patterns
             from pystrider.emit import Unrenderable, emit
-            from pystrider.facts import Facts
+            from ugm.facts import Facts
             from pystrider.intake import intake
             f = Facts(patterns.install)
             taken = intake(source, f, path)

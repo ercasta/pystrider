@@ -12,7 +12,7 @@ substrate lets a description BE.
                                  reader over the same rules ships
     engine 4  the scratchpad     one graph that IS the state; the backward reader
                                  went into the engine's bin
-    engine 5  `harneskills`      no engine at all — an entity-component world and a
+    engine 5  `ugm` (again)      no engine at all — an entity-component world and a
                                  loop that calls every system until nothing changes
 
 ## ⚠⚠ WHAT ENGINE 5 COSTS, STATED FIRST
@@ -44,13 +44,26 @@ stayed text while these did not.
   systems on the same loop as the block rules.
 * **No path lookup, no name table, no engine to resolve to the wrong copy.** The
   whole of `mf.py` — the single-import-surface bet, the engine assertion, the
-  refusal of a sibling checkout — went away with the thing it guarded.
+  refusal of a sibling checkout — went away with the thing it guarded. ⚠ Its last
+  descendant, `_NEEDS` in `facts.py`, went with the 2026-08-28 move: that guard
+  asserted a set of `ugm` names on import because `facts.py` lived in a DIFFERENT
+  checkout from the world it adapted. It now lives in the same package as `world.py`
+  and `loop.py` and versions with them, so there is nothing left for it to catch.
+  What still guards this package is `tests/conftest.py`, and it guards the thing that
+  can still go wrong — WHICH `ugm` a run imported.
 
 ## What exists
 
+⚠⚠ **`facts.py` AND `arbitration.py` ARE NOT HERE ANY MORE (2026-08-28).** They moved
+into `ugm` itself — `ugm.facts`, `ugm.arbitration` — because neither knew anything about
+Python, and the discipline they carry is one every domain on that world needs or reinvents
+badly. This package imports them like any other user: `from ugm.facts import Facts,
+relation`. ⭐ What moved with them is the tie-break argument in
+`../harneskills/engine/DECISION_PATTERNS.md`; what stayed is everything below, all of which
+is about Python specifically.
+
 | module | role |
 |---|---|
-| `facts.py` | the substrate adapter — a relation is a component, its objects are rows |
 | `cnl.py` | authored `head when body` blocks, each rule compiled to ONE system |
 | `intake.py` | Python → propositions, with provenance and gaps named |
 | `transliterate.py` | Python → propositions, TOTALLY — no membrane, nothing refused |
@@ -58,6 +71,8 @@ stayed text while these did not.
 | `patterns.py` | the neutral descriptions (the forward half of the bet) |
 | `repair.py` | diagnosis, the evaluator-as-system, and the two repair families |
 | `evaluator.py` | what a function returns for a case, derived from structure |
+| `effects.py` | what a function DOES outside its return value, forward off structure |
+| `effects_repair.py` | a wanted effect, achieved through `ugm.arbitration`'s candidates |
 
 ⚠ `demos/playground` is the headline: business, UX and toolkit rules in separate
 authored files, joined only by `bridge.cnl`, composed and driven green through
@@ -66,5 +81,5 @@ Textual's Pilot. It is the one place the CNL surface is load-bearing, and
 """
 from __future__ import annotations
 
-__all__ = ["cnl", "emit", "evaluator", "facts", "intake", "patterns", "repair",
-           "transliterate"]
+__all__ = ["cnl", "effects", "effects_repair", "emit", "evaluator", "intake",
+           "patterns", "repair", "transliterate"]

@@ -136,7 +136,7 @@ import ast
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
-from .facts import Facts
+from ugm.facts import Facts
 
 #: AST field names this cannot deposit under their own name, and what they become.
 #: ⚠⚠ **EMPTY SINCE THE HARNESKILLS PORT, and the entry that was here is worth

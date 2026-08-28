@@ -8,7 +8,7 @@ import pytest
 
 from pystrider import patterns
 from pystrider.emit import Unrenderable, emit
-from pystrider.facts import Facts, relation
+from ugm.facts import Facts, relation
 from pystrider.intake import intake
 
 SOURCE = '''\
@@ -251,7 +251,15 @@ def test_CONTROL_the_guard_is_silent_on_what_the_handler_DOES_read():
     assert taken.complete
 
 
-# -- the substrate adapter ------------------------------------------------------
+# -- the substrate, which is UPSTREAM now ---------------------------------------
+#
+# ⚠⚠ These moved. `facts.py` went into `ugm` on 2026-08-28, and so did `ugm/tests/
+# test_facts.py` -- the same claims, pinned where the code lives. What is left here
+# is deliberately a DUPLICATE, and `pyproject.toml` names it as the thing that
+# catches a moved `ugm`: `_NEEDS` used to assert the substrate's NAMES on import and
+# is gone with the move, so the only guard left against upstream drift is a suite
+# that exercises the BEHAVIOUR this package is written against. A rename fails at
+# import; a `word` that starts interning like a `node` fails here, and nowhere else.
 
 
 def test_one_REFUSES_to_pick_between_several_rather_than_taking_the_first():

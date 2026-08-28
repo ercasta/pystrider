@@ -44,7 +44,7 @@ sys.path.insert(0, r"C:\Users\ercas\creazioni\pystrider")
 from pystrider import corpus                    # noqa: E402
 from pystrider.emit import emit                 # noqa: E402
 from pystrider.evaluator import evaluate, register  # noqa: E402
-from pystrider.facts import Facts               # noqa: E402
+from ugm.facts import Facts               # noqa: E402
 from pystrider.intake import intake             # noqa: E402
 
 BUG = "def classify(age):\n    if age > 18:\n        return 'adult'\n    return 'minor'\n"

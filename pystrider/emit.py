@@ -27,7 +27,7 @@ from __future__ import annotations
 import ast
 from typing import Any, List, Optional
 
-from .facts import Facts
+from ugm.facts import Facts
 from .intake import _BIN, _CMP
 
 _CMP_BACK = {v: k for k, v in _CMP.items()}

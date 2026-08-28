@@ -48,12 +48,13 @@ checked against the same model that proposed it.
 ## ⚠⚠ THE TIE-BREAK IS NOW A NAMED FACT, NOT REGISTRATION ORDER
 
 `relax`/`lower` used to mutate on sight, the first one registered winning any
-function where both structurally applied — see `docs/decision_patterns.md` for
+function where both structurally applied — see `../harneskills/engine/DECISION_PATTERNS.md` for
 the argument against that. Each family now only PROPOSES: `candidate(function,
 family)` plus its own, self-contained `ranked(function, family, priority)` — it
 never checks whether the other family also applies, the same way a
 `design.cnl` production never checks its rivals. `arbitration.commit` (see
-`pystrider/arbitration.py`) is the one place that reads the whole candidate set
+`ugm/arbitration.py`, which ships this pattern to every domain on the world for
+exactly this reason) is the one place that reads the whole candidate set
 and decides; a family mutates only once it reads back `winner(function,
 family)` as itself. `test_exactly_ONE_repair_family_fires` still pins the
 outcome; which family wins now shows up as an ordinary, `why`-readable fact
@@ -65,9 +66,10 @@ is real but untested past that shape.
 """
 from __future__ import annotations
 
-from .arbitration import commit
+from ugm.arbitration import commit
+from ugm.facts import Facts, relation
+
 from .evaluator import evaluate
-from .facts import Facts, relation
 
 Function = relation("function")
 IfStmt = relation("if_stmt")

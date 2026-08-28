@@ -30,7 +30,7 @@ each gated on `wants` and not yet `has`.
 """
 from __future__ import annotations
 
-from .facts import Facts, relation
+from ugm.facts import Facts, relation
 
 Function = relation("function")
 Contains = relation("contains")

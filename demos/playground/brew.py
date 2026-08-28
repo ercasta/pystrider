@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from pystrider import cnl
-from pystrider.facts import Facts
+from ugm.facts import Facts
 
 from . import design
 

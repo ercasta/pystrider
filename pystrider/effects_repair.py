@@ -1,6 +1,6 @@
 """Achieving a wanted effect — the half of the bet `effects.py` explicitly
 declines, built the way `repair.py` now is: propose, arbitrate, apply. See
-`docs/decision_patterns.md` for the argument and `repair.py`'s own module note
+`../harneskills/engine/DECISION_PATTERNS.md` for the argument and `repair.py`'s own module note
 for why this is not backward-reading a recognizer.
 
 ⚠⚠ DELIBERATELY NARROW, THE SAME WAY `repair.py` SAYS OF ITSELF. This
@@ -31,8 +31,8 @@ this protects.
 """
 from __future__ import annotations
 
-from .arbitration import commit
-from .facts import Facts, relation
+from ugm.arbitration import commit
+from ugm.facts import Facts, relation
 
 WantsEffect = relation("wants_effect")
 MissingEffect = relation("missing_effect")

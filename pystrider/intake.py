@@ -55,7 +55,7 @@ import ast
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
 
-from .facts import Facts
+from ugm.facts import Facts
 
 
 class _Unreadable:

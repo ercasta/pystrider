@@ -4,7 +4,7 @@ off structure `intake.py` already produced.
 from __future__ import annotations
 
 from pystrider import effects
-from pystrider.facts import Facts
+from ugm.facts import Facts
 from pystrider.intake import intake
 
 

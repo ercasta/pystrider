@@ -10,7 +10,7 @@ import ast
 
 import pytest
 
-from pystrider.facts import Facts
+from ugm.facts import Facts
 from pystrider.transliterate import (check_vocabulary, reads_as_literal, render,
                                      transliterate)
 

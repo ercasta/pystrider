@@ -8,7 +8,7 @@ import ast
 
 from pystrider import effects, effects_repair
 from pystrider.emit import emit
-from pystrider.facts import Facts
+from ugm.facts import Facts
 from pystrider.intake import intake
 
 SOURCE = "def touch(x):\n    y = x + 1\n"

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .facts import Facts
+from ugm.facts import Facts
 
 #: The comparison operators this can reason about. ⚠ Not a comment — the lookup.
 _DECIDES = {

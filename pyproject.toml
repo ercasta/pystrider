@@ -16,9 +16,18 @@ requires-python = ">=3.11"
 # worth this much caution). `harneskills` is deliberately NOT listed here either,
 # and neither is `ugm`: both are a sibling checkout under active development, not
 # a release, so pinning either in metadata would promise a version that does not
-# exist. What guards the dependency instead is `_NEEDS` in `pystrider/facts.py` —
-# names asserted on import, which fails by NAME when the substrate moves rather
-# than three frames into a run.
+# exist.
+#
+# ⚠⚠ 2026-08-28: `_NEEDS` IS GONE, and this is the one place that promised it. It
+# asserted the `ugm` names this package uses, on import, so drift failed by NAME
+# rather than three frames into a run -- and it could do that because `facts.py`
+# lived HERE while the world it adapted lived over there. `facts.py` and
+# `arbitration.py` have moved into `ugm` itself, so those names now version with the
+# world they name and there is no gap left to assert across. The dependency is
+# WIDER as a result, not narrower: this package imports a vocabulary from `ugm` now,
+# not just a store and a loop. What catches a moved `ugm` is the suite --
+# `tests/conftest.py` names which one a run got, and `test_the_world_SETTLES` is
+# what notices behaviour rather than names.
 #
 #   PYTHONPATH=../harneskills/engine:../harneskills python -m pytest tests/ -q
 #
