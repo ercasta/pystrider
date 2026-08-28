@@ -18,9 +18,8 @@ by all of them):
 
 The obvious choice is the good one — put pystrider's facts in the SHARED world, so
 a business rule and a file listing are entities side by side and one settle covers
-both. `ugm.engine`'s whole argument is *one world, several doors*. Two
-things make it wrong here, and both are properties of what pystrider stores rather
-than of the idea:
+both. `ugm.engine`'s whole argument is *one world, several doors*. What makes it
+wrong here is a property of what pystrider stores rather than of the idea:
 
 1. **The shared world is PERSISTED.** `ugm.save` writes it on every settle.
    Intaking one Python file spawns a few hundred entities and transliterating a real
@@ -28,27 +27,21 @@ than of the idea:
    7 KB today and is meant to be the thing the session KNEW, not a syntax tree it
    looked at once.
 
-2. **⚠ `save` could not read them back anyway.** It names a component
-   `module:qualname` and resolves it with `getattr`, and `facts.relation()` builds
-   its classes with `type()` — so `ugm.facts:for_stmt` serialises fine and
-   raises `AttributeError` on load. It would not crash: `save.load` collects that as
-   a *problem* and drops the component. **A world that silently comes back
-   thinner is worse than one that refuses**, and this package has paid for exactly
-   that shape of silence before.
+⭐⭐ **THERE USED TO BE A SECOND REASON AND IT IS FIXED, so do not cite it.** `save`
+could not read a relation back at all: it resolves `module:qualname` with `getattr`
+and `facts.relation()` builds its classes with `type()`, so a whole world of facts
+serialised fine and came back one named problem per relation, silently thinner. A
+`Relation` now says how to name itself (`ugm.facts:relation(for_stmt)`), and
+interning survives a restart because it lives in the world as an `Interned` mark
+rather than in a dict beside it. ⚠ The remaining reason above is SIZE, which is a
+real reason and an ordinary one — not the "we cannot" it used to be paired with. If
+someone wants pystrider's facts in the shared world, what stands between is
+deciding they are worth persisting, not the substrate.
 
 ⭐ So what lives in the shared world is the CONVERSATION — the goal a typed line
 becomes, and the `Reply` it produces. Those are ordinary module-level classes,
 `getattr`-resolvable and small. The derivation happens in a `Facts` of its own and
 is thrown away with its answer already spoken.
-
-⚠ If pystrider's facts should one day live in the shared world, the fix is specific:
-`save` needs a registry a domain can put a class factory in, so `ugm.facts:for_stmt`
-resolves to `relation("for_stmt")`. ⭐ That got NEARER, not further, when the
-vocabulary moved into `ugm`: `save.py` and `relation()` are siblings in one package
-now, so the two halves of this hole are finally on the same side of a repo boundary
-— `relation` could register every class it interns and `save` could look there
-before `getattr`. Still upstream of here, and still not this module's to make, but
-it is no longer a change across two checkouts.
 
 ## ⚠ NOTHING HERE BLOCKS, except when you ask it to
 
