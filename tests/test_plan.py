@@ -44,6 +44,26 @@ def _find(f, text):
     return None
 
 
+def _word(f, text):
+    """`f.word(text)` for a word a SYSTEM minted — read-only, via `_find`."""
+    return _find(f, text)
+
+
+def _val(f, payload):
+    """`f.value(payload)` for a value a SYSTEM minted — read-only, via `_find`.
+
+    ⚠⚠ `f.value(-1)` here spawned a SECOND entity printed `-1`, and the assertion
+    that used it compared the real one against the twin and read False. `_mint`
+    de-duplicates against an already-settled entity only INSIDE a turn; `word`/
+    `value` also carry `_words`/`_values`, but those cache a real entity only when
+    a LATER tick asks again, and `_adopt` rescans the world exactly once per
+    `Facts`. So these reads passed for as long as some system re-derived the same
+    word or value every tick — which is to say they were pinned by the very
+    non-termination `plan.Enacted` fixes. Same rule as `_find`: read, never mint.
+    """
+    return _find(f, repr(payload))
+
+
 def _guard_shape(f, function):
     """(operator, threshold) off whatever function is handed — the same
     structural read `repair.guard`/`resolve_guard_of` make, just for a test to
@@ -92,8 +112,8 @@ def test_indistinguishable_fixes_are_AMBIGUOUS_not_guessed():
     derived from consequences alone, honestly, refuses to break the tie a
     hand-picked `ranked(..., 2)` used to break by fiat."""
     f, function, _ = world()
-    assert f.holds("ranked", function, f.word("relax"), f.value(1))
-    assert f.holds("ranked", function, f.word("lower"), f.value(1))
+    assert f.holds("ranked", function, _word(f, "relax"), _val(f, 1))
+    assert f.holds("ranked", function, _word(f, "lower"), _val(f, 1))
     assert not f.of("ruled_out", function)
     assert f.text("verdict", function) == "ambiguous"
     assert f.text("winner", function) is None
@@ -111,8 +131,8 @@ def test_authored_policy_vetoes_a_negative_threshold_EVEN_THOUGH_it_would_fix():
     name = f.one("name", function)
     inner = _find(f, f"query:function_named:{f.show(name)}")
     guard_q = _find(f, f"query:guard_of:{f.show(inner)}")
-    assert f.holds("action", function, f.word("lower"), guard_q, f.value(-1))
-    assert f.holds("ruled_out", function, f.word("lower"), f.word("negative_threshold"))
+    assert f.holds("action", function, _word(f, "lower"), guard_q, _val(f, -1))
+    assert f.holds("ruled_out", function, _word(f, "lower"), _word(f, "negative_threshold"))
     assert f.text("verdict", function) == "forced"
     assert f.text("winner", function) == "relax"
 
@@ -122,7 +142,7 @@ def test_authored_policy_vetoes_a_negative_threshold_EVEN_THOUGH_it_would_fix():
     assert _guard_shape(f, applied) == ("ge", 0)
     assert evaluate(f, applied, case).value == "adult"
     # the loser never touched frame zero, or the world at all past its own bench
-    assert not f.holds("ruled_out", function, f.word("relax"))
+    assert not f.holds("ruled_out", function, _word(f, "relax"))
 
 
 def test_consequence_veto_catches_a_candidate_that_does_not_fix():
@@ -138,7 +158,7 @@ def test_consequence_veto_catches_a_candidate_that_does_not_fix():
     plan._move_current(f, bench, name, broken)
     f.fact("candidate", function, f.word("sabotage"))
     f.run()
-    assert f.holds("ruled_out", function, f.word("sabotage"), f.word("does_not_fix"))
+    assert f.holds("ruled_out", function, f.word("sabotage"), _word(f, "does_not_fix"))
 
 
 # -- resolvers refuse rather than guess ------------------------------------------

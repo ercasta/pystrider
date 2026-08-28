@@ -49,11 +49,26 @@ far — not a second engine beside it:
 | `denotes(q, s, entity)` | a resolver, one per query shape | what `q` names, *in scenario `s`* |
 | `could_not_resolve(q, s)` | a resolver | `q` names nothing in `s` — deposited, not swallowed |
 | `action(occasion, kind, subject_q, …)` | a proposing family | the edit's INTENT, in query terms, before it's enacted |
-| `repaired(occasion, s)` | the family, on enactment | `s`'s registry now reflects the winning action |
+| `enacted(occasion, s)` | the family, on enactment | `s`'s registry now reflects this family's edit — and it makes no second one |
 
 `scenario`/`current`/`parent` generalize `repair.py`'s implicit "the one function under repair" into
 something a family can be asked to act on more than once, in more than one hypothesis, without ever
 holding a raw entity across the boundary between them.
+
+⚠⚠ **`enacted` was written `repaired(occasion, s)` here first, and both halves of that were wrong** —
+found by building it, which is what the prototype was for:
+
+- **The name collides.** `repair.py` already has `repaired(function, case)`, and `repair.diagnose` reads
+  it as `world.each(Wants, without=Repaired)`. An occasion IS a function, so a bench writing `repaired`
+  switches off the very `unmet` this module triggers on — a module that reads a sibling's relation has
+  to read the sibling, not the table it wishes were there.
+- **It is not bookkeeping, it is what makes the fixpoint terminate.** A family whose edit does not
+  falsify its own precondition otherwise re-fires on its own output: `lower` applies wherever the
+  guard's right side holds a literal, and lowering a literal leaves a literal, so the first version
+  minted `18, 17, 16, 15 …` — one function per tick until the process was OOM-killed. `relax` survived
+  only by luck (`gt` → `ge` falsifies `operator == gt`). So the row is not "the family notes it is
+  done"; it is **a trial is exactly one edit**, structural and per-scenario, and it is what a bench
+  being 1:1 with (family, occasion) actually *means* once something enforces it.
 
 ## Why not copy-on-write
 

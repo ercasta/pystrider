@@ -40,6 +40,25 @@ Denotes = relation("denotes")
 CouldNotResolve = relation("could_not_resolve")
 Action = relation("action")
 Unmet = relation("unmet")           # interned the same class `repair.py` uses
+
+#: ⚠⚠ WHAT ENDS A TRIAL. `enacted(occasion, scenario)` — this family already made
+#: its one edit here, so `_try_edit` has nothing further to say. Without it the
+#: first version of this module did not terminate, and the reason generalizes past
+#: the family that exposed it: **a family whose edit does not falsify its own
+#: precondition re-fires on its own output.** `lower` applies wherever the guard's
+#: right side carries a literal, and lowering a literal leaves a literal — so the
+#: bench resolved `current` to its own last clone and minted 18, 17, 16, 15 … one
+#: new function per tick until the process was OOM-killed. `relax` escaped only by
+#: luck: `gt` → `ge` happens to falsify `operator == gt`. Luck is not the property
+#: wanted, so the guard is structural instead of per-family — a bench IS one
+#: family's one trial at one occasion (`_bench`), and frame zero enacts the winner
+#: once; neither is a place a second edit belongs, whether or not `applies` still
+#: holds. ⚠ NOT `repaired(occasion, s)`, which `docs/planning_bench.md`'s table
+#: proposed before this module was written beside `repair.py`: that relation is
+#: already `repaired(function, case)` there, and `repair.diagnose` reads it as
+#: `world.each(Wants, without=Repaired)`. An occasion IS a function, so writing
+#: `repaired` here would switch off the very `unmet` this module triggers on.
+Enacted = relation("enacted")
 Candidate = relation("candidate")
 Winner = relation("winner")
 Function = relation("function")     # ditto
@@ -246,6 +265,8 @@ def _bench(f: Facts, family: str, occasion):
 
 def _try_edit(f: Facts, world, family: str, scenario, occasion, name,
               applies, edit) -> None:
+    if f.holds("enacted", occasion, scenario):
+        return  # ⚠⚠ see `Enacted` — a trial is ONE edit, and this is what ends it
     inner = _function_named(f, name)
     guard_q = _guard_of(f, inner)
     function = next((e for (s, e) in f.of("denotes", inner) if s == scenario), None)
@@ -268,6 +289,7 @@ def _try_edit(f: Facts, world, family: str, scenario, occasion, name,
     new_condition = edit.new_condition(f, world, family, comparison)
     new_function = _path_copy(f, world, family, function, block, if_stmt, new_condition)
     _move_current(f, scenario, name, new_function)
+    f.fact("enacted", occasion, scenario)
 
 
 class _Relax:
