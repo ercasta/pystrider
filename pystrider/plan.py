@@ -27,6 +27,7 @@ module's trigger, and `evaluated`, its evidence); no repair family and no
 """
 from __future__ import annotations
 
+from pystrider.rules import assign, derive, minting
 from ugm.arbitration import commit
 from ugm.facts import Facts, relation
 
@@ -41,27 +42,19 @@ CouldNotResolve = relation("could_not_resolve")
 Action = relation("action")
 Unmet = relation("unmet")           # interned the same class `repair.py` uses
 
-#: ⚠⚠ WHAT ENDS A TRIAL. `enacted(occasion, scenario)` — this family already made
-#: its one edit here, so `_try_edit` has nothing further to say. Without it the
-#: first version of this module did not terminate, and the reason generalizes past
-#: the family that exposed it: **a family whose edit does not falsify its own
-#: precondition re-fires on its own output.** `lower` applies wherever the guard's
+#: ⚠⚠ WHAT ENDS A TRIAL — now `rules.minting`'s key, not this module's own
+#: bookkeeping. It was written here by hand first, and the generalization is the
+#: whole reason `rules.py` exists: a family whose edit does not falsify its own
+#: precondition re-fires on its own output. `lower` applies wherever the guard's
 #: right side carries a literal, and lowering a literal leaves a literal — so the
 #: bench resolved `current` to its own last clone and minted 18, 17, 16, 15 … one
-#: new function per tick until the process was OOM-killed. `relax` escaped only by
-#: luck: `gt` → `ge` happens to falsify `operator == gt`. Luck is not the property
-#: wanted, so the guard is structural instead of per-family — a bench IS one
-#: family's one trial at one occasion (`_bench`), and frame zero enacts the winner
-#: once; neither is a place a second edit belongs, whether or not `applies` still
-#: holds. ⚠ NOT `repaired(occasion, s)`, which `docs/planning_bench.md`'s table
-#: proposed before this module was written beside `repair.py`: that relation is
-#: already `repaired(function, case)` there, and `repair.diagnose` reads it as
-#: `world.each(Wants, without=Repaired)`. An occasion IS a function, so writing
-#: `repaired` here would switch off the very `unmet` this module triggers on.
-Enacted = relation("enacted")
+#: function per tick until the process was OOM-killed. `relax` escaped only by
+#: luck: `gt` → `ge` happens to falsify `operator == gt`. Luck is not a property,
+#: so the bound is stated where it can be checked: see `_family`.
 Candidate = relation("candidate")
 Winner = relation("winner")
 Function = relation("function")     # ditto
+Bench = relation("bench")
 
 
 # -- scenario zero: not special, just first -------------------------------------
@@ -123,12 +116,13 @@ def _redenote(f: Facts, query, scenario, entity) -> None:
     same discipline `arbitration.commit` uses for `winner`: a resolver can answer
     differently on a later tick (a family's own edit moves `current`), and a
     reader that only ever `fact()`s a new answer leaves the old one standing
-    beside it."""
-    for (s, old) in list(f.of("denotes", query)):
-        if s == scenario and old != entity:
-            f.deny("denotes", query, s, old)
-    if not f.holds("denotes", query, scenario, entity):
-        f.fact("denotes", query, scenario, entity)
+    beside it.
+
+    ⭐ `denotes(query, scenario, entity)` is single-valued on the scenario, which
+    is all `rules.assign` needs to be told. This function and `_move_current`
+    were the same rule written twice; now they are the same call twice.
+    """
+    assign(f, "denotes", query, scenario, entity, keys=1)
 
 
 def resolve_function_named(f: Facts):
@@ -238,12 +232,9 @@ def _path_copy(f: Facts, world, family: str, function, block, if_stmt, new_condi
 
 
 def _move_current(f: Facts, scenario, name, new_function) -> None:
-    current = [fn for (n, fn) in f.of("current", scenario) if n == name]
-    if current and current[-1] != new_function:
-        f.deny("current", scenario, name, current[-1])
-    if not f.holds("current", scenario, name, new_function):
-        f.fact("current", scenario, name, new_function)
-        f.fact("claimed", new_function)
+    """`current(scenario, name)` is single-valued on the name — see `_redenote`."""
+    assign(f, "current", scenario, name, new_function, keys=1)
+    f.fact("claimed", new_function)
 
 
 def _bench(f: Facts, family: str, occasion):
@@ -254,6 +245,10 @@ def _bench(f: Facts, family: str, occasion):
     if not f.holds("scenario", b):
         f.fact("scenario", b)
         f.fact("parent", b, _frame_zero(f))
+    # ⭐ Published as a FACT so a reader never has to re-derive the name. A judge
+    # that called this helper to "get" the bench would be MINTING to read — the
+    # same twin trap `_find` warns test code about, one layer in.
+    f.fact("bench", occasion, f.word(family), b)
     return b
 
 
@@ -265,18 +260,16 @@ def _bench(f: Facts, family: str, occasion):
 
 def _try_edit(f: Facts, world, family: str, scenario, occasion, name,
               applies, edit) -> None:
-    if f.holds("enacted", occasion, scenario):
-        return  # ⚠⚠ see `Enacted` — a trial is ONE edit, and this is what ends it
     inner = _function_named(f, name)
     guard_q = _guard_of(f, inner)
     function = next((e for (s, e) in f.of("denotes", inner) if s == scenario), None)
     comparison = next((e for (s, e) in f.of("denotes", guard_q) if s == scenario), None)
     if function is None or comparison is None:
-        return
+        return False
     if not applies(comparison):
-        return
+        return False
     if scenario == _frame_zero(f) and not f.holds("winner", occasion, f.word(family)):
-        return  # into the real world only once arbitration says so
+        return False  # into the real world only once arbitration says so
     if scenario != _frame_zero(f):
         f.fact("candidate", occasion, f.word(family))
         subject, obj = edit.action(f, comparison, guard_q)
@@ -285,11 +278,11 @@ def _try_edit(f: Facts, world, family: str, scenario, occasion, name,
     if_stmt = f.one("if_stmt_of", comparison)
     block = f.one("block_of", if_stmt) if if_stmt is not None else None
     if if_stmt is None or block is None:
-        return
+        return False
     new_condition = edit.new_condition(f, world, family, comparison)
     new_function = _path_copy(f, world, family, function, block, if_stmt, new_condition)
     _move_current(f, scenario, name, new_function)
-    f.fact("enacted", occasion, scenario)
+    return True
 
 
 class _Relax:
@@ -325,22 +318,26 @@ class _Lower:
 
 
 def _family(f: Facts, family: str, edit, applies):
+    """⭐ A `minting` rule, and the two scenarios ARE the two keys: this family
+    gets one edit in its own bench and one into frame zero, ever. `_try_edit`
+    answers False to decline — it may not apply yet, or arbitration may not have
+    named a winner yet — and a declined key stays open for a later tick."""
 
-    def system(world) -> None:
-        for occasion, held in world.each(Unmet):
-            for row in held.rows:
-                if len(row) != 2:
-                    continue
-                name = f.one("name", occasion)
-                if name is None:
-                    continue
-                bench = _bench(f, family, occasion)
-                if not any(n == name for (n, _) in f.of("current", bench)):
-                    f.fact("current", bench, name, occasion)
-                _try_edit(f, world, family, bench, occasion, name, applies, edit)
-                _try_edit(f, world, family, _frame_zero(f), occasion, name, applies, edit)
+    def occasions(f, occasion, _case, _wanted):
+        name = f.one("name", occasion)
+        if name is None:
+            return ()
+        bench = _bench(f, family, occasion)
+        if not any(n == name for (n, _) in f.of("current", bench)):
+            f.fact("current", bench, name, occasion)
+        return ((occasion, bench), (occasion, _frame_zero(f)))
 
-    return system
+    def act(f, world, occasion, _case, _wanted, key):
+        _, scenario = key
+        name = f.one("name", occasion)
+        return _try_edit(f, world, family, scenario, occasion, name, applies, edit)
+
+    return minting(f, Unmet, occasions, act, arity=2)
 
 
 def relax(f: Facts):
@@ -359,22 +356,21 @@ def lower(f: Facts):
 
 def veto_negative_threshold(f: Facts):
     """Authored policy: never propose a threshold below zero. Fires the moment
-    the action is proposed — reads `action` directly, never touches a bench."""
+    the action is proposed — reads `action` directly, never touches a bench.
 
-    def system(world) -> None:
-        for occasion, held in world.each(Action):
-            for row in held.rows:
-                if len(row) != 3:
-                    continue
-                family, _subject, obj = row
-                if family != f.word("lower"):
-                    continue
-                value = f.payload(obj)
-                if value is not None and value < 0:
-                    if not f.holds("ruled_out", occasion, family, f.word("negative_threshold")):
-                        f.fact("ruled_out", occasion, family, f.word("negative_threshold"))
+    ⭐ A `derive`, and the shape is the claim: a judge READS and CONCLUDES. It
+    cannot mint and it cannot retract, so it cannot fail to terminate, and that
+    is checked rather than promised — see `rules.py`.
+    """
+    def say(f, occasion, family, _subject, obj):
+        if family != f.word("lower"):
+            return None
+        value = f.payload(obj)
+        if value is None or value >= 0:
+            return None
+        return ("ruled_out", occasion, family, f.word("negative_threshold"))
 
-    return system
+    return derive(f, Action, say, arity=3)
 
 
 def judge_consequences(f: Facts):
@@ -383,43 +379,39 @@ def judge_consequences(f: Facts):
     own systems derive — for the bench's function as readily as for the real
     one, because neither system knows there is a difference."""
 
-    def system(world) -> None:
-        for occasion, held in world.each(Candidate):
-            for (family,) in [r for r in held.rows if len(r) == 1]:
-                bench = _bench(f, f.show(family), occasion)
-                name = f.one("name", occasion)
-                current = [fn for (n, fn) in f.of("current", bench) if n == name]
-                if not current:
-                    continue
-                new_function = current[-1]
-                if new_function == occasion:
-                    continue  # not yet edited this tick
-                cases = [r for r in f.of("wants", occasion) if len(r) == 2]
-                evaluations = {case: [v for (c, v) in f.of("evaluated", new_function) if c == case]
-                               for case, _ in cases}
-                if any(not got for got in evaluations.values()):
-                    continue  # ⚠ not evaluated yet THIS tick — wait, never guess
-                    # `ruled_out` is monotonic and never retracted (see the design
-                    # note): concluding `does_not_fix` off a missing `evaluated`
-                    # would be a wrong veto with no way to take it back once the
-                    # evaluator's own later tick derives the real answer.
-                fixes = all(evaluations[case][-1] == wanted for case, wanted in cases)
-                regresses = False
-                for (other_case,) in [r for r in f.of("agrees", occasion) if len(r) == 1]:
-                    still_wanted = [w for (c, w) in f.of("wants", occasion) if c == other_case]
-                    if not still_wanted:
-                        continue
-                    got = [v for (c, v) in f.of("evaluated", new_function) if c == other_case]
-                    if got and got[-1] != still_wanted[0]:
-                        regresses = True
-                if not fixes or regresses:
-                    reason = f.word("regression") if regresses else f.word("does_not_fix")
-                    if not f.holds("ruled_out", occasion, family, reason):
-                        f.fact("ruled_out", occasion, family, reason)
-                elif not f.holds("ranked", occasion, family, f.value(1)):
-                    f.fact("ranked", occasion, family, f.value(1))
+    def say(f, occasion, family):
+        bench = next((b for (fam, b) in f.of("bench", occasion) if fam == family), None)
+        if bench is None:
+            return None                # its own family has not benched it yet
+        name = f.one("name", occasion)
+        current = [fn for (n, fn) in f.of("current", bench) if n == name]
+        if not current or current[-1] == occasion:
+            return None                # not yet edited this tick
+        new_function = current[-1]
+        cases = [r for r in f.of("wants", occasion) if len(r) == 2]
+        evaluations = {case: [v for (c, v) in f.of("evaluated", new_function) if c == case]
+                       for case, _ in cases}
+        if any(not got for got in evaluations.values()):
+            return None  # ⚠ not evaluated yet THIS tick — wait, never guess
+            # `ruled_out` is monotonic and never retracted (see the design note):
+            # concluding `does_not_fix` off a missing `evaluated` would be a wrong
+            # veto with no way to take it back once the evaluator's own later tick
+            # derives the real answer.
+        fixes = all(evaluations[case][-1] == wanted for case, wanted in cases)
+        regresses = False
+        for (other_case,) in [r for r in f.of("agrees", occasion) if len(r) == 1]:
+            still_wanted = [w for (c, w) in f.of("wants", occasion) if c == other_case]
+            if not still_wanted:
+                continue
+            got = [v for (c, v) in f.of("evaluated", new_function) if c == other_case]
+            if got and got[-1] != still_wanted[0]:
+                regresses = True
+        if not fixes or regresses:
+            return ("ruled_out", occasion, family,
+                    f.word("regression") if regresses else f.word("does_not_fix"))
+        return ("ranked", occasion, family, f.value(1))
 
-    return system
+    return derive(f, Candidate, say, arity=1)
 
 
 FAMILIES = {"relax": relax, "lower": lower}
