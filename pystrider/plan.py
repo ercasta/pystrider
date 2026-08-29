@@ -8,280 +8,377 @@ authored-policy judge. `repair.py` itself is untouched and its suite stays the
 pinning it always was — this is a SEPARATE, parallel demonstration of the same
 bug, arbitrated a different way, not a replacement.
 
-⭐⭐ THE REAL FUNCTION ENTITY IS NEVER MUTATED. `current(frame_zero, name)` moves to
+⭐⭐ THE REAL FUNCTION ENTITY IS NEVER MUTATED. `Current(frame_zero, name)` moves to
 whichever new function entity wins; the original stays exactly as intake left it,
-forever `unmet`. Reading "the current code" after this module has run means
-resolving `current`, never holding the entity a test fixture happened to get back
-from `f.subjects("function")[0]` before any of this ran. `emit()` integration is
-out of scope here for exactly that reason: it reads a module's `body` chain
-directly and has no notion of `current` yet.
+forever `Unmet`. Reading "the current code" after this module has run means
+resolving `Current`, never holding the entity a test fixture happened to get back
+from `w.each(Function)` before any of this ran. `emit()` integration is out of
+scope here for exactly that reason: it reads a module's `Body` chain directly and
+has no notion of `Current` yet.
 
 ⭐ EVALUATION IS FREE. `repair.guard`/`ask`/`answer` are entity-generic —
 `world.each(Function)`, not "the one function under repair" — so a cloned function
-this module spawns gets its OWN `guard`/`evaluated` derived by `repair.py`'s
-existing systems on a later tick, with no code here asking for it. Install
-`repair.install(loop, f, families=set())` alongside this module: `guard`/
-`inverses`/`ask`/`answer`/`checked`/`diagnose` run (feeding `unmet`, this
-module's trigger, and `evaluated`, its evidence); no repair family and no
-`arbitration.commit` install twice, since `families=set()` skips both.
+this module spawns gets its OWN `Guard`/`Evaluated` derived by `repair.py`'s
+existing rules on a later tick, with no code here asking for it. Install
+`repair.install(loop, families=set())` alongside this module: `guard`/`inverses`/
+`ask`/`answer`/`checked`/`diagnose` run (feeding `Unmet`, this module's trigger,
+and `Evaluated`, its evidence); no repair family and no `repair.arbitrate` install
+twice, since `families=set()` skips both.
+
+⚠⚠ 2026-08-29: rewritten off `Facts`/`relation`/`arbitration.commit` onto typed
+components and a local `commit` — see `pystrider.rules`'s own note for
+`derive`/`assign`/`minting`'s generalization, and `repair.py`'s note for why
+arbitration is domain-owned code here rather than a shared reader. This is the
+one module in the package that needs `commit`'s FULL shape (`ruled_out` and
+all) — `repair.py`/`effects_repair.py` never needed a veto, this one does
+(`veto_negative_threshold`), so its local `commit` is the fullest of the three.
 """
 from __future__ import annotations
 
-from pystrider.rules import assign, derive, minting
-from ugm.arbitration import commit
-from ugm.facts import Facts, relation
+from dataclasses import dataclass
+from typing import Optional
 
-Scenario = relation("scenario")
-Parent = relation("parent")
-Current = relation("current")
-Claimed = relation("claimed")
-FunctionNamed = relation("function_named")
-GuardOf = relation("guard_of")
-Denotes = relation("denotes")
-CouldNotResolve = relation("could_not_resolve")
-Action = relation("action")
-Unmet = relation("unmet")           # interned the same class `repair.py` uses
+from .evaluator import BlockOf, IfStmtOf
+from .intake import (Arg, Arithmetic, Assign, Assigned, Attribute, Block,
+                     Body, Call, Callee, Comparison, Condition, Constant,
+                     Function, ForStmt, HasParam, IfStmt, Iterated,
+                     Left, Module, Name, NoOp, Of, Otherwise, Param,
+                     Readable, Returned, ReturnStmt, Right, Stmt, Target,
+                     Then, Value, decode_literal, encode_literal)
+from .repair import Agrees, Evaluated, Unmet, Wants
+from .rules import assign as _assign
+from .rules import derive, minting
 
-#: ⚠⚠ WHAT ENDS A TRIAL — now `rules.minting`'s key, not this module's own
+
+@dataclass(frozen=True)
+class Scenario:
+    pass
+
+
+@dataclass(frozen=True)
+class FrameZero:
+    """Tags the one `Scenario` standing for the real code."""
+
+
+@dataclass(frozen=True)
+class Parent:
+    scenario: int
+
+
+@dataclass(frozen=True)
+class Current:
+    """`current(scenario, name, function)` — attached to the SCENARIO.
+    Multi-valued: one row per name the scenario has registered."""
+
+    name: str
+    function: int
+
+
+@dataclass(frozen=True)
+class Claimed:
+    pass
+
+
+@dataclass(frozen=True)
+class FunctionNamed:
+    name: str
+
+
+@dataclass(frozen=True)
+class GuardOf:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Denotes:
+    """Attached to a QUERY entity. Single-valued per `scenario` — see
+    `_redenote`."""
+
+    scenario: int
+    entity: int
+
+
+@dataclass(frozen=True)
+class CouldNotResolve:
+    scenario: int
+
+
+@dataclass(frozen=True)
+class Action:
+    """`action(occasion, family, subject_query, object)` — the edit's INTENT,
+    in query terms, before it's enacted. Attached to the occasion."""
+
+    family: str
+    subject: int
+    obj: str
+
+
+#: ⚠⚠ WHAT ENDS A TRIAL — `rules.minting`'s key, not this module's own
 #: bookkeeping. It was written here by hand first, and the generalization is the
 #: whole reason `rules.py` exists: a family whose edit does not falsify its own
 #: precondition re-fires on its own output. `lower` applies wherever the guard's
 #: right side carries a literal, and lowering a literal leaves a literal — so the
-#: bench resolved `current` to its own last clone and minted 18, 17, 16, 15 … one
+#: bench resolved `Current` to its own last clone and minted 18, 17, 16, 15 … one
 #: function per tick until the process was OOM-killed. `relax` escaped only by
 #: luck: `gt` → `ge` happens to falsify `operator == gt`. Luck is not a property,
 #: so the bound is stated where it can be checked: see `_family`.
-Candidate = relation("candidate")
-Winner = relation("winner")
-Function = relation("function")     # ditto
-Bench = relation("bench")
+@dataclass(frozen=True)
+class Candidate:
+    family: str
+
+
+@dataclass(frozen=True)
+class RuledOut:
+    family: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class Ranked:
+    family: str
+    score: float
+
+
+@dataclass(frozen=True)
+class Winner:
+    family: str
+
+
+@dataclass(frozen=True)
+class Verdict:
+    value: str
+
+
+@dataclass(frozen=True)
+class Bench:
+    """`bench(occasion, family, scenario)` — attached to the OCCASION."""
+
+    family: str
+    scenario: int
 
 
 # -- scenario zero: not special, just first -------------------------------------
 
-def _frame_zero(f: Facts):
-    """The one scenario standing for the real code. Minted deterministically —
-    asking for it twice, on two different ticks, gets the same entity."""
-    return f.node("scenario:frame_zero")
+def _frame_zero(w) -> int:
+    """The one scenario standing for the real code. `register_frame_zero`
+    (registered FIRST, see `install`) is the only place this ever spawns one
+    — every other caller, in the same tick or a later one, finds it already
+    there."""
+    found = w.first(Scenario, FrameZero)
+    if found is not None:
+        return found[0].id
+    return w.spawn(Scenario(), FrameZero()).id
 
 
-def register_frame_zero(f: Facts):
+def register_frame_zero(w) -> None:
     """Any function nothing has claimed yet is claimed by frame zero.
 
     ⚠ Not "scan all functions and assume they're real" — a clone this module
-    spawns is claimed by its OWN family the moment it's created (see `_apply`),
-    so this system never sees it. `Claimed` is what makes the two paths not
-    race: a function is registered by exactly one scenario, the first that
-    names it, and after that this system has nothing left to say about it.
+    spawns is claimed by its OWN family the moment it's created (see
+    `_move_current`), so this rule never sees it. `Claimed` is what makes the
+    two paths not race: a function is registered by exactly one scenario, the
+    first that names it, and after that this rule has nothing left to say
+    about it.
     """
-
-    def system(world) -> None:
-        zero = _frame_zero(f)
-        if not f.holds("scenario", zero):
-            f.fact("scenario", zero)
-        for function, _ in world.each(Function, without=Claimed):
-            name = f.one("name", function)
-            if name is None:
-                continue
-            f.fact("current", zero, name, function)
-            f.fact("claimed", function)
-
-    return system
+    zero = _frame_zero(w)
+    for function, fn in w.each(Function, without=Claimed):
+        w.attach(zero, Current(fn.name, function.id))
+        w.attach(function, Claimed())
 
 
 # -- queries and resolvers -------------------------------------------------------
 #
-# A query is a description; `denotes(query, scenario, entity)` is what it names IN
+# A query is a description; `Denotes(query, scenario, entity)` is what it names IN
 # that scenario. Two shapes, composed: `guard_of` reads `function_named`'s
-# `denotes` as its own precondition — staged resolution, and the ONLY machinery
+# `Denotes` as its own precondition — staged resolution, and the ONLY machinery
 # that stages it is the ordinary fixpoint, the same way `effects.py`'s
 # `transitive()` builds on `contains()` without either knowing the other exists.
 
-def _function_named(f: Facts, name):
-    q = f.node(f"query:function_named:{f.show(name)}")
-    if not f.holds("function_named", q, name):
-        f.fact("function_named", q, name)
-    return q
+def _function_named(w, name: str) -> int:
+    for q, held in w.each(FunctionNamed):
+        if held.name == name:
+            return q.id
+    q = w.spawn(FunctionNamed(name))
+    return q.id
 
 
-def _guard_of(f: Facts, inner):
-    q = f.node(f"query:guard_of:{f.show(inner)}")
-    if not f.holds("guard_of", q, inner):
-        f.fact("guard_of", q, inner)
-    return q
+def _guard_of(w, inner: int) -> int:
+    for q, held in w.each(GuardOf):
+        if held.entity == inner:
+            return q.id
+    q = w.spawn(GuardOf(inner))
+    return q.id
 
 
-def _redenote(f: Facts, query, scenario, entity) -> None:
-    """`denotes` republished for THIS scenario — stale answers denied first, the
-    same discipline `arbitration.commit` uses for `winner`: a resolver can answer
-    differently on a later tick (a family's own edit moves `current`), and a
-    reader that only ever `fact()`s a new answer leaves the old one standing
+def _redenote(w, query: int, scenario: int, entity: int) -> None:
+    """`Denotes` republished for THIS scenario — stale answers retracted first,
+    the same discipline `commit` uses for `Winner`: a resolver can answer
+    differently on a later tick (a family's own edit moves `Current`), and a
+    rule that only ever attaches a new answer leaves the old one standing
     beside it.
 
-    ⭐ `denotes(query, scenario, entity)` is single-valued on the scenario, which
-    is all `rules.assign` needs to be told. This function and `_move_current`
+    ⭐ `Denotes(scenario, entity)` is single-valued on the scenario, which is
+    all `rules.assign` needs to be told. This function and `_move_current`
     were the same rule written twice; now they are the same call twice.
     """
-    assign(f, "denotes", query, scenario, entity, keys=1)
+    _assign(w, query, Denotes, Denotes(scenario, entity), key=lambda d: d.scenario)
 
 
-def resolve_function_named(f: Facts):
-    """The base case: `current(scenario, name)`, looked up."""
-
-    def system(world) -> None:
-        for query, held in world.each(FunctionNamed):
-            for (name,) in [r for r in held.rows if len(r) == 1]:
-                for scenario, _ in world.each(Scenario):
-                    matches = [fn for (n, fn) in f.of("current", scenario) if n == name]
-                    if len(matches) == 1:
-                        _redenote(f, query, scenario, matches[0])
-                    elif not matches and not f.holds("could_not_resolve", query, scenario):
-                        f.fact("could_not_resolve", query, scenario)
-
-    return system
+def resolve_function_named(w) -> None:
+    """The base case: `Current(scenario, name)`, looked up."""
+    for query, held in w.each(FunctionNamed):
+        for scenario, _tag in w.each(Scenario):
+            matches = [c.function for c in w.get_all(scenario.id, Current)
+                      if c.name == held.name]
+            if len(matches) == 1:
+                _redenote(w, query.id, scenario.id, matches[0])
+            elif not matches:
+                w.attach(query.id, CouldNotResolve(scenario.id))
 
 
-def resolve_guard_of(f: Facts):
-    """Composed: needs `function_named`'s `denotes` before it can say anything,
-    then reads the SAME structure `repair.guard` reads — a function's `body`,
+def resolve_guard_of(w) -> None:
+    """Composed: needs `function_named`'s `Denotes` before it can say anything,
+    then reads the SAME structure `repair.guard` reads — a function's `Body`,
     its first `if`, a comparison as the condition."""
-
-    def system(world) -> None:
-        for query, held in world.each(GuardOf):
-            for (inner,) in [r for r in held.rows if len(r) == 1]:
-                for scenario, _ in world.each(Scenario):
-                    denoted = [e for (s, e) in f.of("denotes", inner) if s == scenario]
-                    if not denoted:
-                        continue
-                    function = denoted[0]
-                    block = f.one("body", function)
-                    if block is None:
-                        continue
-                    comparison = None
-                    for (statement,) in [r for r in f.of("stmt", block) if len(r) == 1]:
-                        if not f.has("if_stmt", statement):
-                            continue
-                        condition = f.one("condition", statement)
-                        if condition is not None and f.has("comparison", condition):
-                            comparison = condition
-                            break
-                    if comparison is not None:
-                        _redenote(f, query, scenario, comparison)
-
-    return system
+    for query, held in w.each(GuardOf):
+        for scenario, _tag in w.each(Scenario):
+            denoted = [d.entity for d in w.get_all(held.entity, Denotes)
+                      if d.scenario == scenario.id]
+            if not denoted:
+                continue
+            function = denoted[0]
+            body = w.get(function, Body)
+            if body is None:
+                continue
+            comparison = None
+            for stmt in w.get_all(body.entity, Stmt):
+                statement = stmt.entity
+                if not w.has(statement, IfStmt):
+                    continue
+                condition = w.get(statement, Condition)
+                if condition is not None and w.has(condition.entity, Comparison):
+                    comparison = condition.entity
+                    break
+            if comparison is not None:
+                _redenote(w, query.id, scenario.id, comparison)
 
 
 # -- cloning: the explicit, rule-authored substitute for copy-on-write ----------
 
 #: ⚠⚠ MEASURED, NOT ASSUMED. `world.components(entity)` returns EVERY component on
-#: an entity, and `wants(function, case, value)` — the test fixture's OWN demand —
-#: is a component on `function` exactly as much as `body(function, block)` is. A
-#: first version of `_clone` copied `world.components()` wholesale and handed a
-#: freshly-cloned function `wants`/`unmet`/`candidate` it never earned: the clone
-#: looked like a second real occasion, `_family`'s systems proposed a bench FOR
-#: it, and the resulting scenario tree grew one generation of ghost occasions per
-#: tick. Structure and bookkeeping are different things pinned to the same
-#: subject, and only one of them survives a path-copy — this is the explicit
-#: list, not a metadata bit `Relation` has no room for.
+#: an entity, and `Wants(case, value)` — the test fixture's OWN demand — is a
+#: component on `function` exactly as much as `Body(entity)` is. A first version
+#: of `_clone` copied `world.components()` wholesale and handed a freshly-cloned
+#: function `Wants`/`Unmet`/`Candidate` it never earned: the clone looked like a
+#: second real occasion, `_family`'s rules proposed a bench FOR it, and the
+#: resulting scenario tree grew one generation of ghost occasions per tick.
+#: Structure and bookkeeping are different things pinned to the same subject, and
+#: only one of them survives a path-copy — this is the explicit set, not a
+#: metadata bit a component has no room for.
 _STRUCTURAL = {
-    "function", "param", "if_stmt", "for_stmt", "call", "return_stmt", "assign",
-    "comparison", "arithmetic", "name", "constant", "attribute", "no_op", "block",
-    "module", "body", "target", "iterated", "condition", "then", "otherwise",
-    "callee", "arg", "returned", "assigned", "value", "left", "right", "of", "stmt",
-    "operator", "literal", "id", "attr", "readable", "from_code",
+    Function, Param, IfStmt, ForStmt, Call, ReturnStmt, Assign, Comparison,
+    Arithmetic, Name, Constant, Attribute, NoOp, Block, Module, Body, Target,
+    Iterated, Condition, Then, Otherwise, Callee, Arg, Returned, Assigned,
+    Value, Left, Right, Of, Stmt, HasParam, Readable,
 }
 
 
-def _clone(f: Facts, world, entity, family: str, **overrides):
-    """A shallow structural copy of `entity` — every STRUCTURAL relation it
-    carries, in order, except the ones named in `overrides`, which get the new
-    rows. The generic half of path-copying: what changes is always just which
-    rows a handful of relations carry, never which relations an entity has —
-    among the relations this module counts as the entity's structure. `wants`,
-    `unmet`, `candidate` and everything else this module or `repair.py` derives
-    are never on that list; see `_STRUCTURAL`'s own note for why that line has
-    to be drawn explicitly.
+def _clone(w, entity: int, family: str, overrides=None) -> int:
+    """A shallow structural copy of `entity` — every STRUCTURAL component it
+    carries, in order, except the types named in `overrides`, which get the
+    new instances given. The generic half of path-copying: what changes is
+    always just which instances a handful of component types carry, never
+    which types an entity has — among the types this module counts as the
+    entity's structure. `Wants`, `Unmet`, `Candidate` and everything else this
+    module or `repair.py` derives are never on that list; see `_STRUCTURAL`'s
+    own note for why that line has to be drawn explicitly.
     """
-    text = ", ".join(f"{k}={f.show(v[0][0]) if v and v[0] else '-'}"
-                      for k, v in sorted(overrides.items()))
-    new = f.node(f"clone:{family}:{f.show(entity)}:{text}")
-    remaining = dict(overrides)
-    for component in world.components(entity):
-        name = getattr(component, "relation", None)
-        if name is None or name not in _STRUCTURAL:
-            continue  # Printed/Interned (identity), or derived — not structure
-        rows = remaining.pop(name, component.rows)
-        for row in rows:
-            f.fact(name, new, *row)
-    for name, rows in remaining.items():  # a relation the original didn't carry
-        for row in rows:
-            f.fact(name, new, *row)
-    return new
+    overrides = overrides or {}
+    new = w.spawn()
+    for component in w.components(entity):
+        cls = type(component)
+        if cls not in _STRUCTURAL or cls in overrides:
+            continue
+        w.attach(new, component)
+    for instances in overrides.values():
+        for instance in instances:
+            w.attach(new, instance)
+    return new.id
 
 
-def _path_copy(f: Facts, world, family: str, function, block, if_stmt, new_condition):
+def _path_copy(w, family: str, function: int, block: int, if_stmt: int,
+               new_condition: int) -> int:
     """Comparison already replaced by the caller; copy upward from there —
-    `if_stmt` (new `condition`), `block` (that one `stmt` row swapped), `function`
-    (new `body`) — sharing everything off the path: the file, sibling functions,
-    `name`/`readable` on the ones that didn't change, all one entity still.
+    `if_stmt` (new `Condition`), `block` (that one `Stmt` swapped), `function`
+    (new `Body`) — sharing everything off the path: the file, sibling
+    functions, `name`/`Readable` on the ones that didn't change, all one
+    entity still.
     """
-    new_if_stmt = _clone(f, world, if_stmt, family, condition=((new_condition,),))
-    stmt_rows = [(new_if_stmt,) if row == (if_stmt,) else row for row in f.of("stmt", block)]
-    new_block = _clone(f, world, block, family, stmt=stmt_rows)
-    return _clone(f, world, function, family, body=((new_block,),))
+    new_if_stmt = _clone(w, if_stmt, family, {Condition: [Condition(new_condition)]})
+    stmt_instances = [Stmt(new_if_stmt) if s.entity == if_stmt else s
+                      for s in w.get_all(block, Stmt)]
+    new_block = _clone(w, block, family, {Stmt: stmt_instances})
+    return _clone(w, function, family, {Body: [Body(new_block)]})
 
 
-def _move_current(f: Facts, scenario, name, new_function) -> None:
-    """`current(scenario, name)` is single-valued on the name — see `_redenote`."""
-    assign(f, "current", scenario, name, new_function, keys=1)
-    f.fact("claimed", new_function)
+def _move_current(w, scenario: int, name: str, new_function: int) -> None:
+    """`Current(scenario, name)` is single-valued on the name — see `_redenote`."""
+    _assign(w, scenario, Current, Current(name, new_function), key=lambda c: c.name)
+    w.attach(new_function, Claimed())
 
 
-def _bench(f: Facts, family: str, occasion):
+def _bench(w, family: str, occasion: int) -> int:
     """The private scenario for one family's trial at one occasion — 1:1 by
-    construction, so `wants_plan` never needs to say which occasion a shared
-    bench is for: there is no shared bench."""
-    b = f.node(f"scenario:bench:{family}:{f.show(occasion)}")
-    if not f.holds("scenario", b):
-        f.fact("scenario", b)
-        f.fact("parent", b, _frame_zero(f))
-    # ⭐ Published as a FACT so a reader never has to re-derive the name. A judge
-    # that called this helper to "get" the bench would be MINTING to read — the
-    # same twin trap `_find` warns test code about, one layer in.
-    f.fact("bench", occasion, f.word(family), b)
-    return b
+    construction, so a `wants_plan`-style request never needs to say which
+    occasion a shared bench is for: there is no shared bench."""
+    for held in w.get_all(occasion, Bench):
+        if held.family == family:
+            return held.scenario
+    b = w.spawn(Scenario())
+    w.attach(b, Parent(_frame_zero(w)))
+    # ⭐ Published as a COMPONENT so a reader never has to re-derive the name.
+    # A judge that called this helper to "get" the bench would be MINTING to
+    # read — the same twin trap earlier engines' interning warned about, one
+    # layer in.
+    w.attach(occasion, Bench(family, b.id))
+    return b.id
 
 
 # -- the two rival families -------------------------------------------------
 #
 # Each proposes into its OWN bench, unconditionally — no rival there to lose
-# to — and separately, gated on `winner`, into frame zero. Same structural
+# to — and separately, gated on `Winner`, into frame zero. Same structural
 # logic, two targets; which target is just which scenario is passed in.
 
-def _try_edit(f: Facts, world, family: str, scenario, occasion, name,
-              applies, edit) -> None:
-    inner = _function_named(f, name)
-    guard_q = _guard_of(f, inner)
-    function = next((e for (s, e) in f.of("denotes", inner) if s == scenario), None)
-    comparison = next((e for (s, e) in f.of("denotes", guard_q) if s == scenario), None)
+def _try_edit(w, family: str, scenario: int, occasion: int, name: str,
+              applies, edit) -> bool:
+    inner = _function_named(w, name)
+    guard_q = _guard_of(w, inner)
+    denoted_inner = [d.entity for d in w.get_all(inner, Denotes) if d.scenario == scenario]
+    denoted_guard = [d.entity for d in w.get_all(guard_q, Denotes) if d.scenario == scenario]
+    function = denoted_inner[0] if denoted_inner else None
+    comparison = denoted_guard[0] if denoted_guard else None
     if function is None or comparison is None:
         return False
-    if not applies(comparison):
+    if not applies(w, comparison):
         return False
-    if scenario == _frame_zero(f) and not f.holds("winner", occasion, f.word(family)):
-        return False  # into the real world only once arbitration says so
-    if scenario != _frame_zero(f):
-        f.fact("candidate", occasion, f.word(family))
-        subject, obj = edit.action(f, comparison, guard_q)
-        if not f.holds("action", occasion, f.word(family), subject, obj):
-            f.fact("action", occasion, f.word(family), subject, obj)
-    if_stmt = f.one("if_stmt_of", comparison)
-    block = f.one("block_of", if_stmt) if if_stmt is not None else None
-    if if_stmt is None or block is None:
+    zero = _frame_zero(w)
+    if scenario == zero:
+        winner = w.get(occasion, Winner)
+        if winner is None or winner.family != family:
+            return False  # into the real world only once arbitration says so
+    if scenario != zero:
+        w.attach(occasion, Candidate(family))
+        subject, obj = edit.action(w, comparison, guard_q)
+        w.attach(occasion, Action(family, subject, obj))
+    if_stmt_of = w.get(comparison, IfStmtOf)
+    block_of = w.get(if_stmt_of.entity, BlockOf) if if_stmt_of is not None else None
+    if if_stmt_of is None or block_of is None:
         return False
-    new_condition = edit.new_condition(f, world, family, comparison)
-    new_function = _path_copy(f, world, family, function, block, if_stmt, new_condition)
-    _move_current(f, scenario, name, new_function)
+    new_condition = edit.new_condition(w, family, comparison)
+    new_function = _path_copy(w, family, function, block_of.entity, if_stmt_of.entity,
+                              new_condition)
+    _move_current(w, scenario, name, new_function)
     return True
 
 
@@ -289,12 +386,12 @@ class _Relax:
     """`>` was meant to be `>=`."""
 
     @staticmethod
-    def action(f, comparison, guard_q):
-        return guard_q, f.word("ge")
+    def action(w, comparison, guard_q):
+        return guard_q, "ge"
 
     @staticmethod
-    def new_condition(f, world, family, comparison):
-        return _clone(f, world, comparison, family, operator=((f.word("ge"),),))
+    def new_condition(w, family, comparison):
+        return _clone(w, comparison, family, {Comparison: [Comparison("ge")]})
 
 
 class _Lower:
@@ -303,128 +400,166 @@ class _Lower:
     minus one — the intent `repair.lower`'s own docstring already states."""
 
     @staticmethod
-    def action(f, comparison, guard_q):
-        right = f.one("right", comparison)
-        threshold = f.one("literal", right) if right is not None else None
-        value = f.payload(threshold) - 1 if threshold is not None else None
-        return guard_q, f.value(value)
+    def action(w, comparison, guard_q):
+        right = w.get(comparison, Right)
+        threshold = w.get(right.entity, Constant) if right is not None else None
+        value = decode_literal(threshold.literal) - 1 if threshold is not None else None
+        return guard_q, encode_literal(value)
 
     @staticmethod
-    def new_condition(f, world, family, comparison):
-        right = f.one("right", comparison)
-        threshold = f.one("literal", right)
-        new_right = _clone(f, world, right, family, literal=((f.value(f.payload(threshold) - 1),),))
-        return _clone(f, world, comparison, family, right=((new_right,),))
+    def new_condition(w, family, comparison):
+        right = w.get(comparison, Right)
+        threshold = w.get(right.entity, Constant)
+        new_value = decode_literal(threshold.literal) - 1
+        new_right = _clone(w, right.entity, family, {Constant: [Constant(encode_literal(new_value))]})
+        return _clone(w, comparison, family, {Right: [Right(new_right)]})
 
 
-def _family(f: Facts, family: str, edit, applies):
+def _family(family: str, edit, applies):
     """⭐ A `minting` rule, and the two scenarios ARE the two keys: this family
     gets one edit in its own bench and one into frame zero, ever. `_try_edit`
     answers False to decline — it may not apply yet, or arbitration may not have
     named a winner yet — and a declined key stays open for a later tick."""
 
-    def occasions(f, occasion, _case, _wanted):
-        name = f.one("name", occasion)
-        if name is None:
+    def occasions(w, occasion, _unmet):
+        fn = w.get(occasion, Function)
+        if fn is None:
             return ()
-        bench = _bench(f, family, occasion)
-        if not any(n == name for (n, _) in f.of("current", bench)):
-            f.fact("current", bench, name, occasion)
-        return ((occasion, bench), (occasion, _frame_zero(f)))
+        bench = _bench(w, family, occasion)
+        if not any(c.name == fn.name for c in w.get_all(bench, Current)):
+            w.attach(bench, Current(fn.name, occasion))
+        return ((occasion, bench), (occasion, _frame_zero(w)))
 
-    def act(f, world, occasion, _case, _wanted, key):
+    def act(w, occasion, _unmet, key):
         _, scenario = key
-        name = f.one("name", occasion)
-        return _try_edit(f, world, family, scenario, occasion, name, applies, edit)
+        name = w.get(occasion, Function).name
+        return _try_edit(w, family, scenario, occasion, name, applies, edit)
 
-    return minting(f, Unmet, occasions, act, arity=2)
-
-
-def relax(f: Facts):
-    return _family(f, "relax", _Relax,
-                    lambda comparison: f.holds("operator", comparison, f.word("gt")))
+    return minting(Unmet, occasions, act)
 
 
-def lower(f: Facts):
-    def applies(comparison) -> bool:
-        right = f.one("right", comparison)
-        return right is not None and f.one("literal", right) is not None
-    return _family(f, "lower", _Lower, applies)
+def relax():
+    return _family("relax", _Relax,
+                   lambda w, comparison: w.get(comparison, Comparison).operator == "gt")
+
+
+def lower():
+    def applies(w, comparison):
+        right = w.get(comparison, Right)
+        return right is not None and w.get(right.entity, Constant) is not None
+    return _family("lower", _Lower, applies)
 
 
 # -- judges: authored policy first (needs no scenario), then consequence --------
 
-def veto_negative_threshold(f: Facts):
+def veto_negative_threshold():
     """Authored policy: never propose a threshold below zero. Fires the moment
-    the action is proposed — reads `action` directly, never touches a bench.
+    the action is proposed — reads `Action` directly, never touches a bench.
 
     ⭐ A `derive`, and the shape is the claim: a judge READS and CONCLUDES. It
     cannot mint and it cannot retract, so it cannot fail to terminate, and that
     is checked rather than promised — see `rules.py`.
     """
-    def say(f, occasion, family, _subject, obj):
-        if family != f.word("lower"):
+    def say(w, occasion, action):
+        if action.family != "lower":
             return None
-        value = f.payload(obj)
+        value = decode_literal(action.obj)
         if value is None or value >= 0:
             return None
-        return ("ruled_out", occasion, family, f.word("negative_threshold"))
+        return (occasion, RuledOut(action.family, "negative_threshold"))
 
-    return derive(f, Action, say, arity=3)
+    return derive(Action, say)
 
 
-def judge_consequences(f: Facts):
+def judge_consequences():
     """Does the bench's edit actually satisfy the case, and does it break one
-    that already agreed? Read off the SAME `evaluated`/`agrees` `repair.py`'s
-    own systems derive — for the bench's function as readily as for the real
-    one, because neither system knows there is a difference."""
+    that already agreed? Read off the SAME `Evaluated`/`Agrees` `repair.py`'s
+    own rules derive — for the bench's function as readily as for the real
+    one, because neither rule knows there is a difference."""
 
-    def say(f, occasion, family):
-        bench = next((b for (fam, b) in f.of("bench", occasion) if fam == family), None)
+    def say(w, occasion, candidate):
+        family = candidate.family
+        bench = next((b.scenario for b in w.get_all(occasion, Bench) if b.family == family), None)
         if bench is None:
             return None                # its own family has not benched it yet
-        name = f.one("name", occasion)
-        current = [fn for (n, fn) in f.of("current", bench) if n == name]
+        fn = w.get(occasion, Function)
+        current = [c.function for c in w.get_all(bench, Current) if c.name == fn.name]
         if not current or current[-1] == occasion:
             return None                # not yet edited this tick
         new_function = current[-1]
-        cases = [r for r in f.of("wants", occasion) if len(r) == 2]
-        evaluations = {case: [v for (c, v) in f.of("evaluated", new_function) if c == case]
-                       for case, _ in cases}
+        cases = [(c.case, c.value) for c in w.get_all(occasion, Wants)]
+        evaluations = {case: [e.value for e in w.get_all(new_function, Evaluated) if e.case == case]
+                      for case, _ in cases}
         if any(not got for got in evaluations.values()):
-            return None  # ⚠ not evaluated yet THIS tick — wait, never guess
-            # `ruled_out` is monotonic and never retracted (see the design note):
-            # concluding `does_not_fix` off a missing `evaluated` would be a wrong
+            return None  # ⚠ not evaluated yet THIS tick — wait, never guess.
+            # `RuledOut` is monotonic and never retracted (see the design note):
+            # concluding `does_not_fix` off a missing `Evaluated` would be a wrong
             # veto with no way to take it back once the evaluator's own later tick
             # derives the real answer.
         fixes = all(evaluations[case][-1] == wanted for case, wanted in cases)
         regresses = False
-        for (other_case,) in [r for r in f.of("agrees", occasion) if len(r) == 1]:
-            still_wanted = [w for (c, w) in f.of("wants", occasion) if c == other_case]
+        for agreement in w.get_all(occasion, Agrees):
+            still_wanted = [c.value for c in w.get_all(occasion, Wants) if c.case == agreement.case]
             if not still_wanted:
                 continue
-            got = [v for (c, v) in f.of("evaluated", new_function) if c == other_case]
+            got = [e.value for e in w.get_all(new_function, Evaluated) if e.case == agreement.case]
             if got and got[-1] != still_wanted[0]:
                 regresses = True
         if not fixes or regresses:
-            return ("ruled_out", occasion, family,
-                    f.word("regression") if regresses else f.word("does_not_fix"))
-        return ("ranked", occasion, family, f.value(1))
+            return (occasion, RuledOut(family, "regression" if regresses else "does_not_fix"))
+        return (occasion, Ranked(family, 1))
 
-    return derive(f, Candidate, say, arity=1)
+    return derive(Candidate, say)
+
+
+def commit(w) -> None:
+    """This module's own local reader, kept separate from `repair.arbitrate`/
+    `effects_repair.arbitrate` for the same reason those two are kept separate
+    from EACH OTHER — see `repair.py`'s module note. The fullest of the three:
+    this is the one module that genuinely vetoes a candidate
+    (`veto_negative_threshold`), so `commit` computes eligible (candidates
+    minus ruled-out) BEFORE it ever ranks — hard beats soft, structurally, not
+    by convention.
+    """
+    seen = set()
+    for occasion, _candidate in w.each(Candidate):
+        if occasion.id in seen:
+            continue
+        seen.add(occasion.id)
+        options = [c.family for c in w.get_all(occasion, Candidate)]
+        ruled_out = {r.family for r in w.get_all(occasion, RuledOut)}
+        eligible = [o for o in options if o not in ruled_out]
+        current = w.get(occasion, Winner)
+        if not eligible:
+            if current is not None:
+                w.detach(occasion, Winner)
+            w.replace(occasion, Verdict("unresolved"))
+            continue
+        scores = {}
+        for r in w.get_all(occasion, Ranked):
+            scores[r.family] = r.score
+        best = max((scores.get(o, 0) for o in eligible), default=0)
+        top = [o for o in eligible if scores.get(o, 0) == best]
+        if len(top) == 1:
+            w.replace(occasion, Winner(top[0]))
+            w.replace(occasion, Verdict("forced"))
+        else:
+            if current is not None:
+                w.detach(occasion, Winner)
+            w.replace(occasion, Verdict("ambiguous"))
 
 
 FAMILIES = {"relax": relax, "lower": lower}
 
 
-def install(loop, f: Facts, families=None) -> None:
-    f.system(register_frame_zero(f), name="plan.register_frame_zero")
-    f.system(resolve_function_named(f), name="plan.resolve_function_named")
-    f.system(resolve_guard_of(f), name="plan.resolve_guard_of")
+def install(loop, families=None) -> None:
+    loop.rule(register_frame_zero, name="plan.register_frame_zero")
+    loop.rule(resolve_function_named, name="plan.resolve_function_named")
+    loop.rule(resolve_guard_of, name="plan.resolve_guard_of")
     installed = [name for name in FAMILIES if families is None or name in families]
     for name in installed:
-        f.system(FAMILIES[name](f), name=f"plan.{name}")
+        loop.rule(FAMILIES[name](), name=f"plan.{name}")
     if installed:
-        f.system(veto_negative_threshold(f), name="plan.veto_negative_threshold")
-        f.system(judge_consequences(f), name="plan.judge_consequences")
-        f.system(commit(f), name="arbitration.commit")
+        loop.rule(veto_negative_threshold(), name="plan.veto_negative_threshold")
+        loop.rule(judge_consequences(), name="plan.judge_consequences")
+        loop.rule(commit, name="plan.commit")
