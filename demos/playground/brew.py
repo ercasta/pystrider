@@ -10,12 +10,13 @@ This module owns no business, UX or library knowledge of its own. Every fact and
 rule lives in the swappable `.cnl` blocks beside it; what is here is the knobs, the
 one piece of arithmetic, the source templates, and the driver.
 
-⭐ **REASON and COMPOSE are ONE settle.** They were two stages on the old floor —
-`ask_goal` against `ugm`-classic, then `grammapy` objects in Python. Here
-`design.py`'s checks are systems on the same loop as the block rules, so there is a
-single fixpoint from `cart customer_tier premium` to *this design is admitted*.
+⭐ **REASON and COMPOSE are ONE settle.** They were two stages on an earlier
+floor — a backward reader against an earlier engine, then `grammapy` objects in
+Python. Here `design.py`'s checks are rules on the same loop as the block rules,
+so there is a single fixpoint from `cart customer_tier premium` to *this design
+is admitted*.
 
-⚠ **The arithmetic is a SYSTEM, and it is deliberately the only one.** *Does this
+⚠ **The arithmetic is a RULE, and it is deliberately the only one.** *Does this
 order clear the threshold* is a real number crossing a boundary; the DECISION that
 follows is the business block's. So `ground_qualification` computes the comparison
 and asserts `order_qualifies yes`, and `business.cnl` decides what that earns. The
@@ -23,13 +24,23 @@ boundary between what Python computes and what a rule concludes is the whole sea
 and putting the comparison in the block would have meant inventing arithmetic in
 CNL to no benefit.
 
-⚠⚠ **VERIFY RUNS THE APP; it does not inspect the source.** Engine 2 once shipped a
-repair that "succeeded" while emitting byte-identical source, and only an
-independent gate caught it. A generated UI has the same failure mode: a template
-that renders the right widgets and never wires them reads perfectly. So the claim
-here is `events`, observed from a real Textual app under Pilot — the discount was
-shown, and highlighted, and the irreversible checkout was gated BEFORE it
-completed, because the running app did those things in that order.
+⚠⚠ **VERIFY RUNS THE APP; it does not inspect the source.** A repair that
+"succeeds" while emitting byte-identical source is a shipped bug an earlier
+engine once caught only by an independent gate. A generated UI has the same
+failure mode: a template that renders the right widgets and never wires them
+reads perfectly. So the claim here is `events`, observed from a real Textual
+app under Pilot — the discount was shown, and highlighted, and the
+irreversible checkout was gated BEFORE it completed, because the running app
+did those things in that order.
+
+⚠⚠ 2026-08-29: rewritten off `Facts` onto `loopingrules.loop.Loop` and
+`cnl.Vocabulary` directly — see `pystrider.cnl`'s own module note for why this
+package still carries a small atom-interning class where every other module
+moved to fixed components. `Facts(cnl.install(blocks), scenario(cart),
+design.install)` used to thread one shared adapter through three installers;
+now the SAME `Vocabulary` is built once (`cnl.install(blocks)(loop)`) and
+passed explicitly to `scenario`/`design.install`, since there is no longer an
+implicit `Facts` object for them to discover it through.
 """
 from __future__ import annotations
 
@@ -38,8 +49,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-from pystrider import cnl
-from ugm.facts import Facts
+from loopingrules.loop import Loop
+
+from pystrider import cnl, strict
 
 from . import design
 
@@ -67,29 +79,31 @@ class Cart:
 def scenario(cart: Cart):
     """The cart's own facts, plus the one comparison Python grounds.
 
-    ⚠ The knob values are interned at install, never inside a system: `Facts.word`
-    spawns on a miss and a spawn moves `revision`, so a system that minted would
-    look like it fired on every pass and the world would never settle.
+    ⚠ The knob values are interned at install, never inside a rule: `Vocabulary.
+    word` spawns on a miss and a spawn moves `revision`, so a rule that minted
+    would look like it fired on every pass and the world would never settle.
     """
 
-    def installer(loop, f: Facts) -> None:
-        for term in (cart.name, cart.customer_tier, "yes",
-                     str(cart.order_spend), "order_spend", "has_checkout"):
-            f.word(term)
-        subject = f.word(cart.name)
-        f.fact("customer_tier", subject, f.word(cart.customer_tier))
-        f.fact("order_spend", subject, f.word(str(cart.order_spend)))
+    def installer(loop, v: cnl.Vocabulary) -> None:
+        for term in (cart.name, cart.customer_tier, "yes", str(cart.order_spend)):
+            v.word(term)
+        subject = v.word(cart.name)
+        loop.world.attach(subject, cnl.predicate_component("customer_tier")(
+            v.word(cart.customer_tier)))
+        loop.world.attach(subject, cnl.predicate_component("order_spend")(
+            v.word(str(cart.order_spend))))
         # ⚠ What makes this entity findable AS the thing under design. `design.py`
         # looks the cart up by what it is, not by a handle passed in.
-        f.fact("has_checkout", subject, f.word("yes"))
+        loop.world.attach(subject, cnl.predicate_component("has_checkout")(v.word("yes")))
         if cart.irreversible:
-            f.fact("action_irreversible", subject, f.word("yes"))
-        f.system(ground_qualification(f), name="brew.ground_qualification")
+            loop.world.attach(subject, cnl.predicate_component("action_irreversible")(
+                v.word("yes")))
+        loop.rule(ground_qualification(v), name="brew.ground_qualification")
 
     return installer
 
 
-def ground_qualification(f: Facts):
+def ground_qualification(v: cnl.Vocabulary):
     """The §8 comparison boundary: the number crosses it in Python, the DECISION
     is left to `business.cnl`.
 
@@ -97,19 +111,23 @@ def ground_qualification(f: Facts):
     `discount_policy threshold 100` re-derives the whole app — which is the claim
     the playground exists to make.
     """
+    threshold_pred = cnl.predicate_component("threshold")
+    order_spend_pred = cnl.predicate_component("order_spend")
+    order_qualifies_pred = cnl.predicate_component("order_qualifies")
 
-    def system(world) -> None:
-        policy, yes = f.known("discount_policy"), f.known("yes")
-        cart = design._cart(f)
+    def rule(w) -> None:
+        policy, yes = v.known("discount_policy"), v.known("yes")
+        cart = design._cart(v)
         if policy is None or yes is None or cart is None:
             return
-        threshold, spend = f.text("threshold", policy), f.text("order_spend", cart)
-        if threshold is None or spend is None:
+        threshold_held, spend_held = w.get(policy, threshold_pred), w.get(cart, order_spend_pred)
+        if threshold_held is None or spend_held is None:
             return
+        threshold, spend = v.text(threshold_held.object), v.text(spend_held.object)
         if float(spend) > float(threshold):
-            f.fact("order_qualifies", cart, yes)
+            w.attach(cart, order_qualifies_pred(yes))
 
-    return system
+    return rule
 
 
 def blocks_with(**edits) -> tuple:
@@ -138,7 +156,8 @@ def block_text(name: str) -> str:
 
 @dataclass
 class Reasoning:
-    facts: Facts
+    vocabulary: cnl.Vocabulary
+    loop: Loop                    # kept for `.rules`/`.errors` -- introspection, never re-run
     blocks: tuple
     granted: bool                 # does the business block grant a discount?
     rate: float                   # the discount percent (business data)
@@ -146,7 +165,7 @@ class Reasoning:
     ticks: int                    # how many passes the whole thing took to settle
 
     def why(self, subject: str, predicate: str, obj: str) -> List[str]:
-        return cnl.explain(self.facts, self.blocks, cnl.Triple(subject, predicate, obj))
+        return cnl.explain(self.vocabulary, self.blocks, cnl.Triple(subject, predicate, obj))
 
 
 def reason(cart: Cart, blocks=None) -> Reasoning:
@@ -158,14 +177,18 @@ def reason(cart: Cart, blocks=None) -> Reasoning:
     them mutated.
     """
     blocks = cnl.load_all(_HERE, BLOCKS) if blocks is None else tuple(blocks)
-    f = Facts(cnl.install(blocks), scenario(cart), design.install)
-    settled = f.run()
-    subject = f.known(cart.name)
-    features = sorted(f.show(x) for x in design._subjects_relating_to(f, "admitted_for", subject))
-    policy = f.known("discount_policy")
-    return Reasoning(facts=f, blocks=blocks,
-                     granted=cnl.ask(f, cart.name, "grants_discount", "yes"),
-                     rate=float(f.text("rate", policy)),
+    loop = Loop()
+    v = cnl.install(blocks)(loop)
+    scenario(cart)(loop, v)
+    design.install(loop, v)
+    settled = strict.run(loop)
+    subject = v.known(cart.name)
+    features = sorted(v.text(x) for x in design._subjects_relating_to(v, "admitted_for", subject))
+    policy = v.known("discount_policy")
+    rate = v.world.get(policy, cnl.predicate_component("rate"))
+    return Reasoning(vocabulary=v, loop=loop, blocks=blocks,
+                     granted=cnl.ask(v, cart.name, "grants_discount", "yes"),
+                     rate=float(v.text(rate.object)),
                      features=features, ticks=settled.ticks)
 
 
@@ -402,8 +425,8 @@ def brew(cart: Cart = Cart(), blocks=None) -> Brew:
     decision table says which point refused it.
     """
     r = reason(cart, blocks)
-    table = design.decisions(r.facts)
-    screen = design.chosen_screen(r.facts) or "one_screen"
+    table = design.decisions(r.vocabulary)
+    screen = design.chosen_screen(r.vocabulary) or "one_screen"
     ok = bool(table) and all(d["admitted"] for d in table)
     source = emit(cart, r, screen) if ok else ""
     return Brew(cart=cart, reasoning=r, decisions=table, screen=screen,

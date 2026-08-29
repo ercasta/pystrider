@@ -21,7 +21,7 @@ def report(cart: Cart) -> bool:
     print(f"\n{'=' * 78}\nCART  tier={cart.customer_tier}  spend={cart.order_spend}  "
           f"irreversible={cart.irreversible}\n{'=' * 78}")
 
-    print(f"\nREASON   ({len(r.blocks)} blocks, {len(r.facts.loop.systems)} systems, "
+    print(f"\nREASON   ({len(r.blocks)} blocks, {len(r.loop.rules)} rules, "
           f"settled in {r.ticks} ticks)")
     print(f"  discount granted : {r.granted}   (rate {r.rate}%)")
     print(f"  features admitted: {', '.join(r.features) or '(none)'}")

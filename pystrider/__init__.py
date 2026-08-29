@@ -54,25 +54,38 @@ stayed text while these did not.
 
 ## What exists
 
-⚠⚠ **`facts.py` AND `arbitration.py` ARE NOT HERE ANY MORE (2026-08-28).** They moved
-into `ugm` itself — `ugm.facts`, `ugm.arbitration` — because neither knew anything about
-Python, and the discipline they carry is one every domain on that world needs or reinvents
-badly. This package imports them like any other user: `from ugm.facts import Facts,
-relation`. ⭐ What moved with them is the tie-break argument in
-`../harneskills/engine/DECISION_PATTERNS.md`; what stayed is everything below, all of which
-is about Python specifically.
+⚠⚠ **`facts.py` AND `arbitration.py` ARE BACK HERE, AND THIS TIME FOR GOOD
+(2026-08-29).** They lived in `ugm` for one day (2026-08-28), moved there because
+neither knew anything about Python. `ugm` was carved out of `harneskills` into its
+own repo the day after, renamed `loopingrules` — and on the way out, deleted
+`facts.py`/`arbitration.py` entirely rather than port them: nothing in
+`harneskills` itself ever imported them, so a generic relation/arbitration
+vocabulary had no domain left asking for it. **They do not come back as files.**
+Every relation this package used to declare through them is now a real,
+explicitly-named `@dataclasses.dataclass` component, read and written straight
+through `loopingrules.world.World` — `patterns.py` is the worked example.
+Arbitration is domain-owned code in `repair.py`/`effects_repair.py`/`plan.py`
+now, not a shared reader — see `docs/decision_patterns.md` for the argument
+`harneskills`'s own `docs/intake processing.md` independently arrived at.
+`cnl.py` and `transliterate.py` are the two exceptions, and each says why in its
+own module note: their vocabulary is late-bound (a `.cnl` predicate, an AST field
+name), not fixed at Python-authoring time, so each keeps a small,
+`dataclasses.make_dataclass`-based dynamic factory scoped to itself.
 
 | module | role |
 |---|---|
-| `cnl.py` | authored `head when body` blocks, each rule compiled to ONE system |
-| `intake.py` | Python → propositions, with provenance and gaps named |
-| `transliterate.py` | Python → propositions, TOTALLY — no membrane, nothing refused |
-| `emit.py` | propositions → Python, via `ast.unparse` |
+| `cnl.py` | authored `head when body` blocks, each rule compiled to ONE loop rule |
+| `intake.py` | Python → components, with provenance and gaps named |
+| `transliterate.py` | Python → components, TOTALLY — no membrane, nothing refused |
+| `emit.py` | components → Python, via `ast.unparse` |
 | `patterns.py` | the neutral descriptions (the forward half of the bet) |
-| `repair.py` | diagnosis, the evaluator-as-system, and the two repair families |
+| `repair.py` | diagnosis, the evaluator-as-rule, and the two repair families |
 | `evaluator.py` | what a function returns for a case, derived from structure |
 | `effects.py` | what a function DOES outside its return value, forward off structure |
-| `effects_repair.py` | a wanted effect, achieved through `ugm.arbitration`'s candidates |
+| `effects_repair.py` | a wanted effect, achieved through this module's own candidates |
+| `plan.py` | a parallel demonstration of the same repair, arbitrated as a scenario bench |
+| `rules.py` | `derive`/`assign`/`minting` — the three rule shapes `plan.py` is built from |
+| `strict.py` | run a loop the way a one-shot derivation needs, not the way a REPL does |
 
 ⚠ `demos/playground` is the headline: business, UX and toolkit rules in separate
 authored files, joined only by `bridge.cnl`, composed and driven green through
@@ -81,5 +94,6 @@ Textual's Pilot. It is the one place the CNL surface is load-bearing, and
 """
 from __future__ import annotations
 
-__all__ = ["cnl", "effects", "effects_repair", "emit", "evaluator", "intake",
-           "patterns", "repair", "transliterate"]
+__all__ = ["cnl", "domain", "effects", "effects_repair", "emit", "evaluator",
+           "intake", "patterns", "plan", "repair", "rules", "strict",
+           "transliterate"]

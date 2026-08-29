@@ -8,6 +8,13 @@ result.
 
 The narrative version, with its printed evidence, is
 `python -m demos.playground.playground --flip`.
+
+⚠⚠ 2026-08-29: rewritten off `Facts` onto `loopingrules.loop.Loop` and
+`cnl.Vocabulary` — see `brew.py`'s own module note. `Reasoning.facts` is
+`Reasoning.vocabulary` now, and `.loop` (added) is where `.rules`/`.errors`
+live -- `Facts` used to fold the loop and the vocabulary into one object;
+they are two now, the same way `install()` needed `v` handed to it
+explicitly instead of discovering it through a shared adapter.
 """
 from __future__ import annotations
 
@@ -68,21 +75,22 @@ def test_a_head_variable_nothing_binds_is_REFUSED_at_parse_time():
         cnl.parse("?a wants ?b when ?a asked yes", name="loose")
 
 
-# -- one authored rule, one system ----------------------------------------------
+# -- one authored rule, one rule ----------------------------------------------
 
-def test_every_authored_rule_became_exactly_one_system():
+def test_every_authored_rule_became_exactly_one_rule():
     r = reason(Cart())
     authored = sum(len(b.rules) for b in r.blocks)
     # the block rules, plus the arithmetic grounding and the three design checks
-    assert len(r.facts.loop.systems) == authored + 4
+    assert len(r.loop.rules) == authored + 4
 
 
 def test_the_world_SETTLES():
-    """⚠ `Facts.run` refuses a run that is still firing at the budget, so reaching
-    here at all is the claim. On the old floor a rule without a `no <own
-    conclusion>` premise never stopped; here `attach` compares before it stores."""
+    """⚠ `pystrider.strict.run` refuses a run that is still firing at the budget,
+    so reaching here at all is the claim. On an earlier floor a rule without a
+    `no <own conclusion>` premise never stopped; here `attach` compares before
+    it stores."""
     r = reason(Cart())
-    assert r.ticks < 10 and not r.facts.loop.errors
+    assert r.ticks < 10 and not r.loop.errors
 
 
 # -- the business rules reach the screen ----------------------------------------

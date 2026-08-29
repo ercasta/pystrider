@@ -19,14 +19,16 @@ version of a function by resolving a pointer, the same way it reads anything els
 by holding an entity across the boundary. **Backtracking planner** names what falls out once that's true:
 propose a scenario, let every existing observer (`repair.answer`, `effects.contains`, `patterns.py`) run
 over it exactly as it runs over the real one, read the consequences back as ordinary facts, and arbitrate
-— `ugm.arbitration.commit`, unchanged — over whichever scenarios survive every veto.
+— a domain-owned `commit`, the same candidate/ranked/ruled_out/winner shape a shared
+`arbitration.commit` used to read generically — over whichever scenarios survive every veto.
 
 ## Already proven, not just argued
 
 Everything here is `docs/decision_patterns.md`'s vocabulary, asked to carry one more thing than it has so
 far — not a second engine beside it:
 
-- **`candidate`/`ranked`/`ruled_out`/`winner`** (`ugm.arbitration`) — unchanged. The occasion an action
+- **`candidate`/`ranked`/`ruled_out`/`winner`** (`plan.commit`, domain-owned since `ugm.arbitration`
+  was deleted rather than ported — see `pystrider/repair.py`'s own note) — unchanged in SHAPE. The occasion an action
   proposes for is still just an entity a caller minted; a scenario's proposed edit is one more kind of
   candidate, judged the same generic way `pizza`/`nothing` were.
 - **Subgoaling with no subgoal machinery** (`repair.ask`/`answer`/`checked`) — a scenario that wants a
@@ -84,11 +86,16 @@ function without resolving `current` first, is a wrong rule — the same verdict
 already gives a rule with an opinion about its rivals, applied to a rule with an opinion about which
 world it's in.
 
-## Why not raw deltas
+## Why not raw operations
 
-`ugm.delta`'s `Attach`/`Detach`/`Spawn` name entity ids, and an id is only real inside the run that minted
-it — there is no way to "replay" `Attach(entity_93, Callee(entity_211))` against a different scenario,
-because that scenario never had `entity_93` to begin with. Worse for judging: a raw delta is illegible.
+⚠ `ugm.delta` — a rule returning a description of a write for `Loop.tick` to apply, rather than
+touching the world itself — no longer exists at all (removed upstream, not merely renamed; a rule
+mutates `world` directly now). The argument below predates that removal and is unaffected by it: it
+was never really about deltas AS SUCH, it is about entity ids.
+
+A direct `world.attach(entity_93, Callee(entity_211))` names entity ids, and an id is only real inside
+the run that minted it — there is no way to "replay" that call against a different scenario, because
+that scenario never had `entity_93` to begin with. Worse for judging: a raw operation is illegible.
 `ruled_out` needs something a policy judge can pattern-match — *"never insert a zero-argument `open()`
 call"* is a claim about a **description** (the object query names `open`), not about a number in a
 dict. So a plan step is `action(occasion, kind, subject_query, object_query_or_literal)` — a domain
@@ -128,7 +135,7 @@ reads `candidate` is the shape this could grow into if a second, unrelated famil
   the scenario *enacted* and then read by the existing observers — `repair.answer`, `checked` — exactly
   as they read the real world today, because they never knew there were two.
 
-Both write `ruled_out(occasion, option, reason)`; `arbitration.commit` doesn't know or care which kind
+Both write `ruled_out(occasion, option, reason)`; `commit` doesn't know or care which kind
 eliminated a candidate, which is the same hard-beats-soft structure `decision_patterns.md` already argued
 for pizza.
 
@@ -136,8 +143,8 @@ for pizza.
 
 - No copy-on-write, anywhere in the substrate. Versioning is an explicit act of the rule that derives a
   scenario, never an interception of a read.
-- No replaying raw `ugm.delta` operations across a scenario boundary. A plan is queries and actions;
-  substrate deltas are what enacting one step produces, not what a plan is made of.
+- No replaying raw `World` operations (`attach`/`detach`/`spawn`) across a scenario boundary. A plan
+  is queries and actions; direct writes are what enacting one step produces, not what a plan is made of.
 - No generic `action`-kind enactor yet. `kind` is interpreted by the family that wrote it, on purpose,
   until a second family needs the same one.
 - No chained multi-step planning in the first prototype — `wants_plan`/`current`/`parent` are shaped so a
