@@ -1,9 +1,9 @@
-"""Python → propositions, TOTALLY — and the membrane moved out of the reading.
+"""Python → components, TOTALLY — and the membrane moved out of the reading.
 
 ⭐⭐ **THE SPLIT THIS FILE IS.** `intake.py` does two jobs in one pass, and they
 have opposite obligations:
 
-    (a) TRANSLITERATION   mirror the AST into propositions
+    (a) TRANSLITERATION   mirror the AST into components
     (b) THE MEMBRANE      decide which constructs this project's vocabulary covers
 
 Conflating them is what makes reach 3.1 %. Intake's load-bearing rule — *an
@@ -22,147 +22,161 @@ becomes authored rules over the result, where another author can argue with it.
 
 ## What this deposits, and it is the whole vocabulary
 
-    ast_node($n)                every node, so a rule can quantify over "syntax"
-    syntax($n, ListComp)        the AST class name, as a WORD, spelled as Python
-                                spells it — no case mangling, so `While` in a
-                                backlog report and `While` in a rule are one word
-    origin($n, "path")          provenance, a PARAMETER (`intake.py`'s reason)
-    source_line($n, 12)         attribution OBSERVED, never derived
-    from_code($n)               kept from `intake`: what makes a later recognition
-                                a claim about the ARTIFACT and not about our own
-                                intention
-    <field>($n, $x)             one edge per AST field, named as the AST names it
-    seq($s), item($s, 0, $c)    a LIST field is one node with POSITIONED `item` parts
+    AstNode(n)                   every node, so a rule can quantify over "syntax"
+    Syntax(n, "ListComp")        the AST class name, as a WORD, spelled as Python
+                                 spells it — no case mangling, so `While` in a
+                                 backlog report and `While` in a rule are one word
+    Origin(n, "path")            provenance, a PARAMETER (`intake.py`'s reason)
+    SourceLine(n, 12)            attribution OBSERVED, never derived
+    FromCode(n)                  kept from `intake`: what makes a later recognition
+                                  a claim about the ARTIFACT and not about our own
+                                  intention
+    <field>(n, x)                one component PER AST FIELD NAME, named as the
+                                  AST names it
+    SeqNode(s), Item(s, 0, c)    a LIST field is one node with POSITIONED `Item` parts
 
-⚠ **`readable` IS NOT DEPOSITED HERE, and that is the point.** It was intake's way
+⚠ **`Readable` IS NOT DEPOSITED HERE, and that is the point.** It was intake's way
 of saying *this is not a placeholder*, and there are no placeholders any more.
-Abstention is still needed — `rules/patterns.ugm` names `+readable($s)` to refuse
-to describe a loop whose sequence it could not read — but it is now a claim about
-whether the DESCRIBING vocabulary covers a node, which is a corpus's judgement and
-not a reader's. It belongs in the bridge, beside the rules that would abstain.
+Abstention is still needed — a description can still refuse to describe a loop
+whose sequence it could not read — but it is now a claim about whether the
+DESCRIBING vocabulary covers a node, which is a corpus's judgement and not a
+reader's. It belongs beside the rules that would abstain.
 
 ## Why a list gets a node of its own
 
-`intake.py` learned this for bodies — *a body is ONE `block` node with ordered
-`stmt` parts, never N parts on the container*, or a description can only point at
+`intake.py` learned this for bodies — *a body is ONE `Block` node with ordered
+`Stmt` parts, never N parts on the container* — or a description can only point at
 the first statement. It generalises, and a pass makes the reason sharper: **a pass
-that inserts a statement needs the list to be a thing it can attach to.** `+item($s,
-$new)` appends; N edges on the container give a pass nothing to hold.
+that inserts a statement needs the list to be a thing it can attach to.** A new
+`Item` appends; N components on the container give a pass nothing to hold.
 
-⚠ An EMPTY list still gets its `seq` node. It costs a node per `decorator_list`
+⚠ An EMPTY list still gets its `SeqNode`. It costs a node per `decorator_list`
 nobody wrote, and it buys the one case that matters: appending to an empty body is
 the same rule as appending to a full one.
 
-**⚠⚠ AND AN ITEM CARRIES ITS POSITION, BECAUSE DEPOSIT ORDER CANNOT COUNT TO TWO.**
-The first version of this file wrote `item($s, $c)` and leaned on `Facts.of` being
-insertion-ordered, arguing an index would be a second place the order lived. That is
-true and it is not the problem — **propositions are INTERNED**, so a list holding the
-same node twice deposits `item($s, $c)` twice, which is ONE proposition, and the list
-comes back short. Measured on the standard library: `{**a, **b}` is `Dict.keys =
-[None, None]` and rendered as `{**a}`; `def f(*, a, b)` is `kw_defaults = [None,
-None]` and lost a parameter. Fourteen functions, every one silently wrong.
-
-⭐ The engine reifies its own rule members the same way and for the same reason —
-`ant($r, $pattern, $mode, $i)` carries a position. A positional index is not
-bookkeeping beside the order; on an interning substrate it is the only thing that
-makes two identical members two members.
+**⚠⚠ AND AN ITEM CARRIES ITS POSITION, BECAUSE ATTACH ORDER CANNOT COUNT TO TWO.**
+The first version of this file leaned on deposit order alone, arguing an index
+would be a second place the order lived. That is true and it is not the problem —
+**components are DEDUPED BY VALUE**, so a list holding the same node twice would
+attach the same `Item` twice, which `World.attach` refuses as a no-op, and the
+list comes back short. Measured on the standard library: `{**a, **b}` is
+`Dict.keys = [None, None]` and rendered as `{**a}`; `def f(*, a, b)` is
+`kw_defaults = [None, None]` and lost a parameter. Fourteen functions, every one
+silently wrong. A positional index on `Item` is not bookkeeping beside the order;
+on a deduping substrate it is the only thing that makes two identical members two
+members.
 
 ⚠ So a pass that reorders a list owns the renumbering, and `detransliterate` reads by
-POSITION rather than by deposit order — otherwise a renumbered list would still be
+POSITION rather than by attach order — otherwise a renumbered list would still be
 read in the order it was written, which is the drift the index was supposed to end.
 
 ## The two encodings, and the invariant that keeps them apart
 
-`facts.py` has words and literals for a reason it paid for: `operator=gt` stored as
-`'gt'` made `+operator(?g, gt)` unmatchable and one of two repair families could
-never fire. Here:
+`intake.py` has words and literals for a reason it paid for: `operator=gt` stored as
+`'gt'` made a rule naming the bare `gt` unmatchable and one of two repair families
+could never fire. Here:
 
 * **an IDENTIFIER is a WORD** — `name`, `id`, `attr`, `arg`, `asname`, and the rest
   of the fields Python's grammar declares as names. A rule must be able to spell them.
-* **a `Constant`\'s payload is a LITERAL** — `repr`-encoded, `literal_eval` back. It
-  is a value the program computes with, not vocabulary, which is `facts.py`\'s own
+* **a `Constant`'s payload is a LITERAL** — `repr`-encoded, `literal_eval` back. It
+  is a value the program computes with, not vocabulary, which is `intake.py`'s own
   distinction. So are `level`, `is_async`, `simple`, and the `None`s inside
   `kw_defaults`.
 
-**⚠⚠ AND THE DECODER\'S INVARIANT IS ENFORCED BY THE ENCODER, BECAUSE REASONING IT
+**⚠⚠ AND THE DECODER'S INVARIANT IS ENFORCED BY THE ENCODER, BECAUSE REASONING IT
 TRUE WAS WRONG.** `detransliterate` decides which encoding it is looking at by
 trying `literal_eval` — succeeded means literal, failed means word. The first
 version of this file argued that was safe *because an identifier can never be a
 numeric literal and `True`/`False`/`None` are keywords*, and word-encoded every
-`str`. Measured on 587 functions, that lost five of them and refused nine more:
+`str`. Measured on 587 functions, that lost five of them and refused nine more —
+a string literal is arbitrary text, and plenty of it reads as something else
+entirely (an empty-list literal, an int, a quoted string one layer down). So
+`_primitive` now word-encodes only text that does NOT read as a literal, and
+everything else goes through `repr` — the decoder's premise is a postcondition of
+the encoder rather than a claim about Python.
 
-    return {t.value.id + \'[]\'}   ->   return {t.value.id + []}       the STRING
-                                                                     `\'[]\'` came
-                                                                     back an empty
-                                                                     LIST
-    f\'{x:14}\'                    ->   refused by `ast.unparse`        a format spec
-                                                                     is a `Constant`
-                                                                     holding "14",
-                                                                     decoded as the
-                                                                     int 14
-
-The argument was sound about identifiers and silent about the other half: a string
-LITERAL is arbitrary text, and `\'[]\'`, `\'14\'`, `\'"each_does"\'` all read as
-something else. So `_primitive` now word-encodes only text that does NOT read as a
-literal, and everything else goes through `repr` — the decoder\'s premise is a
-postcondition of the encoder rather than a claim about Python.
-
-⚠ A word may therefore contain spaces (`type_comment`), which no `.ugm` surface can
+⚠ A word may therefore contain spaces (`type_comment`), which no CNL surface can
 spell. Such a constant is reachable by a rule through a variable and not by name.
 
-## ⚠⚠ `names` — the collision that WAS here, and why it is gone
+## ⭐⭐ `names` — the collision that WAS here, and the one that structurally CANNOT be, now
 
-`Machine.reserved` mapped a name to `ugm`'s own node, so `Loader.atom("names")`
-handed back the node the engine used for `names(<rule>, ...)`. `Import.names`,
-`Global.names` and `Nonlocal.names` therefore deposited into the engine's
-rule-naming relation: loud nowhere, wrong everywhere downstream. It was renamed to
-`py_names` for four generations.
+`names` used to be renamed to `py_names` because an earlier engine's reserved-name
+table mapped `names` to ITS OWN machinery node, so `Import.names`/`Global.names`/
+`Nonlocal.names` deposited into engine internals — loud nowhere, wrong everywhere
+downstream. `_RENAMED` stays EMPTY, kept for the record rather than deleted: there
+is no reserved table on `loopingrules` to collide with.
 
-⭐ **On `harneskills` there is no reserved table to collide with.** A relation is a
-Python class interned by its own name in `facts._RELATIONS`, and no machinery lives
-in that namespace — so `names` is just a relation called `names`. The rename is
-retired and `_RENAMED` is empty.
+⚠⚠ 2026-08-29: **the collision `check_vocabulary` still checks for is no longer
+possible even in principle, not merely retargeted.** Every AST field name becomes
+its OWN dynamically-built component CLASS (`field_component`, below), interned by
+name in a dict private to this module — never the same Python object as this
+module's own fixed vocabulary (`AstNode`, `Syntax`, `SeqNode`, `Item`). A field
+that happened to be called `"syntax"` would attach instances of a *different*
+class than the fixed `Syntax` tag, so nothing could overwrite anything even if the
+strings coincide — the same "a relation is a class, not a name in a shared table"
+argument that made the twin trap structurally impossible on `intake.py`, one level
+up. `check_vocabulary` is kept anyway, unconditionally cheap and now genuinely
+unable to fire, the same spirit that keeps `_RENAMED` empty rather than deleted.
 
-⚠ `check_vocabulary()` stays, RETARGETED: what a new AST field can still collide
-with is this module's OWN vocabulary (`ast_node`, `syntax`, `seq`, `item`, ...). It
-re-derives the set from THIS interpreter's `ast` on every run, so the next field
-Python adds is a refusal by name rather than a silence — `docs/transplant.md`'s
-lesson kept pointed at the live hazard instead of a dead one.
-
+⚠ `check_vocabulary()` no longer checks the field-component names against this
+module's fixed vocabulary for safety (nothing can collide) — it is kept as a
+diagnostic: if `ast` ever grows a field with the same spelling as `AstNode`/
+`Syntax`/`SeqNode`/`Item`, a human reading both would be confused even though the
+substrate would not be.
 """
 from __future__ import annotations
 
 import ast
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
-from ugm.facts import Facts
+from .intake import FromCode, Origin, SourceLine
 
 #: AST field names this cannot deposit under their own name, and what they become.
 #: ⚠⚠ **EMPTY SINCE THE HARNESKILLS PORT, and the entry that was here is worth
-#: keeping in the record.** `names` used to be renamed to `py_names`, because
-#: `Machine.reserved` mapped it to the ENGINE's own node — so `Import.names`,
-#: `Global.names` and `Nonlocal.names` would deposit into `ugm`'s rule-naming
-#: relation: loud nowhere, wrong everywhere downstream.
-#:
-#: ⭐ There is no such table now. A relation is a Python class interned in
-#: `facts._RELATIONS` by its own name, and nothing else lives in that namespace, so
-#: no AST field can collide with machinery. The rename is gone rather than kept
-#: "just in case": a lie the bridge has to undo is worth exactly the hazard it
-#: averts, and the hazard is retired. `detransliterate` reads the same (empty) table,
-#: so restoring an entry needs no other change.
+#: keeping in the record.** See the module note on `names`.
 _RENAMED: Dict[str, str] = {}
 
-#: Our own relations — the vocabulary this module describes an AST node WITH, as
-#: opposed to the field names it reads OFF one. ⚠ `check_vocabulary` guards exactly
-#: this set: a Python that grew an AST field called `syntax` or `item` would have a
-#: transliterated node overwrite the relation describing it, and nothing would say so.
+#: Our own FIXED vocabulary — the classes this module declares itself, as opposed
+#: to the per-field classes `field_component` builds dynamically. ⚠
+#: `check_vocabulary` guards this set as a human-readability diagnostic only; see
+#: the module note on why a real collision is no longer possible.
 _OURS = ("ast_node", "syntax", "seq", "item", "origin", "source_line", "from_code")
 
-#: The fields carrying a VALUE rather than a name. `facts.py`'s distinction, and the
-#: only place this module makes one — a `Constant`'s payload is what the program
-#: computes with, everything else primitive is vocabulary if it can be.
+#: The fields carrying a VALUE rather than a name. `intake.py`'s distinction, and
+#: the only place this module makes one — a `Constant`'s payload is what the
+#: program computes with, everything else primitive is vocabulary if it can be.
 _VALUED = {("Constant", "value"), ("Constant", "kind")}
+
+
+@dataclass(frozen=True)
+class AstNode:
+    """Every transliterated node carries this, so a rule can quantify over
+    "syntax" without knowing which construct it is."""
+
+
+@dataclass(frozen=True)
+class Syntax:
+    """The AST class name, as a WORD, spelled as Python spells it."""
+
+    kind: str
+
+
+@dataclass(frozen=True)
+class SeqNode:
+    """A list field, reified as its own entity — see the module note on why
+    a list gets a node of its own."""
+
+
+@dataclass(frozen=True)
+class Item:
+    """One member of a `SeqNode`, at its POSITION. Multi-valued and
+    order-independent to read (sort by `index`) — see the module note on
+    why the position is not decoration."""
+
+    index: int
+    value: Any
 
 
 def reads_as_literal(text: str) -> bool:
@@ -200,30 +214,38 @@ def _ast_field_names() -> Set[str]:
 
 
 def check_vocabulary() -> None:
-    """Refuse, by name, any relation this module would deposit into another's.
-
-    ⚠ Retargeted rather than deleted. It used to guard `Machine.reserved` — the
-    engine's own relation names — which is the collision that actually bit
-    (`Import.names`). There is no engine and no reserved table now, so what is left
-    to collide with is OUR OWN vocabulary: if `ast` ever grows a field called
-    `syntax` or `item`, a transliterated node would overwrite the relation this
-    module uses to describe it, and nothing would say so.
-
-    ⭐ The set is re-derived from THIS interpreter's `ast` on every run, so the
-    next field Python adds is a refusal by name rather than a silence. That is
-    `docs/transplant.md`'s recorded lesson kept pointed at the live hazard instead
-    of at a dead one.
-    """
+    """A human-readability diagnostic — see the module note on why a real
+    collision between an AST field and this module's own fixed vocabulary is
+    no longer possible, only confusing if it happened."""
     clash = sorted(_ast_field_names() & set(_OURS))
     if clash:
         raise RuntimeError(
-            f"this Python's `ast` declares field(s) {clash}, which are also the "
-            f"relation names this module deposits its own structure under — a "
-            f"transliterated node would overwrite them. Add each to `_RENAMED`."
+            f"this Python's `ast` declares field(s) {clash}, which read the same "
+            f"as this module's own fixed vocabulary — harmless (different "
+            f"classes), but confusing to a human. Add each to `_RENAMED`."
         )
 
 
 _checked = False
+
+#: field name -> its component class. Interned the same way `intake.py`'s fixed
+#: vocabulary is a fixed set of classes, except THIS name table is built at
+#: runtime because an AST field name is late-bound — whatever THIS Python's
+#: `ast` module declares, not something this module authors itself. The same
+#: exception `cnl.py`'s predicates need, for the same reason.
+_FIELDS: Dict[str, type] = {}
+
+
+def field_component(name: str) -> type:
+    """The component class for AST field `name`. The SAME class every call —
+    two lookups are the same object because Python says so, same guarantee
+    `intake.py`'s fixed classes give for free and this module has to build
+    because its vocabulary is not fixed in advance."""
+    cls = _FIELDS.get(name)
+    if cls is None:
+        cls = _FIELDS[name] = dataclasses.make_dataclass(
+            name, [("value", "typing.Any")], frozen=True)
+    return cls
 
 
 @dataclass
@@ -242,88 +264,82 @@ class Transliterated:
     #: How many of each AST class came through. The reach report's raw material,
     #: and the thing a pass author reads to know what is actually in the corpus.
     census: Dict[str, int] = field(default_factory=dict)
-    facts: Optional[Facts] = field(default=None, repr=False)
+    world: Optional[Any] = field(default=None, repr=False)
 
 
 class Transliterate:
-    """One AST → propositions. No membrane, no dispatch table, no handlers.
+    """One AST → components. No membrane, no dispatch table, no handlers.
 
     ⭐ There is nothing to add here when Python grows a construct. `ast.iter_fields`
     is total, so `match`/`TypeAlias`/whatever comes next arrives as
-    `syntax($n, TypeAlias)` plus its fields, and only the corpora that want to
+    `Syntax(n, "TypeAlias")` plus its fields, and only the corpora that want to
     UNDERSTAND it need editing. That is the whole difference from `intake.py`, where
     a new construct is a missing handler and therefore a hole.
     """
 
-    def __init__(self, facts: Facts, origin: str) -> None:
-        self.f = facts
+    def __init__(self, world, origin: str) -> None:
+        self.w = world
         self.origin = origin
         self.census: Dict[str, int] = {}
         self.count = 0
 
     # -- writing -----------------------------------------------------------
 
-    def _primitive(self, payload: Any, valued: bool = False) -> int:
+    def _primitive(self, payload: Any, valued: bool = False) -> str:
         """A leaf that is not an AST node. See the module note on the two encodings.
 
         `valued` is the `Constant` payload — a value the program computes with, so
         `repr` whatever it is. Everything else is a name if it can be one: text that
-        `reads_as_literal` is `repr`-ed instead, which is what makes the decoder\'s
+        `reads_as_literal` is `repr`-ed instead, which is what makes the decoder's
         try-`literal_eval` a decision rather than a guess.
         """
         if not valued and isinstance(payload, str) and payload and not reads_as_literal(payload):
-            return self.f.word(payload)
-        return self.f.value(payload)
+            return payload
+        return repr(payload)
 
     def _rel(self, field_name: str) -> str:
         return _RENAMED.get(field_name, field_name)
 
     def _seq(self, values: List[Any]) -> int:
-        """A list field, as one node with POSITIONED `item` parts.
+        """A list field, as one node with POSITIONED `Item` parts.
 
-        ⚠ The position is not decoration — see the module note on what interning did
-        to `{**a, **b}`. It is a numeral atom, which is what the engine seeds them as,
-        so a computator can do arithmetic on it.
+        ⚠ The position is not decoration — see the module note on what
+        deduping did to `{**a, **b}`.
         """
-        s = self.f.node("seq")
-        self.f.fact("seq", s)
-        self.f.fact("from_code", s)
+        s = self.w.spawn(SeqNode(), FromCode())
         for i, v in enumerate(values):
-            self.f.fact("item", s, self.f.value(i),
-                        self.node(v) if isinstance(v, ast.AST) else self._primitive(v))
+            self.w.attach(s, Item(i, self.node(v) if isinstance(v, ast.AST)
+                                  else self._primitive(v)))
         return s
 
     def node(self, t: ast.AST) -> int:
         kind = type(t).__name__
-        n = self.f.node(f"{kind}@{getattr(t, 'lineno', '?')}")
         self.count += 1
         self.census[kind] = self.census.get(kind, 0) + 1
-        self.f.fact("ast_node", n)
-        self.f.fact("syntax", n, self.f.word(kind))
-        self.f.fact("from_code", n)
-        self.f.fact("origin", n, self.f.value(self.origin))
+        n = self.w.spawn(AstNode(), Syntax(kind), FromCode(), Origin(self.origin))
         line = getattr(t, "lineno", None)
         if line is not None:
-            self.f.fact("source_line", n, self.f.value(line))
+            self.w.attach(n, SourceLine(line))
         for field_name, value in ast.iter_fields(t):
             # ⚠ A `None` field deposits NOTHING, and `detransliterate` rebuilds an
-            # absent field as `None`. Absence is absence; writing `field(n, None)`
-            # would make every optional slot in the language a proposition a rule
-            # has to step over.
+            # absent field as `None`. Absence is absence; attaching one for every
+            # optional slot in the language would be a component a rule has to
+            # step over.
             if value is None:
                 continue
             rel = self._rel(field_name)
             if isinstance(value, list):
-                self.f.fact(rel, n, self._seq(value))
+                self.w.attach(n, field_component(rel)(self._seq(value)))
             elif isinstance(value, ast.AST):
-                self.f.fact(rel, n, self.node(value))
+                self.w.attach(n, field_component(rel)(self.node(value)))
             else:
-                self.f.fact(rel, n, self._primitive(value, (kind, field_name) in _VALUED))
+                self.w.attach(n, field_component(rel)(
+                    self._primitive(value, (kind, field_name) in _VALUED)))
         return n
 
 
 class Detransliterate:
-    """Propositions → AST. The inverse, and it is the only honest check on the pair.
+    """Components → AST. The inverse, and it is the only honest check on the pair.
 
     ⚠⚠ **STABILITY IS NOT FIDELITY** — `emit.py`'s recorded lesson, and it applies
     with more force here because nothing refuses any more. An emit-vs-emit fixpoint
@@ -332,49 +348,56 @@ class Detransliterate:
     `experiments/transliterate_reach.py` does and why it exists in the same commit.
     """
 
-    def __init__(self, facts: Facts) -> None:
-        self.f = facts
+    def __init__(self, world) -> None:
+        self.w = world
 
-    def _decode(self, x: int) -> Any:
+    def _decode(self, x: str) -> Any:
         """A leaf back to the Python value it stood for.
 
         ⭐ No table, and the module note says why: no word this deposits is
         `literal_eval`-able, so `literal_eval` succeeding IS the encoding's own
         answer about which of the two it was.
         """
-        text = self.f.show(x)
-        return ast.literal_eval(text) if reads_as_literal(text) else text
+        return ast.literal_eval(x) if reads_as_literal(x) else x
 
-    def value(self, x: int) -> Any:
-        if self.f.has("seq", x):
-            # ⚠ By POSITION, never by deposit order: a pass that renumbered a list
-            # wrote the new order into the indices and nowhere else.
-            items = sorted(self.f.of("item", x), key=lambda t: int(self.f.show(t[0])))
-            return [self.value(c) for _, c in items]
-        if self.f.has("ast_node", x):
-            return self.node(x)
+    def value(self, x: Any) -> Any:
+        """`x` is either an entity id (a nested node or a `SeqNode`, always an
+        `int` — `_primitive` never returns one) or an already-encoded
+        primitive (always a `str`) — the type alone tells the two apart, so
+        this checks it BEFORE asking `World` anything: `has()` tries to read
+        a non-`Entity` argument as an id, and a decoded string like `"None"`
+        is not one."""
+        if isinstance(x, int):
+            if self.w.has(x, SeqNode):
+                # ⚠ By POSITION, never by attach order: a pass that
+                # renumbered a list wrote the new order into the indices and
+                # nowhere else.
+                items = sorted(self.w.get_all(x, Item), key=lambda item: item.index)
+                return [self.value(item.value) for item in items]
+            if self.w.has(x, AstNode):
+                return self.node(x)
         return self._decode(x)
 
     def node(self, n: int) -> ast.AST:
-        kind = self.f.text("syntax", n)
-        if kind is None:
-            raise ValueError(f"{self.f.show(n)} has no `syntax` — not a transliterated node")
-        cls = getattr(ast, kind, None)
+        syntax = self.w.get(n, Syntax)
+        if syntax is None:
+            raise ValueError(f"{self.w.show(n)} has no `Syntax` — not a transliterated node")
+        cls = getattr(ast, syntax.kind, None)
         if cls is None:
             # ⚠ By NAME, never approximated: a graph naming a construct this
             # interpreter's `ast` does not have was written by a different Python,
             # and guessing a near neighbour is how a round trip silently changes
             # code.
-            raise ValueError(f"`ast` here has no {kind} — the graph was built by another Python")
+            raise ValueError(f"`ast` here has no {syntax.kind} — the graph was built by another Python")
         built: Dict[str, Any] = {}
         for field_name in cls._fields:
-            got = self.f.one(_RENAMED.get(field_name, field_name), n)
-            built[field_name] = None if got is None else self.value(got)
+            component = self.w.get(n, field_component(_RENAMED.get(field_name, field_name)))
+            built[field_name] = None if component is None else self.value(component.value)
         return cls(**built)
 
 
-def transliterate(source: str, facts: Facts, origin: str) -> Transliterated:
-    """Read Python text into `facts`, entirely.
+def transliterate(source: str, world, origin: str) -> Transliterated:
+    """Read Python text into `world`, entirely.
 
     ⚠ `origin` is a PARAMETER for `intake.py`'s reason: code may arrive as a tool
     call result and provenance is not recoverable from the text.
@@ -383,21 +406,21 @@ def transliterate(source: str, facts: Facts, origin: str) -> Transliterated:
     if not _checked:
         check_vocabulary()
         _checked = True
-    walker = Transliterate(facts, origin)
+    walker = Transliterate(world, origin)
     module = walker.node(ast.parse(source))
     return Transliterated(module=module, origin=origin, nodes=walker.count,
-                          census=walker.census, facts=facts)
+                          census=walker.census, world=world)
 
 
-def detransliterate(facts: Facts, node: int) -> ast.AST:
+def detransliterate(world, node: int) -> ast.AST:
     """The graph back to an AST. `ast.fix_missing_locations` is the caller's."""
-    return Detransliterate(facts).node(node)
+    return Detransliterate(world).node(node)
 
 
-def render(facts: Facts, node: int) -> str:
+def render(world, node: int) -> str:
     """The graph back to Python source, via `ast.unparse`.
 
     ⭐ Valid Python by construction, `emit.py`'s reason: rendering is `unparse`'s
     job and this module's only work is the vocabulary.
     """
-    return ast.unparse(ast.fix_missing_locations(detransliterate(facts, node)))
+    return ast.unparse(ast.fix_missing_locations(detransliterate(world, node)))
