@@ -26,7 +26,12 @@ requires-python = ">=3.11"
 # release, so pinning either in metadata would promise a version that does not
 # exist.
 #
-#   PYTHONPATH=../loopingrules python -m pytest tests/ -q
+# ⚠⚠ 2026-08-29: `harneskills` joined `loopingrules` on that path, for real --
+# `pystrider.domain.propose_help_python` imports `harneskills.help`, the one
+# place this package now depends on the harness it is a domain FOR rather than
+# only on the substrate under it. See `pystrider/domain.py`'s own docstring.
+#
+#   PYTHONPATH=../loopingrules:../harneskills python -m pytest tests/ -q
 #
 # ⭐ Nothing here defaults to a path any more. `mf.py`'s `UGM` env var (and its
 # hard-coded `C:\Users\...` fallback) is gone with the module.
