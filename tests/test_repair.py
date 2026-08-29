@@ -138,13 +138,51 @@ def _module(built):
 
 def test_which_family_won_is_a_NAMED_FACT_not_registration_order():
     """docs/decision_patterns.md's claim, pinned: both rivals are on the
-    record as `Candidate`s, and which one fired is a `Winner`/`Verdict`
-    fact readable directly, not an artefact of `FAMILIES` dict order."""
+    record as `Candidate`s -- each its own entity now, tagged with which
+    function it was for (see `repair.Candidate`'s own docstring) rather
+    than attached to the function directly -- and which one fired is a
+    `Winner`/`Verdict` fact readable directly, not an artefact of
+    `FAMILIES` dict order."""
     w, _, function, _ = make_world()
-    proposed = {c.name for c in w.get_all(function, Candidate)}
+    proposed = {c.name for _e, c in w.each(Candidate) if c.function == function.id}
     assert proposed == {"relax", "lower"}
     assert w.get(function, Winner).name == "relax"
     assert w.get(function, Verdict).value == "forced"
+
+
+def test_a_family_never_proposes_twice_for_one_occasion():
+    """⚠⚠ A spawned candidate entity is never idempotent the way the old
+    `w.attach(function, Candidate(...))` was -- re-proposing every tick an
+    occasion stayed unresolved would grow entities without bound (see
+    `repair.py`'s own module note). `loop.run()` settles over MANY ticks;
+    if `_already_proposed` were not guarding `propose`, this would count
+    far more than one `Candidate` per family."""
+    w, _, function, _ = make_world()
+    per_family = [c for _e, c in w.each(Candidate) if c.function == function.id]
+    assert len(per_family) == 2, "one relax, one lower -- not one per tick"
+
+
+def test_propose_is_idempotent_before_arbitration_ever_runs():
+    """⚠⚠ The pin above cannot actually exercise the guard on its own: with
+    unequal priorities (2 vs 1, never a tie) `apply` always removes `Unmet`
+    within one cycle, so `_occasions` stops yielding it regardless of
+    `_already_proposed` -- the guard only matters while an occasion STAYS
+    unresolved, which these two families never leave standing long enough
+    to prove. Calling `propose` directly, twice, before `arbitrate` ever
+    runs is what actually exercises it: nothing here reaches `apply` at
+    all, so nothing but the guard stops a second `Candidate`.
+    """
+    from loopingrules.world import World
+
+    w = World()
+    function = w.spawn(Function("classify"))
+    comparison = w.spawn(Comparison("gt"))
+    w.attach(function, Guard(comparison.id))
+    w.attach(function, Unmet(1, "adult"))
+    propose, _apply = repair.relax(gated=True)
+    propose(w)
+    propose(w)
+    assert len(w.each(Candidate)) == 1
 
 
 # -- ⭐ what makes a repair unproposable ----------------------------------------

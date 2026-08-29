@@ -38,39 +38,62 @@ returns is derived from STRUCTURE by `evaluator.evaluate`; running the emitted
 source is a separate, independent gate. A repair you evaluate by running it is
 checked against the same model that proposed it.
 
-## ⚠⚠ THE TIE-BREAK IS A NAMED FACT, NOT REGISTRATION ORDER — AND NOW A LOCAL ARBITER
+## ⚠⚠ 2026-08-29 (later still): rebuilt on propose/arbitrate/act, ranked judge kept
 
-`relax`/`lower` used to mutate on sight, the first one registered winning any
-function where both structurally applied — see `docs/decision_patterns.md` for
-the argument against that. Each family only PROPOSES: `Candidate(function,
-"relax", priority)` — it never checks whether the other family also applies,
-the same way a `design.cnl` production never checks its rivals. `arbitrate`
-below is the one place that reads the whole candidate set for a function and
-decides; a family mutates only once it reads back `Winner(function)` as itself.
+`relax`/`lower` now propose the way `harneskills.examples.fs`'s `propose_*`
+rules do: each spawns a FRESH candidate entity, tagged `loopingrules.world.
+Proposal(function.id)`, rather than attaching a `Candidate` straight onto the
+function being repaired. That is the vocabulary `docs/intake processing.md`
+(in `harneskills`) predicted this module would use, closing the "still open"
+half of that prediction — the OTHER half, cross-domain arbitration, is
+`loopingrules.help`.
 
-⚠⚠ 2026-08-29: **this is a hand-rolled, domain-owned arbiter now, not
-`arbitration.commit`** — `loopingrules` deleted the generic candidate/ranked/
-ruled_out/winner reader outright rather than port it (nothing in `harneskills`
-itself ever needed one generic across domains; see
-`harneskills/docs/intake processing.md`). `repair.py` is exactly the domain
-`docs/decision_patterns.md` already argued needs the PATTERN — a real,
-authored priority between two genuine rivals — so `arbitrate` keeps that
-shape, just as code this module owns instead of an imported reader. It is
-narrower than `arbitration.commit` on purpose: nothing here ever vetoes a
-candidate (no `ruled_out` shape), so there is no eligibility set to compute,
-only "highest priority wins, a tie is `Verdict("ambiguous")`."
-`test_exactly_ONE_repair_family_fires` still pins the outcome; which family
-wins shows up as an ordinary, readable `Winner`/`Verdict` fact instead of
-dict iteration order.
+⚠⚠ **`loopingrules.world.arbitrate` is deliberately NOT called here, and
+that is not an oversight.** It resolves "first `Proposal` registered wins" --
+exactly the registration-order tie-break this module exists to NOT have.
+Calling it would silently reintroduce the measured bug (`age >= 17`) the
+moment `relax`'s propose rule happened to run after `lower`'s. `Candidate.
+priority` is still the real judge, still domain-owned, still `arbitrate`
+below -- just reading candidate ENTITIES now instead of candidate
+COMPONENTS on one entity. `loopingrules.world.arbitrate`'s chokepoint (never
+resolve on the tick an occasion is created) is also not needed: `relax`'s
+and `lower`'s own `propose` rules and this module's `arbitrate` are all
+registered by this ONE `install()`, in one order, the same guarantee
+`fs.arbitrate_parse` already gets for free from being one domain's own
+ordered rule list.
 
-⚠ This still keys the occasion on `function` alone, not on `(function, case)` —
-every fixture here wants exactly one case per function, so the simplification
-is real but untested past that shape.
+⭐ **A losing or tied `Candidate` is never destroyed.** `arbitrate` detaches
+`Proposal` from every candidate for a resolved occasion, winner and rivals
+alike, but only DESTROYS none of them — `harneskills.examples.fs`'s own
+arbiter destroys every loser outright, correct for input it will never be
+asked to explain twice; this module already valued the opposite ("both
+rivals are on the record", `test_which_family_won_is_a_NAMED_FACT_not_
+registration_order`'s own docstring) before this rebuild, and keeping that
+is why `Candidate` is self-sufficient now (`function`/`case`/`wanted`/
+`target`) rather than needing a live `Proposal` to say what it was for.
+
+⚠⚠ **A durable record is also this module's OWN guard against re-proposing
+forever.** `docs/overview.md`'s own hazard (unbounded entities, a real OOM in
+a sibling package) is exactly what "spawn a fresh candidate every tick an
+occasion stays unresolved" would risk on a permanent tie -- the ORIGINAL
+`w.attach(function, Candidate(...))` was safe from this for free, because
+attaching an identical value twice is a no-op. A freshly spawned entity is
+never identical to the last one, so `_already_proposed` checks THIS
+occasion's own history (which candidate entities already name this
+`function`) before spawning another, the same durability `Repaired` already
+gives the occasion as a whole.
+
+`test_repair.py`'s `test_which_family_won_is_a_NAMED_FACT_not_registration_
+order` is updated for where `Candidate` lives now; every other pin in that
+file is unchanged, including the ones that exercise a single family, a tie
+is not tested here (nothing in this fixture set produces one), and the
+membrane/substrate tests below, none of which this rebuild touches.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from loopingrules.world import Proposal
 from .evaluator import (BlockOf, Case, CouldNotEvaluate, Evaluated, Given,
                         Guard, IfStmtOf, Wants, evaluate)
 from .intake import (Block, Body, Comparison, Condition, Constant, Function,
@@ -121,12 +144,35 @@ class Lowered:
 
 @dataclass(frozen=True)
 class Candidate:
-    """One family's proposal to repair this function, and its own,
-    unconditional statement of priority over any other family that might
-    also structurally apply. Multi-valued: several families may propose."""
+    """One family's proposal to repair `function`/`case` -- rides alongside
+    `Proposal(function.id)` on a fresh entity while rival, unresolved, and
+    tagged `loopingrules.world.Proposal(function)` is a candidate's `Proposal`.
+    `priority` is this family's own, unconditional statement of priority over
+    any other family that might also structurally apply -- not a check
+    against a rival's existence, just a number this family always states
+    about itself; `arbitrate` is what turns two such numbers into one winner.
+
+    Self-sufficient on purpose: `function`/`case`/`wanted`/`target` are
+    everything `apply` needs once `Proposal` is gone, so a winning candidate
+    never has to trace back through an occasion `arbitrate` may already have
+    destroyed. `target` is the entity the fix actually mutates -- the
+    `Comparison` for `relax`, the `Constant` for `lower` -- generic across
+    both families on purpose, so this component does not grow a field only
+    one of them uses.
+
+    NEVER destroyed once resolved, win or lose or tie: this is the durable
+    record `test_which_family_won_is_a_NAMED_FACT_not_registration_order`
+    means by "both rivals are on the record" -- see the module note on why
+    that, not cleanup, is the point, and why it is also this module's own
+    guard against proposing the same thing again every tick an occasion
+    stays unresolved."""
 
     name: str
     priority: int
+    function: int
+    case: int
+    wanted: str
+    target: int
 
 
 @dataclass(frozen=True)
@@ -252,9 +298,83 @@ def diagnose(w) -> None:
 # because a pin that named its winner went quietly VACUOUS once on a tie-break
 # flip.
 #
-# CHANGE then OBSERVE: each denies the old claim, asserts the new one, and marks
-# the occasion consumed. A repair is not done until its effect is observed, and the
-# observation is the evaluator running again over the changed structure.
+# Each family is now a (propose, apply) pair -- see the module note, "rebuilt on
+# propose/arbitrate/act." `propose` spawns a candidate and never mutates the
+# function; `apply` mutates once `arbitrate` has said this family won.
+
+def _already_proposed(w, function, name: str) -> bool:
+    """A family proposes once per occasion, ever -- `Candidate` is a durable
+    record (see its own docstring), so this occasion's own history is the
+    guard against spawning a fresh entity every tick an occasion (a
+    permanent tie, say) stays unresolved."""
+    return any(candidate.function == function.id and candidate.name == name
+              for _entity, candidate in w.each(Candidate))
+
+
+def relax(gated: bool = True):
+    """`>` was meant to be `>=`. Propose it as a `Proposal`-tagged candidate;
+    apply it once `arbitrate` says it won."""
+
+    def propose(w) -> None:
+        for function, case, wanted in list(_occasions(w, gated)):
+            if _already_proposed(w, function, "relax"):
+                continue
+            for held in w.get_all(function, Guard):
+                comparison = held.entity
+                comp = w.get(comparison, Comparison)
+                if comp is None or comp.operator != "gt":
+                    continue
+                w.spawn(Proposal(function.id),
+                       Candidate("relax", 2, function.id, case, wanted, comparison))
+
+    def apply(w) -> None:
+        for entity, candidate in w.each(Candidate, without=Proposal):
+            if candidate.name != "relax":
+                continue
+            winner = w.get(candidate.function, Winner)
+            if winner is None or winner.name != "relax":
+                continue
+            w.remove(candidate.function, Unmet(candidate.case, candidate.wanted))
+            w.replace(candidate.target, Comparison("ge"))
+            w.attach(candidate.target, Relaxed())
+            w.attach(candidate.function, Repaired(candidate.case))
+
+    return propose, apply
+
+
+def lower(gated: bool = True):
+    """The threshold was one too high. Propose it as a `Proposal`-tagged
+    candidate; apply it once `arbitrate` says it won."""
+
+    def propose(w) -> None:
+        for function, case, wanted in list(_occasions(w, gated)):
+            if _already_proposed(w, function, "lower"):
+                continue
+            for held in w.get_all(function, Guard):
+                comparison = held.entity
+                right = w.get(comparison, Right)
+                if right is None:
+                    continue
+                literal = w.get(right.entity, Constant)
+                if literal is None or decode_literal(literal.literal) != 18:
+                    continue
+                w.spawn(Proposal(function.id),
+                       Candidate("lower", 1, function.id, case, wanted, right.entity))
+
+    def apply(w) -> None:
+        for entity, candidate in w.each(Candidate, without=Proposal):
+            if candidate.name != "lower":
+                continue
+            winner = w.get(candidate.function, Winner)
+            if winner is None or winner.name != "lower":
+                continue
+            w.remove(candidate.function, Unmet(candidate.case, candidate.wanted))
+            w.replace(candidate.target, Constant(encode_literal(17)))
+            w.attach(candidate.target, Lowered())
+            w.attach(candidate.function, Repaired(candidate.case))
+
+    return propose, apply
+
 
 def _occasions(w, gated: bool):
     """The (function, case, wanted) triples a repair may act on.
@@ -268,57 +388,6 @@ def _occasions(w, gated: bool):
         yield function, item.case, item.value
 
 
-def relax(gated: bool = True):
-    """`>` was meant to be `>=`. Propose it; apply it once arbitration says it won.
-
-    ⭐ `Candidate.priority` here is `relax`'s own, unconditional statement of
-    priority over `lower` when both structurally apply to the same bug — not a
-    check against `lower`'s existence, just a number this family always states
-    about itself. `arbitrate` is what turns two such numbers into one winner.
-    """
-
-    def rule(w) -> None:
-        for function, case, wanted in list(_occasions(w, gated)):
-            for held in w.get_all(function, Guard):
-                comparison = held.entity
-                comp = w.get(comparison, Comparison)
-                if comp is None or comp.operator != "gt":
-                    continue
-                w.attach(function, Candidate("relax", 2))
-                winner = w.get(function, Winner)
-                if winner is not None and winner.name == "relax":
-                    w.remove(function, Unmet(case, wanted))
-                    w.replace(comparison, Comparison("ge"))
-                    w.attach(comparison, Relaxed())
-                    w.attach(function, Repaired(case))
-
-    return rule
-
-
-def lower(gated: bool = True):
-    """The threshold was one too high. Propose it; apply it once arbitration says it won."""
-
-    def rule(w) -> None:
-        for function, case, wanted in list(_occasions(w, gated)):
-            for held in w.get_all(function, Guard):
-                comparison = held.entity
-                right = w.get(comparison, Right)
-                if right is None:
-                    continue
-                literal = w.get(right.entity, Constant)
-                if literal is None or decode_literal(literal.literal) != 18:
-                    continue
-                w.attach(function, Candidate("lower", 1))
-                winner = w.get(function, Winner)
-                if winner is not None and winner.name == "lower":
-                    w.remove(function, Unmet(case, wanted))
-                    w.replace(right.entity, Constant(encode_literal(17)))
-                    w.attach(right.entity, Lowered())
-                    w.attach(function, Repaired(case))
-
-    return rule
-
-
 #: ⚠ No longer the tie-break — see the module note. `Candidate.priority` fixed
 #: inside each family is what decides now; this dict is just which ones exist
 #: to install.
@@ -326,24 +395,30 @@ FAMILIES = {"relax": relax, "lower": lower}
 
 
 def arbitrate(w) -> None:
-    """The one generic-SHAPED reader, kept local to this module: for every
-    function any family proposed a `Candidate` for, pick the highest
-    priority — a tie is `Verdict("ambiguous")`, never broken by iteration
-    order."""
-    seen = set()
-    for function, _candidate in w.each(Candidate):
-        if function.id in seen:
-            continue
-        seen.add(function.id)
-        candidates = w.get_all(function, Candidate)
+    """The one local judge, kept domain-owned on purpose -- see the module
+    note, "`loopingrules.world.arbitrate` is deliberately NOT called here."
+    For every function with at least one UNRESOLVED candidate (still
+    `Proposal`-tagged), pick the highest priority among ALL its candidates,
+    resolved or not -- a tie is `Verdict("ambiguous")`, never broken by
+    iteration order. Every candidate for a resolved occasion has `Proposal`
+    detached, winner and rivals alike; none are destroyed (see `Candidate`'s
+    own docstring)."""
+    pending = {candidate.function for _entity, candidate, _proposal
+              in w.each(Candidate, Proposal)}
+    for function_id in pending:
+        candidates = [candidate for _entity, candidate in w.each(Candidate)
+                     if candidate.function == function_id]
         best = max(c.priority for c in candidates)
         top = [c for c in candidates if c.priority == best]
         if len(top) == 1:
-            w.replace(function, Winner(top[0].name))
-            w.replace(function, Verdict("forced"))
+            w.replace(function_id, Winner(top[0].name))
+            w.replace(function_id, Verdict("forced"))
         else:
-            w.detach(function, Winner)
-            w.replace(function, Verdict("ambiguous"))
+            w.detach(function_id, Winner)
+            w.replace(function_id, Verdict("ambiguous"))
+        for entity, candidate, _proposal in w.each(Candidate, Proposal):
+            if candidate.function == function_id:
+                w.detach(entity, Proposal)
 
 
 def install(loop, gated: bool = True, families=None) -> None:
@@ -353,8 +428,13 @@ def install(loop, gated: bool = True, families=None) -> None:
     tick reads the structure and a later one acts on it. The loop reaches the
     same fixpoint either way; the trace is only legible in this order.
 
-    ⭐ `arbitrate` is registered once, after whichever families are
-    installed — one local reader for however many propose.
+    ⭐ `arbitrate` is registered once, between every family's `propose` and
+    every family's `apply` -- one local judge for however many propose, and
+    the ordering `docs/intake processing.md`'s own note on this module
+    describes: every `propose` a domain owns runs before its own `arbitrate`
+    because they are all in this ONE `install()`, the same free guarantee
+    `harneskills.examples.fs.arbitrate_parse` gets from being one domain's
+    own ordered rule list.
     """
     loop.rule(guard, name="repair.guard")
     loop.rule(inverses, name="repair.inverses")
@@ -364,7 +444,10 @@ def install(loop, gated: bool = True, families=None) -> None:
     if gated:
         loop.rule(diagnose, name="repair.diagnose")
     installed = [name for name in FAMILIES if families is None or name in families]
-    for name in installed:
-        loop.rule(FAMILIES[name](gated), name=f"repair.{name}")
+    pairs = [(name, FAMILIES[name](gated)) for name in installed]
+    for name, (propose, _apply) in pairs:
+        loop.rule(propose, name=f"repair.{name}")
     if installed:
         loop.rule(arbitrate, name="repair.arbitrate")
+    for name, (_propose, apply) in pairs:
+        loop.rule(apply, name=f"repair.{name}.apply")
