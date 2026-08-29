@@ -88,6 +88,18 @@ order` is updated for where `Candidate` lives now; every other pin in that
 file is unchanged, including the ones that exercise a single family, a tie
 is not tested here (nothing in this fixture set produces one), and the
 membrane/substrate tests below, none of which this rebuild touches.
+
+## Where this goes next
+
+⚠ TODO, not done here: nothing in `pystrider.domain` installs this module
+at all -- `_read`'s own `Loop` only ever runs `patterns.install`, and
+spawns no `Wants`/`Case` for anything to diagnose. `relax`/`lower`'s
+rebuilt arbiter is verified by `test_repair.py` and by hand (a standalone
+script: intake a buggy `classify`, `repair.install(loop)`, both families
+propose, `relax` wins, the emitted source reads `age >= 18`) -- not yet
+by anything typed at the live prompt. Wiring `read <path.py>` (or a new
+verb) to actually attempt a repair, and say what it found, is real,
+separate work.
 """
 from __future__ import annotations
 

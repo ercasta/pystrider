@@ -298,6 +298,10 @@ def _why(w) -> None:
 
 
 def _read(w) -> None:
+    # ⚠ TODO: recognition only -- this installs `patterns`, never `repair`,
+    # and spawns no `Wants`/`Case`. `repair.py`'s rebuilt relax/lower is
+    # verified by its own suite and by hand, not by anything typed here
+    # yet -- see `repair.py`'s own "Where this goes next."
     for entity, wanted in w.each(ReadWanted):
         w.destroy(entity)
         path = os.path.expanduser(wanted.path)
