@@ -1,53 +1,51 @@
-"""Python → propositions, with provenance, and gaps NAMED rather than dropped.
+"""Python -> components, with provenance, and gaps NAMED rather than dropped.
 
-A port of `pystrider/intake.py`, and the port is smaller than survey §2 predicted
-for a reason worth stating up front: **every substrate touch in that file goes
-through five helpers**, and the ~40 AST handlers are pure walking. So what had to
-be re-derived is the five (`node` / `part` / `placeholder` / `gap` / `unconsumed`)
-against `facts.Facts`. The handlers came across as they were.
+⚠⚠ **2026-08-29: THE SUBSTRATE'S GENERIC RELATION VOCABULARY IS GONE, AND THIS
+FILE IS WHERE THAT LANDS HARDEST.** `loopingrules` (the engine carved out of
+`harneskills`, née `ugm`) deleted `facts.py`/`arbitration.py` outright rather
+than port them — a component is now whatever `dataclasses.is_dataclass` says
+yes to, nothing more. Every relation this file used to deposit via
+`Facts.fact(name, subject, *objects)` — `for_stmt(n)`, `target(n, item)`,
+`operator(n, "gt")` — is now a real, explicitly-declared component, attached
+straight onto the world through `World.attach`. **THE FIVE PRIMITIVES SURVIVE
+THE MOVE**, because the port they were built for (survey §2, `ugm`'s restart
+engine) already proved the AST-handler layer is pure walking that never
+touches a substrate directly — what changes here is what the five primitives
+DO underneath, not the ~40 call sites that use them.
 
-WHAT IS KEPT FROM THE OLD GENERATION, AND WHY EACH ONE IS NOT OPTIONAL — these are
-lessons that cost measurements, and a port that quietly dropped them would look
-identical until the same bug came back:
+WHAT IS KEPT, AND WHY EACH ONE IS NOT OPTIONAL — these are lessons that cost
+measurements, and a port that quietly dropped them would look identical until
+the same bug came back:
 
-* **⭐ THE LOAD-BEARING RULE: an unmodelled construct makes its CONTAINER partial,
-  and a partial node is refused.** Refusing a whole file over one comprehension is
-  useless; dropping the comprehension silently is far worse — a loop understood
-  two-thirds and presented as a complete iteration. The gap costs exactly the
-  constructs containing it.
-* **⚠⚠ `unconsumed` — the guard that found silent field dropping.** `def f(x: int)
-  -> bool` was once intaken with an empty gap list, reported COMPLETE, and emitted
-  as `def f(x)`. Annotations, decorators, defaults and `*args` were all read past
-  in silence. The fix is structural: each handler declares what it CONSUMES and
-  everything else non-empty is refused, so a new Python field, or a handler that
-  stops reading one, becomes an honest gap rather than a silent loss. ⚠ And
-  declaring a field consumed switches the guard OFF for it — `_CONSUMES["ClassDef"]`
-  once listed `keywords` while the handler never visited them, so
-  `class A(metaclass=M)` lost its metaclass. **Only list a field beside the code
-  that reads it.**
-* **⚠⚠ A PLACEHOLDER, because POSITION IS MEANING.** Recording a gap and linking
-  nothing renumbers the readable parts: `f([c for c in xs], x)` kept one `arg` and
-  was described as *"applies f to x"* — a confidently WRONG description, not a
-  missed one. Ignorance gets a node, which is the thing a graph can point at.
-* **A body is ONE `block` node with ordered `stmt` parts**, never N parts on the
-  container — otherwise a description can only point at the first statement, and
-  a three-line loop gets described by its first line.
-* **⚠ Intake must not reuse a pattern's word.** Intake says `condition`, the
-  pattern says `tests`; intake says `for_stmt`, the pattern says `iteration`. If
-  they coincided the bridge would do nothing for that part while looking like it
-  worked, and the perturbation pin would not bite there.
+* **⭐ THE LOAD-BEARING RULE: an unmodelled construct makes its CONTAINER
+  partial, and a partial node is refused.** Refusing a whole file over one
+  comprehension is useless; dropping the comprehension silently is far worse.
+* **⚠⚠ `unconsumed` — the guard that found silent field dropping.** Each
+  handler declares what it CONSUMES; everything else non-empty is refused, so
+  a new Python field becomes an honest gap rather than a silent loss.
+* **⚠⚠ A PLACEHOLDER, because POSITION IS MEANING.** Ignorance gets a node,
+  the thing a description can point at, rather than renumbering what's left.
+* **A body is ONE `Block` entity with ordered `Stmt` parts.**
+* **⚠ Intake must not reuse a pattern's word** — `condition`/`tests`,
+  `for_stmt`/`iteration` — see `patterns.py`.
 
-⭐ WHAT THE NEW SUBSTRATE CHANGED, AND IT IS AN IMPROVEMENT: engine 2 had three
-mechanisms — a node's KIND, its ATTRIBUTES and its EDGES. Here all three are
-propositions, so `partial` and `unknown_parts` stop being attribute slots that
-only Python could read and become ordinary facts **an authored rule can reason
-about**. The gap vocabulary is now in the same language as the patterns.
+⭐ **WHAT `loopingrules` CHANGES, AND IT IS A FURTHER IMPROVEMENT ON TOP OF THE
+`harneskills` ONE**: interning a Python string as an entity (`f.word(op)`) so
+two `"gt"`s would compare equal existed because an older graph engine could
+only compare entity IDENTITY. A component field compares by ordinary Python
+`==` — `Comparison(operator="gt") == Comparison(operator="gt")` is already
+true — so there is nothing left to intern for vocabulary a Python handler
+authors itself (an operator, an attribute name). `Constant.literal` is the one
+field that still needs a codec rather than a bare field: an AST constant can
+be a `bytes`/`complex`/`Ellipsis` payload `loopingrules.world`'s primitives
+list (`None`/`bool`/`int`/`float`/`str`) cannot hold directly, so it is stored
+`repr`-encoded (`encode_literal`/`decode_literal`, below) — a value CODEC, not
+an identity table; nothing about decoding it needs the world at all.
 
-⚠ Intaking CODE is not the border ugm's own intake guards. Theirs guards an
-authored claim a model could fabricate; code is an artifact that already parses.
-So the refusal needed is not *malformed* but **not modelled** — a reach membrane,
-not a trust boundary. `origin` stays a PARAMETER because provenance is not
-derivable from text.
+⚠ Intaking CODE is not the border an authored-claim intake would guard. Code
+is an artifact that already parses, so the refusal needed is not *malformed*
+but **not modelled** — a reach membrane, not a trust boundary. `origin` stays
+a PARAMETER because provenance is not derivable from text.
 """
 from __future__ import annotations
 
@@ -55,7 +53,246 @@ import ast
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
 
-from ugm.facts import Facts
+from loopingrules.world import World
+
+# -- the common stamp every intaken node carries ---------------------------
+
+
+@dataclass(frozen=True)
+class Readable:
+    """What a description names to ABSTAIN from a part that lacks it — see
+    `placeholder`, the only thing `node()` does not attach this to."""
+
+
+@dataclass(frozen=True)
+class FromCode:
+    """Makes a later recognition a claim about the ARTIFACT, not our own
+    intention — without it, a round-trip check verifies the graph we meant
+    to build rather than the one we read."""
+
+
+@dataclass(frozen=True)
+class Origin:
+    value: str
+
+
+@dataclass(frozen=True)
+class SourceLine:
+    """Recorded here, at intake, because attribution has to be an OBSERVED
+    fact joined later, never derived."""
+
+    value: int
+
+
+@dataclass(frozen=True)
+class Partial:
+    """Something under this node could not be read."""
+
+
+@dataclass(frozen=True)
+class UnknownPart:
+    """`UnknownPart("iterated")` on a node -- one of ITS OWN parts is the gap,
+    named by label so a hole in a part a description never reads cannot make
+    that description wrong. Several may coexist on one entity (`World`
+    already dedupes and orders them by attach)."""
+
+    label: str
+
+
+# -- the AST-construct kinds ------------------------------------------------
+# ⚠ `Param`, the kind (a function parameter, on its own entity), is not
+# `HasParam` below (the EDGE from a function to one of its params) -- the one
+# place a kind's name would collide with a part's if both were left bare.
+
+@dataclass(frozen=True)
+class Module:
+    pass
+
+
+@dataclass(frozen=True)
+class Function:
+    name: str
+
+
+@dataclass(frozen=True)
+class Param:
+    name: str
+
+
+@dataclass(frozen=True)
+class ForStmt:
+    pass
+
+
+@dataclass(frozen=True)
+class IfStmt:
+    pass
+
+
+@dataclass(frozen=True)
+class Call:
+    pass
+
+
+@dataclass(frozen=True)
+class ReturnStmt:
+    pass
+
+
+@dataclass(frozen=True)
+class Assign:
+    pass
+
+
+@dataclass(frozen=True)
+class Comparison:
+    operator: str
+
+
+@dataclass(frozen=True)
+class Arithmetic:
+    operator: str
+
+
+@dataclass(frozen=True)
+class Name:
+    id: str
+
+
+@dataclass(frozen=True)
+class Constant:
+    """`literal` is `repr`-encoded -- see `encode_literal`/`decode_literal`."""
+
+    literal: str
+
+
+@dataclass(frozen=True)
+class Attribute:
+    attr: str
+
+
+@dataclass(frozen=True)
+class NoOp:
+    pass
+
+
+@dataclass(frozen=True)
+class Block:
+    """⚠ Minted directly by `block()`, not through `node()` -- it has no line
+    of its own, so it carries `FromCode`/`Readable` but no `Origin`/
+    `SourceLine`. See the module note on the bug that shipped once before
+    this was `readable`."""
+
+
+@dataclass(frozen=True)
+class Unreadable:
+    """⚠⚠ The one kind `node()` never makes `Readable` -- see `placeholder`."""
+
+
+# -- the parts: an edge from a parent to one of its children ----------------
+# ⚠ One shared type per label, spanning every parent kind that uses it
+# (`Body` names a `FunctionDef`'s block AND a `For`'s) -- the label is the
+# vocabulary, not the container.
+
+@dataclass(frozen=True)
+class Target:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Iterated:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Body:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Otherwise:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Condition:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Then:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Callee:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Arg:
+    """Multi-valued and ordered -- `World.get_all`/`each` give attach order,
+    which is what makes describing a call by its first argument alone the
+    bug it always was."""
+
+    entity: int
+
+
+@dataclass(frozen=True)
+class Returned:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Assigned:
+    """Multi-valued: `a = b = value` targets more than one entity."""
+
+    entity: int
+
+
+@dataclass(frozen=True)
+class Value:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Left:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Right:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Of:
+    entity: int
+
+
+@dataclass(frozen=True)
+class Stmt:
+    """Multi-valued and ordered -- a body is an ordered thing; describing a
+    three-line loop by its first statement is the bug this exists to
+    prevent."""
+
+    entity: int
+
+
+@dataclass(frozen=True)
+class HasParam:
+    entity: int
+
+
+#: label (as every `part()` call site already spells it) -> the component
+#: class standing for that edge. ⚠ Kept as ONE table, beside the classes
+#: above, so a new part is one dict entry rather than a new `if` branch.
+_PARTS = {
+    "target": Target, "iterated": Iterated, "body": Body, "otherwise": Otherwise,
+    "condition": Condition, "then": Then, "callee": Callee, "arg": Arg,
+    "returned": Returned, "assigned": Assigned, "value": Value, "left": Left,
+    "right": Right, "of": Of, "stmt": Stmt, "param": HasParam,
+}
 
 
 class _Unreadable:
@@ -92,10 +329,9 @@ _CONSUMES = {
     "Pass": set(),
 }
 
-#: Attributes whose payload is a Python VALUE rather than a vocabulary word, and so
-#: is `repr`-encoded. Everything else a handler passes as an attribute is a word.
-#: ⚠ `origin` and `source_line` are provenance, not code, and stay values.
-_LITERALS = {"literal", "origin", "source_line"}
+#: Every constant Python's grammar can express `repr`-round-trips exactly,
+#: `Ellipsis` aside (`repr(...)` is `'Ellipsis'`, not valid syntax back).
+_ELLIPSIS = "..."
 
 _CMP = {ast.Eq: "eq", ast.NotEq: "ne", ast.Lt: "lt", ast.LtE: "le", ast.Gt: "gt", ast.GtE: "ge",
         ast.Is: "is", ast.IsNot: "is_not", ast.In: "in", ast.NotIn: "not_in"}
@@ -108,6 +344,16 @@ _BIN = {ast.Add: "add", ast.Sub: "sub", ast.Mult: "mul", ast.Div: "div",
         ast.LShift: "lshift", ast.RShift: "rshift", ast.MatMult: "matmul"}
 
 
+def encode_literal(payload: Any) -> str:
+    """A `Constant.literal` field's stored form -- the inverse of `decode_literal`."""
+    return _ELLIPSIS if payload is Ellipsis else repr(payload)
+
+
+def decode_literal(text: str) -> Any:
+    """The Python value a `Constant.literal` field encodes."""
+    return Ellipsis if text == _ELLIPSIS else ast.literal_eval(text)
+
+
 @dataclass
 class Intaken:
     """The module node, and an honest account of what could not be read.
@@ -118,7 +364,7 @@ class Intaken:
     module: int
     unmodelled: Tuple[str, ...] = ()
     origin: str = "<unknown>"
-    facts: Optional[Facts] = field(default=None, repr=False)
+    world: Optional[World] = field(default=None, repr=False)
 
     @property
     def complete(self) -> bool:
@@ -126,50 +372,32 @@ class Intaken:
 
 
 class Intake:
-    """Reflects a Python AST into propositions. One node per construct.
+    """Reflects a Python AST into components. One entity per construct.
 
     Not an `ast.NodeVisitor` subclass, on purpose: dispatch is an explicit table,
     so an unhandled node type is a **lookup miss that must be answered** rather
     than a silently inherited generic visit.
     """
 
-    def __init__(self, facts: Facts, origin: str) -> None:
-        self.f = facts
+    def __init__(self, world: World, origin: str) -> None:
+        self.w = world
         self.origin = origin
         self.unmodelled: List[str] = []
 
     # --- the five primitives ---------------------------------------------
 
-    def node(self, kind: str, tree: Any, **attrs: Any) -> int:
-        """Mint a node for a construct, stamped with provenance and its line.
+    def node(self, kind_cls: type, tree: Any, **attrs: Any) -> int:
+        """Mint an entity for a construct, stamped with provenance and its line.
 
-        ⚠ `source_line` is recorded HERE because attribution has to be an
-        OBSERVED fact joined later, never derived — the lesson from getting loop
-        attribution wrong the derived way.
+        `kind_cls(**attrs)` names its own component, so a typo in a
+        construct's name is a Python `NameError` at import time — where a
+        typo in a relation string was a silent no-op nobody read.
         """
-        n = self.f.node(f"{kind}@{getattr(tree, 'lineno', '?')}")
-        self.f.fact(kind, n)
-        # ⭐⭐ `readable` is what a description names to ABSTAIN — see `placeholder`,
-        # which is the only thing that does not get it.
-        self.f.fact("readable", n)
-        # ⭐ `from_code` is what makes a later recognition a claim about the
-        # ARTIFACT rather than about our own intention. Without it a round-trip
-        # check verifies the graph we meant to build.
-        self.f.fact("from_code", n)
-        self.f.fact("origin", n, self.f.value(self.origin))
+        n = self.w.spawn(kind_cls(**attrs), Readable(), FromCode(),
+                          Origin(self.origin))
         line = getattr(tree, "lineno", None)
         if line is not None:
-            self.f.fact("source_line", n, self.f.value(line))
-        for label, payload in attrs.items():
-            # ⚠⚠ WORDS AND LITERALS ARE DIFFERENT KINDS OF NODE. `operator=gt` and
-            # `name=classify` are vocabulary — a rule must be able to name them —
-            # while `literal=18` is a value the program computes with, and only that
-            # one is `repr`-encoded. Storing an operator as `'gt'` made
-            # `+operator(?g, gt)` unmatchable, so one of two repair families could
-            # never fire and the suite could not tell.
-            self.f.fact(label, n,
-                        self.f.value(payload) if label in _LITERALS
-                        else self.f.word(str(payload)))
+            self.w.attach(n, SourceLine(line))
         return n
 
     def part(self, parent: int, label: str, child: Any) -> None:
@@ -178,58 +406,37 @@ class Intake:
             return
         if child is UNREADABLE:
             child = self.placeholder(label)
-        self.f.fact(label, parent, child)
-        if self.f.has("partial", child):
+        self.w.attach(parent, _PARTS[label](child))
+        if self.w.has(child, Partial):
             self.gap(parent, label)
 
     def placeholder(self, label: str) -> int:
         """⚠⚠ A node standing where an unreadable construct was — POSITION IS MEANING.
 
         ⭐⭐ **It is the one node intake does not call `readable`**, and that absence
-        is what lets a DESCRIPTION abstain (`rules/patterns.ugm`). On engine 2 the
-        same judgement lived in `patterns.py` as Python — which our own notes had
-        flagged as the thing to move, *a judgement living where nothing can argue
-        with it*. Here it is a member of the antecedent, so a description declares
-        which of its parts it refuses to guess about, and another author can
-        disagree by writing a different description.
+        is what lets a DESCRIPTION abstain. Here it is a member of the antecedent, so
+        a description declares which of its parts it refuses to guess about, and
+        another author can disagree by writing a different description.
 
         ⚠ It is asserted POSITIVELY, on the readable nodes, because a rule cannot
-        say *nothing claims this*. §9's `-` means *an entry denies this*, never
-        *for no entry* — so negation-as-failure is not available here and is not
-        being faked.
+        say *nothing claims this*.
         """
-        n = self.f.node(f"unreadable@{label}")
-        self.f.fact("unreadable", n)
-        self.f.fact("from_code", n)
-        self.f.fact("partial", n)
-        return n
+        return self.w.spawn(Unreadable(), FromCode(), Partial())
 
     def gap(self, parent: int, label: str) -> None:
         """Record that a part of `parent` could not be read, AT ITS LABEL.
 
-        ⭐ The label is the refinement. `partial` alone is a single bit — *something
+        ⭐ The label is the refinement. `Partial` alone is a single bit — *something
         below is unreadable* — with no way to ask *what*, so any hole darkened
         every description of the container, including ones that never named the
-        part. `unknown_part(parent, <label>)` is the set-of-roles answer.
+        part. `UnknownPart(parent, <label>)` is the set-of-roles answer.
 
-        ⚠ `partial` is still asserted and still propagates, because `emit` reads
-        the blunt bit and must: a hole cannot be RENDERED whichever part it is in,
-        but a hole in a part a description never names cannot make that
-        description WRONG. Reading and writing have different obligations.
+        ⚠ `attach` already dedupes by value, so attaching an equal `UnknownPart`
+        or `Partial` twice is a no-op the world itself refuses to count as a
+        change — nothing here needs to check first.
         """
-        # ⚠ Idempotent per (parent, label). An unmodelled construct records its gap
-        # twice otherwise — once where the handler is missing, once when `part`
-        # sees the placeholder is partial — and `unknown_part` listed `iterated`
-        # TWICE for one comprehension. Harmless to read and wrong to count.
-        # ⚠ A WORD, where this was `f.rel(label)` on the scratchpad. A relation was a
-        # node there, so the label could be the relation itself; here a relation is a
-        # Python CLASS and cannot be a member of anything. The label is vocabulary —
-        # which is what `word()` is for, and what it always meant.
-        marker = self.f.word(label)
-        if marker not in [m for (m,) in self.f.of("unknown_part", parent)]:
-            self.f.fact("unknown_part", parent, marker)
-        if not self.f.has("partial", parent):
-            self.f.fact("partial", parent)
+        self.w.attach(parent, UnknownPart(label))
+        self.w.attach(parent, Partial())
 
     def refuse(self, tree: Any, parent: Optional[int], label: Optional[str] = None) -> None:
         """Name an unmodelled construct, and cost its container exactly one part."""
@@ -267,17 +474,8 @@ class Intake:
         return handler(tree)
 
     def block(self, statements: List[Any], parent: Optional[int] = None) -> int:
-        """⚠ A body is ONE node with ordered `stmt` parts, never N parts above it."""
-        b = self.f.node("block")
-        self.f.fact("block", b)
-        self.f.fact("from_code", b)
-        # ⚠ A block is minted here rather than through `node()` (it has no line of
-        # its own), and the first version of the abstention therefore left it
-        # WITHOUT `readable` — so every description binding a body went dark and
-        # three pins went red. A node minted off the main path misses whatever the
-        # main path stamps: the same shape as the `unconsumed` guard being bypassed
-        # by never being called at a site.
-        self.f.fact("readable", b)
+        """⚠ A body is ONE node with ordered `Stmt` parts, never N parts above it."""
+        b = self.w.spawn(Block(), FromCode(), Readable())
         for s in statements:
             self.part(b, "stmt", self.visit(s, b, "stmt"))
         return b
@@ -287,24 +485,20 @@ class Intake:
         gets forgotten at one — which is exactly how annotations on keyword-only
         and `*args` parameters were dropped by both intake and emit while the
         round trip reported `complete`."""
-        n = self.node("param", a, name=a.arg)
+        n = self.node(Param, a, name=a.arg)
         self.unconsumed(a, n)
         return n
 
     # --- handlers ---------------------------------------------------------
 
     def _Module(self, t: ast.Module) -> int:
-        n = self.f.node("module")
-        self.f.fact("module", n)
-        self.f.fact("from_code", n)
-        self.f.fact("readable", n)
-        self.f.fact("origin", n, self.f.value(self.origin))
+        n = self.w.spawn(Module(), FromCode(), Readable(), Origin(self.origin))
         self.part(n, "body", self.block(t.body, n))
         self.unconsumed(t, n)
         return n
 
     def _FunctionDef(self, t: ast.FunctionDef) -> int:
-        n = self.node("function", t, name=t.name)
+        n = self.node(Function, t, name=t.name)
         for a in t.args.args:
             self.part(n, "param", self.param(a))
         self.unconsumed(t.args, n)
@@ -313,7 +507,7 @@ class Intake:
         return n
 
     def _For(self, t: ast.For) -> int:
-        n = self.node("for_stmt", t)
+        n = self.node(ForStmt, t)
         self.part(n, "target", self.visit(t.target, n, "target"))
         self.part(n, "iterated", self.visit(t.iter, n, "iterated"))
         self.part(n, "body", self.block(t.body, n))
@@ -323,7 +517,7 @@ class Intake:
         return n
 
     def _If(self, t: ast.If) -> int:
-        n = self.node("if_stmt", t)
+        n = self.node(IfStmt, t)
         self.part(n, "condition", self.visit(t.test, n, "condition"))
         self.part(n, "then", self.block(t.body, n))
         # ⚠ An empty else is NO else, never `else: pass` — or the round trip grows
@@ -334,7 +528,7 @@ class Intake:
         return n
 
     def _Call(self, t: ast.Call) -> int:
-        n = self.node("call", t)
+        n = self.node(Call, t)
         self.part(n, "callee", self.visit(t.func, n, "callee"))
         for a in t.args:
             self.part(n, "arg", self.visit(a, n, "arg"))
@@ -342,13 +536,13 @@ class Intake:
         return n
 
     def _Return(self, t: ast.Return) -> int:
-        n = self.node("return_stmt", t)
+        n = self.node(ReturnStmt, t)
         self.part(n, "returned", self.visit(t.value, n, "returned") if t.value else None)
         self.unconsumed(t, n)
         return n
 
     def _Assign(self, t: ast.Assign) -> int:
-        n = self.node("assign", t)
+        n = self.node(Assign, t)
         for target in t.targets:
             self.part(n, "assigned", self.visit(target, n, "assigned"))
         self.part(n, "value", self.visit(t.value, n, "value"))
@@ -364,7 +558,7 @@ class Intake:
         if op is None:
             self.unmodelled.append(f"Compare.{type(t.ops[0]).__name__}")
             return UNREADABLE
-        n = self.node("comparison", t, operator=op)
+        n = self.node(Comparison, t, operator=op)
         self.part(n, "left", self.visit(t.left, n, "left"))
         self.part(n, "right", self.visit(t.comparators[0], n, "right"))
         self.unconsumed(t, n)
@@ -375,24 +569,24 @@ class Intake:
         if op is None:
             self.unmodelled.append(f"BinOp.{type(t.op).__name__}")
             return UNREADABLE
-        n = self.node("arithmetic", t, operator=op)
+        n = self.node(Arithmetic, t, operator=op)
         self.part(n, "left", self.visit(t.left, n, "left"))
         self.part(n, "right", self.visit(t.right, n, "right"))
         self.unconsumed(t, n)
         return n
 
     def _Name(self, t: ast.Name) -> int:
-        n = self.node("name", t, id=t.id)
+        n = self.node(Name, t, id=t.id)
         self.unconsumed(t, n)
         return n
 
     def _Constant(self, t: ast.Constant) -> int:
-        n = self.node("constant", t, literal=t.value)
+        n = self.node(Constant, t, literal=encode_literal(t.value))
         self.unconsumed(t, n)
         return n
 
     def _Attribute(self, t: ast.Attribute) -> int:
-        n = self.node("attribute", t, attr=t.attr)
+        n = self.node(Attribute, t, attr=t.attr)
         self.part(n, "of", self.visit(t.value, n, "of"))
         self.unconsumed(t, n)
         return n
@@ -402,18 +596,18 @@ class Intake:
         return self.visit(t.value)
 
     def _Pass(self, t: ast.Pass) -> int:
-        n = self.node("no_op", t)
+        n = self.node(NoOp, t)
         self.unconsumed(t, n)
         return n
 
 
-def intake(source: str, facts: Facts, origin: str) -> Intaken:
-    """Read Python text into `facts`.
+def intake(source: str, world: World, origin: str) -> Intaken:
+    """Read Python text into `world`.
 
     ⚠ `origin` is a PARAMETER, not something derived from the text, because code
     may arrive as a tool call result and provenance is not recoverable from it.
     """
-    walker = Intake(facts, origin)
+    walker = Intake(world, origin)
     module = walker._Module(ast.parse(source))
     return Intaken(module=module, unmodelled=tuple(walker.unmodelled),
-                   origin=origin, facts=facts)
+                   origin=origin, world=world)

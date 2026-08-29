@@ -5,36 +5,28 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pystrider"
 version = "0.0.1"
-description = "Reads and writes Python by reasoning, on harneskills' entity-component world."
+description = "Reads and writes Python by reasoning, on loopingrules' entity-component world."
 requires-python = ">=3.11"
 
-# ⚠⚠ `universal-graph-machine` is GONE from this list, and the whole of `../ugm` with
-# it -- that checkout, at that path, is retired. `ugm` is back as a DIFFERENT
-# thing (harneskills 37d6fca): the entity-component engine `harneskills` used to
-# carry itself, carved into its own package and embedded at `../harneskills/engine`
-# (import name `ugm`; see `tests/conftest.py`'s own account of why this name is
-# worth this much caution). `harneskills` is deliberately NOT listed here either,
-# and neither is `ugm`: both are a sibling checkout under active development, not
-# a release, so pinning either in metadata would promise a version that does not
+# ⚠⚠ 2026-08-29: `ugm` IS GONE, and this package no longer imports a vocabulary
+# from it -- `harneskills`'s engine (world/loop/engine/save) was carved out of
+# `harneskills` into its OWN repo, `../loopingrules`, and renamed on the way out
+# (`ugm.world` -> `loopingrules.world`). Read alongside that: `loopingrules`
+# deleted `facts.py`/`arbitration.py` outright rather than carrying them across
+# the split (nothing in `harneskills` itself ever imported them), so this package
+# no longer imports a generic relation/arbitration vocabulary from its substrate
+# at all -- every relation this package used to declare via `relation(name)` is
+# now a plain, explicitly-named `@dataclasses.dataclass` component it declares
+# itself, read and written straight through `loopingrules.world.World`. See
+# `pystrider/patterns.py` for the worked example and `docs/decision_patterns.md`
+# for why arbitration stays domain-owned rather than a shared reader.
+#
+# `harneskills` is deliberately NOT listed here either, and neither is
+# `loopingrules`: both are sibling checkouts under active development, not a
+# release, so pinning either in metadata would promise a version that does not
 # exist.
 #
-# ⚠⚠ 2026-08-28: `_NEEDS` IS GONE, and this is the one place that promised it. It
-# asserted the `ugm` names this package uses, on import, so drift failed by NAME
-# rather than three frames into a run -- and it could do that because `facts.py`
-# lived HERE while the world it adapted lived over there. `facts.py` and
-# `arbitration.py` have moved into `ugm` itself, so those names now version with the
-# world they name and there is no gap left to assert across. The dependency is
-# WIDER as a result, not narrower: this package imports a vocabulary from `ugm` now,
-# not just a store and a loop. What catches a moved `ugm` is the suite --
-# `tests/conftest.py` names which one a run got, and `test_the_world_SETTLES` is
-# what notices behaviour rather than names.
-#
-#   PYTHONPATH=../harneskills/engine:../harneskills python -m pytest tests/ -q
-#
-# ⚠ This machine also has an UNRELATED project also called `ugm`
-# (`../Universal-Graph-Machine`) sitting beside this one. Putting it on
-# `PYTHONPATH` ahead of `../harneskills/engine` is exactly the old twin-`ugm`
-# hazard back again with a new source -- see `tests/conftest.py`.
+#   PYTHONPATH=../loopingrules python -m pytest tests/ -q
 #
 # ⭐ Nothing here defaults to a path any more. `mf.py`'s `UGM` env var (and its
 # hard-coded `C:\Users\...` fallback) is gone with the module.

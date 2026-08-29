@@ -1,5 +1,22 @@
 # pystrider
 
+> **2026-08-29 — THE ENGINE MOVED AGAIN, TO `../loopingrules`, AND SO DID THE
+> VOCABULARY.** `harneskills`'s embedded engine was carved out into its own repo
+> and renamed (`ugm` → `loopingrules`) — mechanical, `PYTHONPATH=../harneskills`
+> below is now `PYTHONPATH=../loopingrules`. Not mechanical: `loopingrules`
+> deleted `facts.py`/`arbitration.py` outright rather than carrying them across
+> the split, so the generic `fact`/`state`/`deny`/interned-word vocabulary this
+> package used to import is GONE upstream, not renamed. Every relation
+> `patterns.py`/`intake.py`/etc. used to declare via `relation(name)` is now a
+> plain, explicitly-named `@dataclasses.dataclass` component, read and written
+> straight through `loopingrules.world.World` — see `pystrider/patterns.py` for
+> the worked example. Arbitration (`repair.py`/`plan.py`/`effects_repair.py`)
+> dropped the shared generic `commit()` reader too: each is now its own small,
+> hand-rolled arbiter, the same shape `harneskills.examples.fs`'s
+> `arbitrate_parse` uses ("first candidate registered wins," grown only where a
+> real conflict shows up) — see `docs/decision_patterns.md` for why arbitration
+> stays domain-owned rather than shared infrastructure.
+
 > **2026-08-26 — REWRITTEN ONTO `harneskills`; `../ugm` IS GONE.**
 > There is no engine under this project any more. `harneskills` is an entity-component world and a
 > loop that calls every system in order until nothing changes — which *is* forward chaining, so a
@@ -15,13 +32,14 @@
 > and a function has no antecedent to read backwards — so the *write* half of the bet is gone, not
 > parked. The CNL blocks stayed text precisely because swapping one is the whole demonstration;
 > `pystrider/cnl.py` explains why the answer differs there, and is the worked example for making
-> descriptions data again. Verify with `PYTHONPATH=../harneskills python -m pytest tests/ -q`
+> descriptions data again. Verify with `PYTHONPATH=../loopingrules python -m pytest tests/ -q`
 > (120 passing, 2 xfailed).
 
 **Bring your own rules — business, UX, your favorite Python library — keep them in separate files,
 bridge them, and brew a _working, verified_ UI.** No wizards, no hardcoded engine, no LLMs: every
 line is derived by forward-chaining the authored blocks over
-[harneskills](https://github.com/ercasta/harneskills)' entity-component world, and trusted because
+[loopingrules](https://github.com/ercasta/loopingrules)' entity-component world (the engine
+[harneskills](https://github.com/ercasta/harneskills) is also built on), and trusted because
 pystrider _runs_ what it built and watches it behave.
 
 **Live site & playgrounds → [ercasta.github.io/pystrider](https://ercasta.github.io/pystrider/)** — read the
@@ -99,7 +117,7 @@ highlighted_discount realized_by styled_label
 **Brew them together:**
 
 ```bash
-PYTHONPATH=../harneskills python -m demos.playground.playground --flip
+PYTHONPATH=../loopingrules python -m demos.playground.playground --flip
 ```
 
 pystrider loads the five blocks and forward-chains them to quiescence — each authored `head when body`
@@ -174,8 +192,8 @@ Clone the repo and turn the knobs in the **playground** — a card-trader-style 
 `CONFIG` block (or any `.cnl` file) and re-run:
 
 ```bash
-PYTHONPATH=../harneskills python -m demos.playground.playground          # the narrated walkthrough
-PYTHONPATH=../harneskills python -m demos.playground.playground --flip   # ...and the same cart made irreversible
+PYTHONPATH=../loopingrules python -m demos.playground.playground          # the narrated walkthrough
+PYTHONPATH=../loopingrules python -m demos.playground.playground --flip   # ...and the same cart made irreversible
 ```
 
 See [`demos/playground/`](demos/playground/) and the `Cart` knobs at the top of
@@ -257,8 +275,8 @@ ways. That is why:
 ## Run
 
 ```bash
-pip install -e . && pip install textual    # ⚠ harneskills is a SIBLING CHECKOUT, not a dependency:
-                                           #    PYTHONPATH=../harneskills
+pip install -e . && pip install textual    # ⚠ loopingrules is a SIBLING CHECKOUT, not a dependency:
+                                           #    PYTHONPATH=../loopingrules
 pip install textual            # for the playground (the driven Textual app)
 
 python -m demos.playground.playground          # THE PLAYGROUND — bring rules, bridge, brew a UI
