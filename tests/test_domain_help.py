@@ -1,15 +1,15 @@
-"""`help python`, answered by this domain alongside `harneskills.help`'s
-own occasion -- the one place `pystrider.domain` imports from
-`harneskills` at all. See `pystrider/domain.py`'s own docstring,
-"a NEW dependency on `harneskills`," for why.
+"""`help python`, answered by this domain alongside `loopingrules.help`'s
+own occasion -- the substrate this package already depends on
+unconditionally, not `harneskills`. See `pystrider/domain.py`'s own
+docstring for the (corrected) argument.
 
-    PYTHONPATH=../loopingrules:../harneskills python -m pytest tests/ -q
+    PYTHONPATH=../loopingrules python -m pytest tests/ -q
 """
 
+from loopingrules import help as help_
 from loopingrules.loop import Loop
 from loopingrules.world import Reply, Said
 
-from harneskills import help as help_
 from pystrider import domain
 
 

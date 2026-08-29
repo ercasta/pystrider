@@ -58,19 +58,28 @@ dataclass` components and direct `World` mutation — `loopingrules` dropped bot
 idiom `harneskills.examples.fs` uses). Every rule here used to build and RETURN a
 list of deltas; now it mutates `w` and returns `None`.
 
-## ⚠⚠ `help python` is a NEW dependency on `harneskills`, not on `loopingrules`
+## `help python` answers `loopingrules.help`'s occasion, not `harneskills`'s
 
 `hear`'s own docstring above says this domain shares one world with
 `harneskills.examples.fs` "without either domain having to know the other's
-vocabulary" — true of everything else in this file, no longer true of
-`propose_help_python`, which imports `HelpTopic`/`HelpAnswer` from
-`harneskills.help`. That module exists because `help` is one occasion two
-independently-installed domains both want to answer, and neither `fs` nor
-`pystrider` is the other's to import from — `harneskills` is the one thing
-both already sit on top of. See `harneskills.help`'s own docstring for the
-full argument and `loopingrules.world.arbitrate` for the mechanism that
-makes answering an occasion this module did not create safe regardless of
-which domain's `install()` the config lists first.
+vocabulary" — still true, `propose_help_python` included: `HelpTopic`/
+`HelpAnswer` come from `loopingrules.help`, the substrate this package
+already depends on unconditionally, not from `harneskills`.
+
+⚠ That module lived in `harneskills.help` for about a day first, and
+this package DID import it from there briefly — the wrong call, caught
+the same day: this domain is meant to be host-agnostic, installable
+under any harness that runs a `loopingrules.Loop`, and depending on
+`harneskills` specifically (rather than on the substrate every domain
+already sits on) tied it to one host it should not need to know
+exists. `help` is one occasion two independently-installed domains
+both want to answer, and neither `fs` nor `pystrider` is the other's
+to import from — `loopingrules` is the thing BOTH unconditionally
+depend on already, which `harneskills` never was for this package. See
+`loopingrules.help`'s own docstring for the full argument and
+`loopingrules.world.arbitrate` for the mechanism that makes answering
+an occasion this module did not create safe regardless of which
+domain's `install()` the config lists first.
 """
 from __future__ import annotations
 
@@ -78,9 +87,8 @@ import os
 import traceback
 from dataclasses import dataclass, replace
 
+from loopingrules.help import HelpAnswer, HelpTopic
 from loopingrules.world import Proposal, Reply, Said
-
-from harneskills.help import HelpAnswer, HelpTopic
 
 #: What the prompt should pull a typo towards. `world.learn` is autocorrect only —
 #: nothing here changes what a rule finds.
@@ -337,7 +345,7 @@ def _read(w) -> None:
 
 def propose_help_python(w) -> None:
     """`help python` -> a candidate carrying this domain's own summary.
-    `HelpTopic` is `harneskills.help`'s occasion, not this module's own
+    `HelpTopic` is `loopingrules.help`'s occasion, not this module's own
     goals above -- see that module's docstring, and this file's own
     note on the new dependency it is."""
     for occasion, topic in w.each(HelpTopic):
@@ -350,7 +358,7 @@ def propose_help_python(w) -> None:
 
 #: ⚠ `hear` first, then one handler per goal — the order IS the schedule, and a
 #: goal spawned this tick is answered on the next one. `propose_help_python`
-#: is not part of that schedule at all -- it answers `harneskills.help`'s own
+#: is not part of that schedule at all -- it answers `loopingrules.help`'s own
 #: occasion, arbitrated there, not here.
 RULES = (hear, _blocks, _brew, _why, _read, propose_help_python)
 
