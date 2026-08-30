@@ -306,11 +306,6 @@ def _solve(v: Vocabulary, body: Sequence[Triple], binding: Binding) -> Iterator[
             yield from _solve(v, rest, full)
 
 
-def solve(v: Vocabulary, body: Sequence[Triple]) -> List[Binding]:
-    """Public form of the join, for a query that is not a rule."""
-    return list(_solve(v, tuple(body), {}))
-
-
 # -- installing -----------------------------------------------------------------
 
 def _rule_for(rule: Rule, v: Vocabulary):
@@ -393,15 +388,6 @@ def ask(v: Vocabulary, subject: str, predicate: str, obj: str) -> bool:
     if s is None or o is None:
         return False
     return predicate_component(predicate)(o) in v.world.get_all(s, predicate_component(predicate))
-
-
-def who(v: Vocabulary, predicate: str, obj: str) -> List[str]:
-    """`who <predicate> <object>` — every subject standing in this relation to it."""
-    target = v.known(obj)
-    if target is None:
-        return []
-    return [v.text(e.id) for e, held in v.world.each(predicate_component(predicate))
-            if held.object == target]
 
 
 def explain(v: Vocabulary, blocks: Sequence[Block], triple: Triple) -> List[str]:

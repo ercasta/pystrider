@@ -260,7 +260,6 @@ class Transliterated:
 
     module: int
     origin: str = "<unknown>"
-    nodes: int = 0
     #: How many of each AST class came through. The reach report's raw material,
     #: and the thing a pass author reads to know what is actually in the corpus.
     census: Dict[str, int] = field(default_factory=dict)
@@ -281,7 +280,6 @@ class Transliterate:
         self.w = world
         self.origin = origin
         self.census: Dict[str, int] = {}
-        self.count = 0
 
     # -- writing -----------------------------------------------------------
 
@@ -314,7 +312,6 @@ class Transliterate:
 
     def node(self, t: ast.AST) -> int:
         kind = type(t).__name__
-        self.count += 1
         self.census[kind] = self.census.get(kind, 0) + 1
         n = self.w.spawn(AstNode(), Syntax(kind), FromCode(), Origin(self.origin))
         line = getattr(t, "lineno", None)
@@ -408,7 +405,7 @@ def transliterate(source: str, world, origin: str) -> Transliterated:
         _checked = True
     walker = Transliterate(world, origin)
     module = walker.node(ast.parse(source))
-    return Transliterated(module=module, origin=origin, nodes=walker.count,
+    return Transliterated(module=module, origin=origin,
                           census=walker.census, world=world)
 
 
