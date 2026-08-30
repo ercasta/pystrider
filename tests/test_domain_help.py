@@ -38,8 +38,23 @@ def test_help_python_does_not_answer_help_files():
     assert say(loop, "help files") == ["no help for 'files'"]
 
 
-def test_bare_help_is_unaffected_by_this_domain_being_installed():
+def test_bare_help_lists_python_once_this_domain_is_installed():
+    # This domain registers its own `propose_help_census_python`
+    # alongside `propose_help_python` -- a bare `help` now names
+    # "python" because this domain offered it to the census, not
+    # because `loopingrules.help` hard-coded it. `fs` is not installed
+    # here, so "files" never appears.
     loop = Loop()
     help_.install(loop)
     domain.install(loop)
-    assert say(loop, "help") == ["try: help files, help python"]
+    assert say(loop, "help") == ["try: help python"]
+
+
+def test_bare_help_settling_leaves_nothing_behind():
+    loop = Loop()
+    help_.install(loop)
+    domain.install(loop)
+    say(loop, "help")
+    w = loop.world
+    assert w.each(help_.HelpCommandCensus) == []
+    assert w.each(help_.HelpTopicName) == []

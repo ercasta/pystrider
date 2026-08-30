@@ -80,6 +80,15 @@ depend on already, which `harneskills` never was for this package. See
 `loopingrules.world.arbitrate` for the mechanism that makes answering
 an occasion this module did not create safe regardless of which
 domain's `install()` the config lists first.
+
+`propose_help_census_python` answers a SECOND `loopingrules.help`
+occasion, `HelpCommandCensus` -- what a bare `help` becomes now, not a
+topic anyone typed. `arbitrate_help`'s "one winner" contest is the
+wrong shape for it (nothing here rivals `fs`'s own answer for a bare
+`help`; both are real at once), so it goes through `loopingrules.world.
+census` instead -- see `loopingrules.help`'s own docstring, "The
+shape, for a bare help," for why that needed a different mechanism
+than `arbitrate`.
 """
 from __future__ import annotations
 
@@ -87,8 +96,8 @@ import os
 import traceback
 from dataclasses import dataclass, replace
 
-from loopingrules.help import HelpAnswer, HelpTopic
-from loopingrules.world import Proposal, Reply, Said
+from loopingrules.help import HelpAnswer, HelpCommandCensus, HelpTopic, HelpTopicName
+from loopingrules.world import Proposal, Reply, Said, propose
 
 #: What the prompt should pull a typo towards. `world.learn` is autocorrect only —
 #: nothing here changes what a rule finds.
@@ -360,11 +369,22 @@ def propose_help_python(w) -> None:
                 "read <path.py>"))
 
 
+def propose_help_census_python(w) -> None:
+    """A bare `help` -> this domain offers `python` for the list, not a
+    candidate to win anything -- see this file's own docstring, "a
+    SECOND `loopingrules.help` occasion." `propose`, not `w.spawn
+    (Proposal(...), ...)` by hand: `loopingrules.world`'s own one-line
+    spelling of it."""
+    for occasion, _census in w.each(HelpCommandCensus):
+        propose(w, occasion, HelpTopicName("python"))
+
+
 #: ⚠ `hear` first, then one handler per goal — the order IS the schedule, and a
-#: goal spawned this tick is answered on the next one. `propose_help_python`
-#: is not part of that schedule at all -- it answers `loopingrules.help`'s own
-#: occasion, arbitrated there, not here.
-RULES = (hear, _blocks, _brew, _why, _read, propose_help_python)
+#: goal spawned this tick is answered on the next one. `propose_help_python`/
+#: `propose_help_census_python` are not part of that schedule at all -- they
+#: answer `loopingrules.help`'s own occasions, resolved there, not here.
+RULES = (hear, _blocks, _brew, _why, _read, propose_help_python,
+         propose_help_census_python)
 
 
 def install(loop) -> None:
