@@ -206,18 +206,34 @@ iterations," and a pin that NOTHING a `read` spawns reaches
 `loopingrules.save.dump()`); 178 passed, 2 xfailed with the bridge suite
 (textual venv), no regressions either way.
 
-**Still not done, and thread 2 stays open for it:** nothing durable
-exists yet that USES `resolve_function` — no rule in this repo produces a
-durable, stable-keyed conclusion about a specific function, so the
-resolver is verified today only by rereading one path repeatedly, not by
-a durable fact surviving a real forget-and-reread round trip end to end.
-`World.purge_transient()` is also unused here so far — the shared world
-just accumulates transient entities across a session (bounded by however
-many files get `read`, unbounded across a very long session) — fine for
-now, a real gap the day that matters. And `qualname` disambiguation
-(thread 2's own `(origin_path, qualname-or-span)`) is still just
-`(path, name)` — `resolve.py`'s own ⚠ names this; two same-named
-functions in different scopes of one file are not told apart yet.
+**Was not done, now is:** nothing durable used `resolve_function` when
+the paragraph above was written; now something does. `watch <path.py>
+<name>` (`domain.py`) is this domain's first durable, stable-keyed
+business fact — `WatchedFunction(path, name)` plus `_reconcile_watch`'s
+own `FunctionStatus(path, name, exists, loops)`, kept current by
+resolving fresh through `pystrider.resolve` every settle
+`WatchedFunction` is populated (`watches=`, so it costs nothing
+otherwise), never by holding whatever entity `resolve_function` handed
+back last. Verified end to end, not just by rereading one path
+repeatedly: `tests/test_domain_watch.py`'s
+`test_a_watched_function_survives_a_simulated_restart` dumps a world with
+a `watch` in it, loads the dump into a BRAND NEW `Loop`/`World` (a real
+restart — every `@transient` entity, confirmed gone), edits the watched
+file so the pre-restart entity id could not possibly still be right even
+if something had tried, and confirms `_reconcile_watch` finds the SAME
+`WatchedFunction` entity and produces the correct, updated
+`FunctionStatus` — resolved fresh, from a stable key, with nothing an old
+id could have helped with. 8 new tests, all green (168 → the bare suite,
+186 with the bridge suite).
+
+**Still open:** `World.purge_transient()` is still unused — the shared
+world just accumulates transient entities across a session (bounded by
+however many files get `read`/`watch`ed, unbounded across a very long
+one) — fine for now, a real gap the day that matters. And `qualname`
+disambiguation (thread 2's own `(origin_path, qualname-or-span)`) is
+still just `(path, name)` — `resolve.py`'s own ⚠ names this; two
+same-named functions in different scopes of one file are not told apart
+yet, and `watch` inherits that limitation directly.
 
 ### Open threads — pick one to continue next session
 
@@ -240,16 +256,16 @@ functions in different scopes of one file are not told apart yet.
 
 2. **Shared-world + forget/reread mechanism** — (a) `@transient` +
    `save.dump` skip, (b) `pystrider.resolve`'s resolver, (c) `_read`/
-   `_report_read` on the shared world, and the scoped `forget(w, path)` are
-   all BUILT now (see "built: `@transient`, the resolver, and the
-   shared-world move," above). What's left: (i) an actual durable,
-   stable-keyed fact that USES `resolve_function` — nothing in this repo
-   produces one yet, so the resolver's real payoff (a business rule's
-   conclusion surviving a forget-and-reread) is still unverified end to
-   end; (ii) `World.purge_transient()` is unused here, so a very long
-   session's transient entities just accumulate; (iii) the stable key is
-   still `(path, name)`, not `(path, qualname-or-span)` — same-named
-   functions in different scopes of one file are not disambiguated.
+   `_report_read` on the shared world, (d) `watch <path.py> <name>` — a
+   durable, stable-keyed business fact that actually USES the resolver,
+   verified end to end across a simulated restart — are all BUILT now
+   (see "built: `@transient`, the resolver, and the shared-world move,"
+   and "was not done, now is," above). What's left: (i)
+   `World.purge_transient()` is unused here, so a very long session's
+   transient entities just accumulate; (ii) the stable key is still
+   `(path, name)`, not `(path, qualname-or-span)` — same-named functions
+   in different scopes of one file are not disambiguated, and `watch`
+   inherits that limitation directly.
 
 3. **Composition-as-its-own-pattern** — user's own insight from this session:
    two sequential loops compose by "sequencing"; nested loops are NOT

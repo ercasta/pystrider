@@ -13,6 +13,9 @@ by all of them):
     brew drive             ...and RUN the emitted app under Textual's Pilot
     why <subj> <pred> <obj>   what makes a derived fact so, across the blocks
     read <path.py>         intake a Python file and say what was recognized
+    watch <path.py> <name>   durably track one function's loop count -- see
+                            `WatchedFunction`'s own docstring for why this is
+                            the domain's first fact that survives a restart
 
 ## 2026-08-30: `read` moved into the SHARED world — `@transient` is what made it safe
 
@@ -141,8 +144,8 @@ from loopingrules.world import Proposal, Reply, Said, propose, transient
 
 #: What the prompt should pull a typo towards. `world.learn` is autocorrect only —
 #: nothing here changes what a rule finds.
-WORDS = ("blocks", "brew", "why", "read", "drive", "irreversible", "basic",
-         "premium", "spend", "python")
+WORDS = ("blocks", "brew", "why", "read", "watch", "drive", "irreversible",
+         "basic", "premium", "spend", "python")
 
 
 # -- the goals a typed line becomes ---------------------------------------------
@@ -199,8 +202,69 @@ class ReadDone:
     roundtrip_line: str
 
 
+@dataclass(frozen=True)
+class WatchWanted:
+    path: str
+    name: str
+
+
+@dataclass(frozen=True)
+class WatchedFunction:
+    """This domain's first DURABLE, stable-keyed business fact — a
+    person's standing interest in one function, by `(path, name)`, never
+    by any entity id `intake()` ever minted. Survives a restart (ordinary
+    module-level class, `getattr`-resolvable, ⚠ same as `ReadWanted`'s
+    own neighbors) — the whole point `pystrider.resolve` exists for: on
+    restart, every `@transient` entity this fact could have pointed at is
+    simply gone, and `_reconcile_watch` (below) is what finds the SAME
+    function again, resolved fresh, not restored.
+
+    `path` is stored already-expanded (`_understand` does it, matching
+    `resolve.resolve_function`'s own normalization) so a later `==`
+    against `Origin.value` — which is always the expanded form — is a
+    plain string compare, not a path-equivalence problem this class would
+    otherwise have to solve twice."""
+
+    path: str
+    name: str
+
+
+@dataclass(frozen=True)
+class FunctionStatus:
+    """`_reconcile_watch`'s own conclusion about one `WatchedFunction` —
+    kept singular via `w.replace()` (the CURRENT answer, not a history of
+    them), and re-derived through `pystrider.resolve` every time
+    `WatchedFunction` might have something new to say, never by holding
+    the entity `resolve_function` last handed back. Durable, same as
+    `WatchedFunction` — this is the payoff `docs/TODO.md` thread 2 named
+    as unverified: a business fact surviving a forget-and-reread (or a
+    whole restart) because it was never holding a raw id to begin with."""
+
+    path: str
+    name: str
+    exists: bool
+    loops: int
+
+
 def _say(w, text: str) -> None:
     w.spawn(Reply("user", text))
+
+
+def _loops_in(w, function) -> int:
+    """How many `for` statements sit DIRECTLY in `function`'s own body —
+    not recursing into a nested block (an `if`'s body, a nested `def`),
+    a real, named simplification: "how many loops does this function
+    have," not "how many loops does its whole subtree have." Needs
+    nothing from `patterns` — raw `intake.py` structure (`Body`/`Stmt`/
+    `ForStmt`) is enough to count, unlike `_report_read`'s `Iteration`
+    check, so `_reconcile_watch` needs no two-phase split the way
+    `_read`/`_report_read` did."""
+    from pystrider.intake import Body, ForStmt, Stmt
+    body = w.get(function, Body)
+    if body is None:
+        return 0
+    return sum(1 for stmt in w.get_all(w.entity(body.entity), Stmt)
+              if w.has(w.entity(stmt.entity), ForStmt))
 
 
 # -- what a typed line means ----------------------------------------------------
@@ -263,6 +327,10 @@ def _understand(w, text: str) -> bool:
 
     if verb == "read" and len(rest) == 1:
         w.spawn(ReadWanted(rest[0]))
+        return True
+
+    if verb == "watch" and len(rest) == 2:
+        w.spawn(WatchWanted(os.path.expanduser(rest[0]), rest[1]))
         return True
 
     return False
@@ -437,6 +505,57 @@ def _report_read(w) -> None:
         _say(w, done.roundtrip_line)
 
 
+def _watch(w) -> None:
+    """`watch <path.py> <name>` -> a durable `WatchedFunction`, unless one
+    already answers to this `(path, name)` — `watch` said twice is not two
+    standing interests, it is one, reported again."""
+    for entity, wanted in w.each(WatchWanted):
+        w.destroy(entity)
+        already = any(existing.path == wanted.path and existing.name == wanted.name
+                      for _e, existing in w.each(WatchedFunction))
+        if already:
+            _say(w, f"already watching {wanted.name} in "
+                    f"{os.path.basename(wanted.path)}")
+            continue
+        w.spawn(WatchedFunction(wanted.path, wanted.name))
+        _say(w, f"now watching {wanted.name} in {os.path.basename(wanted.path)}")
+
+
+def _reconcile_watch(w) -> None:
+    """The standing model `install()`'s own docstring says this domain
+    otherwise lacks — every `WatchedFunction` gets its `FunctionStatus`
+    kept current, resolved FRESH through `pystrider.resolve` every time
+    this runs, never by holding on to whichever entity `resolve_function`
+    happened to hand back last (see `WatchedFunction`'s own docstring for
+    why: that entity is `@transient` and may already be gone).
+
+    Reports only on an actual CHANGE (`FunctionStatus` compares by value,
+    same as everything else in this world) — first resolution included,
+    since `before` reads `None` then — not once a tick forever just
+    because `WatchedFunction` still exists. Gated by `watches=` in
+    `install()`, so this costs nothing on any tick nobody is watching
+    anything.
+    """
+    from pystrider import resolve
+    for entity, watched in w.each(WatchedFunction):
+        before = w.get(entity, FunctionStatus)
+        function = resolve.resolve_function(w, watched.path, watched.name)
+        if function is None:
+            after = FunctionStatus(watched.path, watched.name,
+                                   exists=False, loops=0)
+        else:
+            after = FunctionStatus(watched.path, watched.name, exists=True,
+                                   loops=_loops_in(w, function))
+        if after == before:
+            continue
+        w.replace(entity, after)
+        base = os.path.basename(watched.path)
+        if after.exists:
+            _say(w, f"{watched.name} in {base}: {after.loops} loop(s)")
+        else:
+            _say(w, f"{watched.name} in {base}: no longer found")
+
+
 def propose_help_python(w) -> None:
     """`help python` -> a candidate carrying this domain's own summary.
     `HelpTopic` is `loopingrules.help`'s occasion, not this module's own
@@ -464,11 +583,11 @@ def propose_help_census_python(w) -> None:
 #: goal spawned this tick is answered on the next one. `propose_help_python`/
 #: `propose_help_census_python` are not part of that schedule at all -- they
 #: answer `loopingrules.help`'s own occasions, resolved there, not here.
-#: `_report_read` is ALSO not here -- `install()` registers it separately, with
-#: an explicit `priority`, since its place in the schedule is not "somewhere
-#: after `_read`" but "strictly after `patterns`," which registration order in
-#: this one tuple cannot express -- see this module's own docstring.
-RULES = (hear, _blocks, _brew, _why, _read, propose_help_python,
+#: `_report_read`/`_reconcile_watch` are ALSO not here -- `install()` registers
+#: both separately, with an explicit `priority`/`watches`, since neither's
+#: place in the schedule is "somewhere after" a goal handler in this tuple --
+#: see this module's own docstring and each rule's own.
+RULES = (hear, _blocks, _brew, _why, _read, _watch, propose_help_python,
          propose_help_census_python)
 
 
@@ -485,17 +604,29 @@ def install(loop) -> None:
     `patterns` both included) precisely so it does not also need to worry
     about which of these two lines came first.
 
-    Nothing durable is spawned here. Unlike `harneskills.examples.fs`, this
-    domain has no STANDING model to reconcile against a restored world --
-    `patterns`'/`intake.py`'s entities are `@transient` (never reach
-    `world.json` regardless of which world they live in, see
-    `loopingrules.world.transient`), so there is nothing here that could
-    come back stale on a restart, only entities that are simply not there
-    until the next `read`.
+    ⚠⚠ 2026-08-30, later still: this domain now DOES have a standing model
+    to reconcile against a restored world after all -- `WatchedFunction`/
+    `FunctionStatus` (`watch <path.py> <name>`), the first durable,
+    stable-keyed fact this domain owns. `_reconcile_watch` is what
+    reconciles it, `watches=(WatchedFunction,)` so it costs nothing on any
+    tick nobody is watching anything -- see its own docstring for why this
+    IS the `harneskills.examples.fs`-style standing model the older note
+    below said this domain lacked. Everything `patterns`/`intake.py` mint
+    is still `@transient` (never reaches `world.json` regardless of which
+    world they live in, see `loopingrules.world.transient`) -- that part of
+    the older claim still holds; only "nothing durable is spawned here" no
+    longer does.
     """
     for rule in RULES:
         loop.rule(rule)
     loop.rule(_report_read, priority=-1)
+    # `priority=-2`, one below `_report_read`'s -1 -- purely for reading
+    # order: a `read` that happens to jog a watched function's status
+    # should report its OWN summary before the side effect that noticed,
+    # not the other way around. No data dependency requires this (unlike
+    # `_report_read`'s own -- `_reconcile_watch` never reads `Iteration`
+    # or anything `patterns` produces), only the prompt reading naturally.
+    loop.rule(_reconcile_watch, watches=(WatchedFunction,), priority=-2)
     from pystrider import patterns
     patterns.install(loop)
     loop.world.learn(*WORDS)

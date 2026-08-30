@@ -299,9 +299,9 @@ Everything under **Run**, above, is either a script (`python -m demos.playground
 `[project.scripts]` entry, no `__main__.py` at the package root, and that is deliberate, not
 unfinished. `pystrider/domain.py`'s `install(loop)` is the ONLY integration surface this package
 offers: hand it a [loopingrules](https://github.com/ercasta/loopingrules) `Loop` and it registers
-`blocks` / `brew ...` / `why ...` / `read ...` / `help python` as rules on it — nothing here opens a
-socket, reads a keyboard, or prints a prompt. Typing those commands interactively needs a HOST that
-does. A config line —
+`blocks` / `brew ...` / `why ...` / `read ...` / `watch ...` / `help python` as rules on it — nothing
+here opens a socket, reads a keyboard, or prints a prompt. Typing those commands interactively needs a
+HOST that does. A config line —
 
 ```
 # ~/.config/harneskills/config
