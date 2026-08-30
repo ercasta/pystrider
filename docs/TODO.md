@@ -280,6 +280,58 @@ one extra tick is exactly this wait, and the final replies are unchanged
 isolation) + `test_spine.py`'s vocabulary-collision pin extended to
 cover it. 168 → 173 bare, 186 → 191 with the bridge suite.
 
+### 2026-08-30 (cont'd) — new idea, prototyped same session: architectural constraints ARE rules
+
+User's own insight: checking a program for respect of architectural
+constraints is a special case of "answering questions about programs" —
+and a constraint is `patterns.py`'s exact shape (`structure => description`,
+forward-chained, deposited as a component), pointed at a JUDGMENT instead
+of a neutral description. Nothing about the engine cares about the
+difference; a constraint rule is not privileged, arbitrated, or run any
+differently from `iteration`/`conditional`/`application`/`loop_count`.
+
+Two things worth remembering about the fit, both already true before this
+was tried:
+- It gets inspectability for free the same way every other derived fact
+  here does (`w.get(function, TooManyLoops)`, `w.show`, `loop.trace` if
+  tracing is on) — **but NOT `domain.py`'s existing `why <subj> <pred>
+  <obj>` verb**, which is CNL/`brew`-specific (a different `World`
+  entirely) — an earlier claim in this same conversation that a
+  constraint would get `why` "for free" was WRONG and is corrected here;
+  nothing in this repo currently asks the intake/patterns world "why" at
+  all, prompt-side.
+- Not every constraint is one pattern away — "no function may exceed N
+  loops" is a single-shape match; "no import cycle across layer
+  boundaries" or "the two loops don't nest" needs COMPOSING several
+  already-recognized facts into one conclusion, which is thread 3
+  (composition-as-its-own-pattern) and `loopingrules`' own
+  `DECISION_PATTERNS.md` chart-parsing note (2026-08-30, commit
+  `3e3b528`) — the same open gap, arrived at from a different direction.
+  A constraint catalog built only on single-pattern matches would handle
+  the easy cases and silently be unable to express the rest.
+
+**Prototyped, one constraint deep, on purpose** (`pystrider/constraints.py`,
+new module — mirrors `patterns.py`'s own shape: `CONSTRAINTS` dict,
+`install(loop, only=None)`): `max_loops` reads `patterns.LoopCount` (built
+two sessions-notes ago, in the very same session) and derives
+`TooManyLoops(count, limit)` when a function's loop count exceeds
+`MAX_LOOPS` — a plain module constant, deliberately NOT designed as a real
+policy yet (where a threshold should actually live — global? per-project?
+per-function, as a durable component someone states? — is a real,
+undesigned question named but not answered here; answering it is what a
+SECOND constraint would force into the open, same "generalize once there's
+a second instance" rule this whole session has followed). `TooManyLoops`
+carries `limit` on the fact itself, not just implied by the (mutable)
+module constant, so an already-deposited violation stays honest about what
+it was actually checked against. 7 new tests
+(`tests/test_constraints.py`), all green — 173 → 180 bare, 191 → 198 with
+the bridge suite.
+
+**Not done:** no live-prompt verb surfaces a `TooManyLoops` fact to a
+person yet (same honestly-named gap `repair.py`'s own "Where this goes
+next" already carries for a different feature) — this is a library-level
+rule module only, installable, tested, not wired into `domain.py`.
+
 ### Open threads — pick one to continue next session
 
 1. **Bidirectional `Iteration` pattern** (paused mid-design, was about to be
@@ -344,6 +396,17 @@ cover it. 168 → 173 bare, 186 → 191 with the bridge suite.
    structurally too (also narrow: same-module call graph only). Neither
    "runs" anything — closer to abstract interpretation over a tiny fragment.
    Not designed as a general primitive yet.
+
+7. **Architectural constraints, past the one-constraint prototype** — see
+   "new idea, prototyped same session," above. Needs: (a) a real threshold/
+   policy mechanism (`MAX_LOOPS` is a hardcoded module constant today, not
+   something a person or config states — where it should live at all is
+   undesigned); (b) a live-prompt verb (or a fold into `read`/`watch`) that
+   surfaces a `TooManyLoops`-style fact to a person, the way `_report_read`
+   does for iteration counts; (c) a SECOND constraint, concretely, before
+   generalizing `CONSTRAINTS`/`install()` any further than the direct
+   `patterns.DESCRIPTIONS` mirror it already is; (d) depends on thread 3
+   (composition) for any constraint that isn't a single-pattern match.
 
 ### Reference
 
