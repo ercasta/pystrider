@@ -291,3 +291,27 @@ For everything else — the reasoning axes, the generation loop in full, the lay
 and probe — see **[docs/deep_dive.md](docs/deep_dive.md)**. For the newer exploration — deriving a
 fragment's footprint from its source, recognizing code patterns by aspect, and where the symbolic core
 reaches vs. where it honestly abstains — see **[docs/understanding_findings.md](docs/understanding_findings.md)**.
+
+## pystrider has no REPL of its own
+
+Everything under **Run**, above, is either a script (`python -m demos.playground.playground`, `python
+-m pystrider.demo`) or `pytest` — there is no `python -m pystrider` interactive prompt, no
+`[project.scripts]` entry, no `__main__.py` at the package root, and that is deliberate, not
+unfinished. `pystrider/domain.py`'s `install(loop)` is the ONLY integration surface this package
+offers: hand it a [loopingrules](https://github.com/ercasta/loopingrules) `Loop` and it registers
+`blocks` / `brew ...` / `why ...` / `read ...` / `help python` as rules on it — nothing here opens a
+socket, reads a keyboard, or prints a prompt. Typing those commands interactively needs a HOST that
+does. A config line —
+
+```
+# ~/.config/harneskills/config
+harneskills.examples.fs:install
+pystrider.domain:install
+```
+
+is what [harneskills](https://github.com/ercasta/harneskills) is: the reference REPL/service this
+package is verified against, live (see its own `tests/test_domain_help.py`, which installs
+`help_.install(loop); domain.install(loop)` and gets a real answer back, no `harneskills` import
+needed even for that). It is not the only harness a `loopingrules.Loop` could be run under, and this
+package does not import `harneskills` or know it exists — see `pystrider/domain.py`'s own docstring,
+"`help python` answers `loopingrules.help`'s occasion, not `harneskills`'s," for the fuller argument.
