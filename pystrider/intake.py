@@ -79,9 +79,30 @@ class Origin:
 @dataclass(frozen=True)
 class SourceLine:
     """Recorded here, at intake, because attribution has to be an OBSERVED
-    fact joined later, never derived."""
+    fact joined later, never derived.
+
+    ⚠ Kept for `transliterate.py`, which still attaches only this. `intake.py`'s
+    own `node()` attaches `Span` instead — see below."""
 
     value: int
+
+
+@dataclass(frozen=True)
+class Span:
+    """Where this construct starts and ends, as source LINES — OBSERVED
+    straight off the AST node's own `lineno`/`end_lineno`, never derived. A
+    compound statement's `end_lineno` already covers its whole body, so this is
+    exact for anything `node()` mints from a real AST node.
+
+    ⚠ `Block` (this module's own synthetic body-of-statements entity, minted by
+    `block()` with no AST node behind it) gets no `Span` here — nothing to
+    observe it from. See `pystrider.spans` for its DERIVED span, kept a
+    separate component on purpose: a caller should always be able to tell
+    which kind of claim it is looking at.
+    """
+
+    start: int
+    end: int
 
 
 @dataclass(frozen=True)
@@ -179,9 +200,9 @@ class NoOp:
 @dataclass(frozen=True)
 class Block:
     """⚠ Minted directly by `block()`, not through `node()` -- it has no line
-    of its own, so it carries `FromCode`/`Readable` but no `Origin`/
-    `SourceLine`. See the module note on the bug that shipped once before
-    this was `readable`."""
+    of its own, so it carries `FromCode`/`Readable` but no `Origin`/`Span`. See
+    the module note on the bug that shipped once before this was `readable`,
+    and `pystrider.spans` for this entity's DERIVED span."""
 
 
 @dataclass(frozen=True)
@@ -395,9 +416,9 @@ class Intake:
         """
         n = self.w.spawn(kind_cls(**attrs), Readable(), FromCode(),
                           Origin(self.origin))
-        line = getattr(tree, "lineno", None)
-        if line is not None:
-            self.w.attach(n, SourceLine(line))
+        start, end = getattr(tree, "lineno", None), getattr(tree, "end_lineno", None)
+        if start is not None:
+            self.w.attach(n, Span(start, end if end is not None else start))
         return n
 
     def part(self, parent: int, label: str, child: Any) -> None:
