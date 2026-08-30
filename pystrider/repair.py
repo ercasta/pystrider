@@ -92,8 +92,10 @@ membrane/substrate tests below, none of which this rebuild touches.
 ## Where this goes next
 
 ⚠ TODO, not done here: nothing in `pystrider.domain` installs this module
-at all -- `_read`'s own `Loop` only ever runs `patterns.install`, and
-spawns no `Wants`/`Case` for anything to diagnose. `relax`/`lower`'s
+at all -- `install()` (2026-08-30: the one SHARED loop, not `_read`'s own
+private one any more, see `domain.py`'s own docstring) only ever runs
+`patterns.install`, and spawns no `Wants`/`Case` for anything to
+diagnose. `relax`/`lower`'s
 rebuilt arbiter is verified by `test_repair.py` and by hand (a standalone
 script: intake a buggy `classify`, `repair.install(loop)`, both families
 propose, `relax` wins, the emitted source reads `age >= 18`) -- not yet

@@ -45,9 +45,11 @@ Important: there are NO "mechanical" transformations that directly modify the as
   recognizing AST shape needs real graph matching over components. Keep the
   split as-is.
 
-- **Why does `_read` spin up a private `Loop`/`World` instead of using the
-  shared one?** Answered directly in `domain.py:17-45`, worth reading
-  verbatim next time. Short version: the shared world is PERSISTED
+- **Why did `_read` spin up a private `Loop`/`World` instead of using the
+  shared one?** ⚠ 2026-08-30, later same day: it no longer does — see the
+  next section. This answer is kept for the history; `domain.py`'s own
+  docstring (top of the file) now describes the CURRENT shape, not this
+  one. Short version, at the time: the shared world is PERSISTED
   (`loopingrules.save` writes `world.json` on every settle), and `intake()`
   spawns hundreds-to-thousands of entities per file — none of which anyone
   wants serialized as "what the session knows." Only the CONVERSATION (goals
@@ -83,12 +85,139 @@ Important: there are NO "mechanical" transformations that directly modify the as
     world unconditionally (`save.py:116`). Adding a way to exclude
     `FromCode`-tagged entities (or similar) from persistence is new work, not
     a flag that already exists.
-  - Still fully open, not designed in detail: the exact stable-key shape, the
-    resolver that turns a key back into a live entity id (and triggers reread
-    on a miss), the `save.py`-level exclusion filter, and the `forget(w,
-    path)` operation itself (which entities exactly get destroyed — probably
-    everything with `Origin(path)` — and what happens to anything, even a
-    stable-keyed reference, mid-resolution when a forget races a query).
+  - Still fully open, not designed in detail: the `forget(w, path)` operation
+    itself (which entities exactly get destroyed — probably everything with
+    `Origin(path)` — and what happens to anything mid-resolution when a
+    forget races a query).
+
+### 2026-08-30 (cont'd) — settled design: two tiers of component, a resolver, `loopingrules` TRANSIENT
+
+The stable-key/resolver shape above is no longer open — this is the answer,
+prompted by the same problem restated more sharply: a durable component
+cannot hold a raw entity id at all, because entity ids are not just unstable
+across a forget-and-reread, they don't even mean the same thing across a
+*hypothetical* rewrite. "Thinking about" a changed version of a program —
+propose a rewrite, reason about it, decide whether to apply it — works over
+entities that were never intake()'d from any file; the id a durable
+conclusion was tempted to point at ("swap the args in this call", `#4821`)
+refers to nothing once the parse it came from is gone, re-read, or was never
+real in the first place. So the fix isn't a better cache-invalidation story
+for raw ids, it's that durable facts don't get to hold raw ids, full stop.
+
+**Tier 1 — durable.** May outlive the tick that produced it (persisted, or
+just held across a forget/reread). Refers to other things by a **stable
+key**, never a raw entity id — `(origin_path, qualname)`, `(origin_path,
+span)`, whatever the domain's own notion of "the same thing, again" is. A
+business rule's conclusion about a specific function is durable, and is
+keyed, not id'd.
+
+**Tier 2 — transient.** Everything downstream of turning a stable key into a
+live entity — the id itself, and any component built on top of it while
+doing real work: an `Iteration(item, sequence, does)`, a `Proposal(occasion)`,
+whatever a graph-matching or generator rule spawns mid-derivation. This is
+the floor real work has to bottom out on eventually (you cannot pattern-match
+an AST shape over stable keys, only over live entities), but it's disposable
+by construction — recomputable from tier-1 facts plus resolution, never
+itself a source of truth. Nothing here may be relied on to still exist, or
+mean the same thing, one tick from now.
+
+**The resolver** is the seam between the tiers, and it's necessarily
+domain-specific: `resolve(w, stable_key) -> Entity`, which finds a live
+entity already carrying that key (via an index component — `Origin`, for
+code) and, on a miss, does whatever that domain's version of "reread" is
+(re-`intake()` the file) before returning. `loopingrules` cannot know how to
+do this generically — it only needs to know a resolver exists per domain, not
+what one does.
+
+**What this buys, and what it costs `loopingrules` (not yet built there):**
+tier 2 no longer needs pystrider's current workaround — a whole private,
+unpersisted `Loop`/`World` per `read`, purely to keep code-derived,
+raw-id-bearing entities out of `world.json`. Instead, mark a component class
+transient (simplest: a class attribute, `_transient = True` — components here
+are plain dataclasses with no base class to hang a decorator's marker on more
+cleanly) and have `save.dump()` (`save.py:121`) skip any instance whose type
+carries it. That lets transient, raw-id-bearing facts live in the **shared**
+world — composing with business rules in the same tick, which is what
+`domain.py`'s own docstring already says is the right default — without the
+size/persistence problem that is the *only* reason they're exiled to a
+private world today. `World` could also gain a bulk "drop every transient
+component" op, for cheap mid-session forgetting that never has to touch tier
+1 at all. None of this is built yet, and it lives in `loopingrules`
+(`world.py`/`save.py`), not this repo — needs a go-ahead to touch that sibling
+checkout before starting.
+
+### 2026-08-30 (cont'd) — built: `@transient`, the resolver, and the shared-world move
+
+Both prerequisites above are done, same day. `loopingrules` (`world.py`/
+`save.py`, commit `67bf6dd`): `@transient` (a decorator, stamps
+`_transient = True`) + `is_transient()`; `save.dump()` skips every
+transient instance, and drops an entity ENTIRELY if every component it
+carried was transient (no bare record either — that would say something
+different, see `save.py`'s own updated docstring); `World.purge_transient()`
+for bulk mid-session dropping (not yet called by anything in this repo —
+nothing has needed to reclaim the memory yet).
+
+On this side: **every** component `intake.py`/`patterns.py`/`spans.py`
+declare is now `@transient` (`intake.py`'s own block, right after its
+class declarations — one block, not 37 individual decorators, because the
+point is the whole vocabulary is one tier). `pystrider/resolve.py` is new
+— the first concrete resolver, per thread 1's own "do one concretely
+first" rule: `resolve_function(w, path, name)` answers the stable key
+`(path, name)`, rereading `path` exactly once if `w` holds nothing from it
+yet (⚠ NOT on every miss — a known file with no such function is a stable
+answer, not staleness; rereading on every miss would turn a rule that
+calls this every tick into a disk-read storm that never settles — see the
+module's own ⚠). `forget(w, path)` — thread 2c's own question, answered
+in its scoped-down form — destroys everything carrying `Origin(path)`;
+`reread` is `forget` + `intake()` again.
+
+`pystrider.domain`'s `_read` now intakes straight into the SHARED `w`
+(`patterns` installed on the same loop, in `install()`, not a private one
+per call). It split into two rules, `_read` and `_report_read` — the
+report needs `Iteration` (patterns' own conclusion), which is not visible
+the same tick it is derived to whatever ran before it, so `_read` spawns
+a `ReadDone` marker (itself `@transient` — domain bookkeeping, not
+code-derived, but disposable all the same) and `_report_read` reads it
+back once `patterns` has had its turn. Two ordering invariants make that
+correct — `_read` before `patterns` (registration order), `_report_read`
+after `patterns` (explicit `priority=-1`, so it holds regardless of
+which of the two `install()` lines runs first) — see `domain.py`'s own
+docstring and `install()`'s for the full argument. `_report_read` also
+scopes every query by `Origin(path) == done.path` now, because the shared
+world may hold entities from every file this session has ever read, not
+just the one just read — the private-world version never needed this.
+
+**A real bug the move surfaced, fixed along the way:** `Block` (intake's
+synthetic body-of-statements entity) and the `Unreadable` placeholder both
+minted without `Origin`, on the theory that `Origin` needed a `lineno` the
+way `Span` does — it never did, `Origin` is just `self.origin`, a plain
+attribute, always available. Harmless while a private `World` was thrown
+away whole after every `_read`; in the shared world, `resolve.forget`
+(which finds everything to destroy by `Origin(path)` alone) leaked one
+`Block` and any `Unreadable` placeholder per read, forever, since neither
+could be found by path. Both now attach `Origin` too — confirmed fixed by
+rereading the same file three times and checking world size stays flat
+(`tests/test_resolve.py`, `tests/test_domain_read.py`).
+
+Evidence: 139 → 160 passed on the bare suite (21 new tests: 11 in
+`tests/test_resolve.py`, 10 in `tests/test_domain_read.py`, including a
+pin that `patterns` — not just `intake` — is what supplies "recognized as
+iterations," and a pin that NOTHING a `read` spawns reaches
+`loopingrules.save.dump()`); 178 passed, 2 xfailed with the bridge suite
+(textual venv), no regressions either way.
+
+**Still not done, and thread 2 stays open for it:** nothing durable
+exists yet that USES `resolve_function` — no rule in this repo produces a
+durable, stable-keyed conclusion about a specific function, so the
+resolver is verified today only by rereading one path repeatedly, not by
+a durable fact surviving a real forget-and-reread round trip end to end.
+`World.purge_transient()` is also unused here so far — the shared world
+just accumulates transient entities across a session (bounded by however
+many files get `read`, unbounded across a very long session) — fine for
+now, a real gap the day that matters. And `qualname` disambiguation
+(thread 2's own `(origin_path, qualname-or-span)`) is still just
+`(path, name)` — `resolve.py`'s own ⚠ names this; two same-named
+functions in different scopes of one file are not told apart yet.
 
 ### Open threads — pick one to continue next session
 
@@ -109,13 +238,18 @@ Important: there are NO "mechanical" transformations that directly modify the as
    Do `Iteration` concretely first; generalize the shape-table machinery only
    once there's a second instance (`Choice` or `Applies`) to check it against.
 
-2. **Shared-world + forget/reread mechanism** (this session's newest thread,
-   see decisions above) — needs: (a) a `save.py`-level exclusion filter, (b) a
-   `forget(w, path)` operation, (c) a stable-key resolver so durable
-   references survive a forget. This is a prerequisite for "ask questions
-   about Python programs" if the answer needs to compose with anything else
-   the session knows (business rules, prior analysis) rather than living and
-   dying in one throwaway `read` call.
+2. **Shared-world + forget/reread mechanism** — (a) `@transient` +
+   `save.dump` skip, (b) `pystrider.resolve`'s resolver, (c) `_read`/
+   `_report_read` on the shared world, and the scoped `forget(w, path)` are
+   all BUILT now (see "built: `@transient`, the resolver, and the
+   shared-world move," above). What's left: (i) an actual durable,
+   stable-keyed fact that USES `resolve_function` — nothing in this repo
+   produces one yet, so the resolver's real payoff (a business rule's
+   conclusion surviving a forget-and-reread) is still unverified end to
+   end; (ii) `World.purge_transient()` is unused here, so a very long
+   session's transient entities just accumulate; (iii) the stable key is
+   still `(path, name)`, not `(path, qualname-or-span)` — same-named
+   functions in different scopes of one file are not disambiguated.
 
 3. **Composition-as-its-own-pattern** — user's own insight from this session:
    two sequential loops compose by "sequencing"; nested loops are NOT

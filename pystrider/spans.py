@@ -22,14 +22,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Union
 
+from loopingrules.world import transient
+
 from .intake import Block, Span, Stmt
 
 
+@transient
 @dataclass(frozen=True)
 class DerivedSpan:
     """A `Block`'s span, DERIVED from its `Stmt` children — never itself
     observed off an AST node. See the module note on why this stays a
-    separate component from `Span`."""
+    separate component from `Span`.
+
+    TRANSIENT, same as `Span` and everything else `intake.py` mints — a
+    claim about ONE `intake()`'s entities, gone with them. See
+    `loopingrules.world.transient` and `intake.py`'s own transient block."""
 
     start: int
     end: int

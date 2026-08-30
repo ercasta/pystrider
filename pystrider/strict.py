@@ -7,8 +7,17 @@ derivation, where a rule that raised did not fire, so the world settles
 *looking* quiescent while the conclusion it owed is simply absent. That
 silence is exactly the shape of bug this project has repeatedly measured and
 paid for. The old `Facts.run()` re-raised for this reason; `Facts` is gone,
-so this is what a batch caller reaches for instead — `pystrider.domain`'s
-private, one-shot worlds (`_read`/`_brew`/`_why`) are exactly that caller.
+so this is what a batch caller reaches for instead — `demos.playground.brew.
+reason()`'s own private, one-shot `Loop` (what `pystrider.domain`'s `_brew`/
+`_why` both run through) is exactly that caller.
+
+⚠⚠ 2026-08-30: `_read` is NOT this any more. It used to be, but moved onto
+the SHARED loop (see `pystrider.domain`'s own docstring, "the SHARED
+world") — a persistent domain's rules running every tick for the life of
+the session are exactly the "wrong for a REPL" case above, not the
+one-shot case this module exists for; a rule of `patterns`'s that raised
+once should not crash the whole prompt over it. Cite `_brew`/`_why` here
+from now on, not `_read`.
 """
 from __future__ import annotations
 

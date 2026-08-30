@@ -14,35 +14,75 @@ by all of them):
     why <subj> <pred> <obj>   what makes a derived fact so, across the blocks
     read <path.py>         intake a Python file and say what was recognized
 
-## ⚠⚠ THE DERIVATIONS RUN IN A PRIVATE WORLD, AND THAT IS NOT THE OBVIOUS CHOICE
+## 2026-08-30: `read` moved into the SHARED world — `@transient` is what made it safe
 
-The obvious choice is the good one — put pystrider's facts in the SHARED world, so
-a business rule and a file listing are entities side by side and one settle covers
-both. `loopingrules.engine`'s whole argument is *one world, several doors*. What
-makes it wrong here is a property of what pystrider stores rather than of the idea:
+Until this date, `_read` spun up a whole private `Loop`/`World`, ran `intake()`
+and `patterns` in it, read off what it needed, and threw the rest away — because
+the shared world is PERSISTED (`loopingrules.save` writes it on every settle) and
+intaking one Python file spawns a few hundred entities, none of which anyone
+wants in `world.json`. That reasoning was correct and is recorded, in more
+detail, in `docs/TODO.md`'s "2026-08-30" sections — worth reading for the
+argument this rewrite is the payoff of, not repeated here.
 
-1. **The shared world is PERSISTED.** `loopingrules.save` writes it on every
-   settle. Intaking one Python file spawns a few hundred entities and
-   transliterating a real module spawns thousands, none of which anyone wants in
-   `world.json` — which is 7 KB today and is meant to be the thing the session
-   KNEW, not a syntax tree it looked at once.
+What changed: `loopingrules.world` grew `@transient` — a component class can be
+marked disposable, and `loopingrules.save.dump()` skips every instance of it, so
+it never reaches `world.json` regardless of which world it lives in. Every
+component `intake.py`/`patterns.py`/`spans.py` declare is marked this way now
+(see `intake.py`'s own transient block). So the SIZE reason above no longer
+forces a private world — `read <path.py>` now intakes straight into `w`, the
+one this domain's own rules already share with `harneskills.examples.fs` and
+everyone else on the prompt, and `patterns` is installed on the SAME loop
+(`install`, below) rather than a throwaway one per call.
 
-⭐⭐ **THERE USED TO BE A SECOND REASON AND IT IS FIXED, so do not cite it.** An
-earlier `save` could not read a generic relation back at all — it resolved
-`module:qualname` with `getattr` and a dynamic relation factory built its classes
-with `type()`, so a whole world of facts serialised fine and came back one named
-problem per relation, silently thinner. That entire vocabulary is gone now,
-replaced by explicitly-declared components `save` never had trouble with in the
-first place — every remaining relation this package once carried generically is a
-plain `@dataclass`, `getattr`-resolvable by construction. ⚠ The remaining reason
-above is SIZE, which is a real reason and an ordinary one — not the "we cannot" it
-used to be paired with. If someone wants pystrider's facts in the shared world,
-what stands between is deciding they are worth persisting, not the substrate.
+⭐⭐ **THERE USED TO BE A SECOND REASON AND IT IS FIXED TOO, so do not cite it
+either.** An earlier `save` could not read a generic relation back at all — see
+`intake.py`'s own history note. Long fixed; not why anything here works the way
+it does.
 
-⭐ So what lives in the shared world is the CONVERSATION — the goal a typed line
-becomes, and the `Reply` it produces. Those are ordinary module-level classes,
-`getattr`-resolvable and small. The derivation happens in a private `Loop`/`World`
-of its own and is thrown away with its answer already spoken.
+⭐ **This is not "code facts durably compose with business rules now."** They
+don't, and can't yet — `@transient` means these entities are still gone the
+moment nothing holds their ids any more (`purge_transient`, not yet called by
+anything here — nothing has needed to reclaim the memory yet), and NOTHING
+durable is allowed to hold one of their raw ids in the first place (see
+`loopingrules.world.transient`'s own docstring). What a durable fact reaches for
+instead is `pystrider.resolve` — a stable key (`path`, function `name`),
+resolved to a live entity ONLY where the work happens. Nothing in this domain
+writes a durable code fact yet; `resolve.resolve_function` exists for the day
+something does, verified today only by re-reading the SAME path twice and
+confirming the second read is not a duplicate (`resolve.forget`'s whole job).
+
+### `_read`/`_report_read`: two rules, not one, and the order between them is load-bearing
+
+`_read` intakes and reports everything that does NOT depend on `patterns` having
+run yet (function/loop counts, the round-trip check) — but `Iteration`, patterns'
+own conclusion, is not attached to anything the SAME tick `_read` mints it,
+because `Loop.tick()` calls every registered rule once, in order, and a write is
+visible to whatever runs AFTER it in that same pass, not to whatever already ran.
+Reporting "N loops, M recognized as iterations" inside `_read` itself would read
+`Iteration` before `patterns` had its turn — so `_read` instead spawns a
+`ReadDone` marker (transient) and a SECOND rule, `_report_read`, reads it back
+and reports.
+
+Two invariants make that correct, and both are enforced in `install()`, below,
+not by accident of file order:
+
+1. `_read` must run BEFORE `patterns`'s rules, in the SAME tick, so `patterns`
+   sees this tick's freshly-minted entities rather than missing them by one
+   tick — `install()` gets this from REGISTRATION order (`_read` registered
+   before `patterns.install(loop)` is called), both at the same default
+   priority.
+2. `_report_read` must run AFTER `patterns`'s rules, in the SAME tick,
+   regardless of registration order — `install()` gets this from an EXPLICIT
+   lower `priority`, because relying on registration order for this side too
+   would silently break the day someone reorders the two `install()` lines
+   without knowing why they were ordered that way.
+
+Also scoped by `path`, not just by kind: `w.each(Function)` today may hold
+functions from every file this session has ever `read`, not just the one just
+read (the shared world does not forget on its own — see `resolve.forget`) — so
+`_report_read` filters every query by `Origin(path) == done.path`. The private-
+world version never needed this, because a private `World` never held more than
+one file's worth of anything.
 
 ## ⚠ NOTHING HERE BLOCKS, except when you ask it to
 
@@ -97,7 +137,7 @@ import traceback
 from dataclasses import dataclass, replace
 
 from loopingrules.help import HelpAnswer, HelpCommandCensus, HelpTopic, HelpTopicName
-from loopingrules.world import Proposal, Reply, Said, propose
+from loopingrules.world import Proposal, Reply, Said, propose, transient
 
 #: What the prompt should pull a typo towards. `world.learn` is autocorrect only —
 #: nothing here changes what a rule finds.
@@ -132,6 +172,31 @@ class WhyWanted:
 @dataclass(frozen=True)
 class ReadWanted:
     path: str
+
+
+@transient
+@dataclass(frozen=True)
+class ReadDone:
+    """Bridges `_read` (the intake phase) to `_report_read` (the report
+    phase, once `patterns` has had this tick's turn too) — see this
+    module's own docstring, "`_read`/`_report_read`," for why this is two
+    rules and not one. `path` is `Intaken.origin` — already the expanded
+    path `Origin` components in `w` carry, so `_report_read` can filter by
+    it directly. `roundtrip_line` is precomputed in `_read` because it does
+    NOT depend on `patterns` — only the loop/iteration count does.
+
+    `@transient`, same reasoning as `intake.py`'s own components even
+    though nothing here comes FROM `intake.py`: a report still in flight,
+    meant to be gone within the tick that spawned it, and disposable if
+    something ever leaves it standing longer than that (a rule that raised
+    before `_report_read` got to consume it, say) — see
+    `loopingrules.world.transient`'s own docstring on what the marker
+    actually promises; it was never only about code-derived data."""
+
+    path: str
+    module: int
+    unmodelled: tuple
+    roundtrip_line: str
 
 
 def _say(w, text: str) -> None:
@@ -307,53 +372,69 @@ def _why(w) -> None:
 
 
 def _read(w) -> None:
-    # ⚠ TODO: recognition only -- this installs `patterns`, never `repair`,
-    # and spawns no `Wants`/`Case`. `repair.py`'s rebuilt relax/lower is
-    # verified by its own suite and by hand, not by anything typed here
-    # yet -- see `repair.py`'s own "Where this goes next."
+    # ⚠ TODO: recognition only -- installs `patterns` (below, in `install`),
+    # never `repair`, and spawns no `Wants`/`Case`. `repair.py`'s rebuilt
+    # relax/lower is verified by its own suite and by hand, not by anything
+    # typed here yet -- see `repair.py`'s own "Where this goes next."
+    #
+    # ⚠⚠ Reports nothing itself past the read/intake errors below -- see this
+    # module's own docstring, "`_read`/`_report_read`," for why the actual
+    # summary is a SEPARATE rule reading `ReadDone` back, not this one.
     for entity, wanted in w.each(ReadWanted):
         w.destroy(entity)
-        path = os.path.expanduser(wanted.path)
         try:
-            source = open(path, encoding="utf-8").read()
+            from pystrider import resolve
+            from pystrider.emit import Unrenderable, emit
+            taken, source = resolve.reread(w, wanted.path)
         except OSError as error:
             _say(w, f"cannot read {wanted.path}: {error.strerror}")
             continue
-        try:
-            from loopingrules.loop import Loop
-
-            from pystrider import patterns, strict
-            from pystrider.emit import Unrenderable, emit
-            from pystrider.intake import ForStmt, Function, intake
-            from pystrider.patterns import Iteration
-            loop = Loop()
-            patterns.install(loop)
-            taken = intake(source, loop.world, path)
-            strict.run(loop)
         except Exception as error:                     # noqa: BLE001
             _say(w, f"could not read {wanted.path}: {error!r}")
             continue
-        functions = list(loop.world.each(Function))
-        loops = [e.id for e, _tag in loop.world.each(ForStmt)]
-        described = [n for n in loops if loop.world.has(n, Iteration)]
-        _say(w, f"{os.path.basename(path)}: {len(functions)} "
+        try:
+            roundtrip_line = ("  round-trips byte-exact against the "
+                              f"source: {emit(w, taken.module) == source}")
+        except Unrenderable as refusal:
+            roundtrip_line = ("  refuses to write it back: "
+                              f"{str(refusal).split(' — ')[-1]}")
+        w.spawn(ReadDone(path=taken.origin, module=taken.module,
+                         unmodelled=taken.unmodelled,
+                         roundtrip_line=roundtrip_line))
+
+
+def _report_read(w) -> None:
+    """The other half of `_read` — see this module's own docstring. Runs
+    strictly AFTER `patterns` has had this tick's turn (`install()`'s own
+    `priority=`), so `Iteration` is already attached to whatever this read
+    is about to report on.
+
+    ⚠ Filters every query by `Origin(path) == done.path` -- `w` may hold
+    entities from every file this session has ever `read`, not just this
+    one (the shared world does not forget on its own), which the private-
+    world version never had to account for."""
+    from pystrider.intake import ForStmt, Function, Origin
+    from pystrider.patterns import Iteration
+    for entity, done in w.each(ReadDone):
+        w.destroy(entity)
+        functions = [f for _e, origin, f in w.each(Origin, Function)
+                    if origin.value == done.path]
+        loops = [e.id for e, origin, _tag in w.each(Origin, ForStmt)
+                if origin.value == done.path]
+        described = [n for n in loops if w.has(n, Iteration)]
+        _say(w, f"{os.path.basename(done.path)}: {len(functions)} "
                 f"functions, {len(loops)} loops, {len(described)} "
                 f"recognized as iterations")
-        if taken.unmodelled:
+        if done.unmodelled:
             counts: dict = {}
-            for name in taken.unmodelled:
+            for name in done.unmodelled:
                 counts[name] = counts.get(name, 0) + 1
             named = ", ".join(f"{k}x{v}" if v > 1 else k
                               for k, v in sorted(counts.items()))
-            _say(w, f"  unmodelled ({len(taken.unmodelled)}): {named}")
+            _say(w, f"  unmodelled ({len(done.unmodelled)}): {named}")
         else:
             _say(w, "  nothing unread")
-        try:
-            _say(w, "  round-trips byte-exact against the source: "
-                    f"{emit(loop.world, taken.module) == source}")
-        except Unrenderable as refusal:
-            _say(w, f"  refuses to write it back: "
-                    f"{str(refusal).split(' — ')[-1]}")
+        _say(w, done.roundtrip_line)
 
 
 def propose_help_python(w) -> None:
@@ -383,18 +464,38 @@ def propose_help_census_python(w) -> None:
 #: goal spawned this tick is answered on the next one. `propose_help_python`/
 #: `propose_help_census_python` are not part of that schedule at all -- they
 #: answer `loopingrules.help`'s own occasions, resolved there, not here.
+#: `_report_read` is ALSO not here -- `install()` registers it separately, with
+#: an explicit `priority`, since its place in the schedule is not "somewhere
+#: after `_read`" but "strictly after `patterns`," which registration order in
+#: this one tuple cannot express -- see this module's own docstring.
 RULES = (hear, _blocks, _brew, _why, _read, propose_help_python,
          propose_help_census_python)
 
 
 def install(loop) -> None:
-    """Register the rules and teach the prompt this domain's words.
+    """Register the rules, install `patterns` onto the SAME loop, and teach
+    the prompt this domain's words.
 
-    ⚠ Nothing is spawned here. Unlike `harneskills.examples.fs`, this domain has no
-    standing model to reconcile against a restored world — every derivation builds
-    its own `Loop`/`World` and discards it, so there is nothing that could come
-    back stale.
+    ⚠ The two lines below are not interchangeable in order, and neither is
+    an accident -- see this module's own docstring, "`_read`/`_report_read`":
+    `RULES` (which includes `_read`) must be registered BEFORE
+    `patterns.install(loop)`, so that within one tick, `_read` runs first
+    and `patterns` sees what it just minted; `_report_read` is registered
+    with a `priority` BELOW every default-priority rule (`_read` and
+    `patterns` both included) precisely so it does not also need to worry
+    about which of these two lines came first.
+
+    Nothing durable is spawned here. Unlike `harneskills.examples.fs`, this
+    domain has no STANDING model to reconcile against a restored world --
+    `patterns`'/`intake.py`'s entities are `@transient` (never reach
+    `world.json` regardless of which world they live in, see
+    `loopingrules.world.transient`), so there is nothing here that could
+    come back stale on a restart, only entities that are simply not there
+    until the next `read`.
     """
     for rule in RULES:
         loop.rule(rule)
+    loop.rule(_report_read, priority=-1)
+    from pystrider import patterns
+    patterns.install(loop)
     loop.world.learn(*WORDS)

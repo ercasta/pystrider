@@ -59,13 +59,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from loopingrules.world import transient
 from pystrider.intake import (Body, Call, Callee, Condition, ForStmt, IfStmt,
                               Iterated, Readable, Target, Then)
 
 #: This module's OWN conclusions — nothing above declares these, and nothing
 #: below reads them before this file attaches them.
+#:
+#: ⚠⚠ TRANSIENT, same as everything they are built from (`intake.py`'s own
+#: block explains why): a recognition is a claim about ONE `intake()`'s
+#: entities, so it means nothing once those are gone either. See
+#: `loopingrules.world.transient`.
 
 
+@transient
 @dataclass(frozen=True)
 class Iteration:
     item: int
@@ -73,12 +80,14 @@ class Iteration:
     does: int
 
 
+@transient
 @dataclass(frozen=True)
 class Choice:
     tests: int
     otherwise_does: int
 
 
+@transient
 @dataclass(frozen=True)
 class Applies:
     callee: int

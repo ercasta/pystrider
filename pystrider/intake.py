@@ -46,6 +46,14 @@ an identity table; nothing about decoding it needs the world at all.
 is an artifact that already parses, so the refusal needed is not *malformed*
 but **not modelled** — a reach membrane, not a trust boundary. `origin` stays
 a PARAMETER because provenance is not derivable from text.
+
+⚠⚠ 2026-08-30: every component this module declares is `@transient` (see the
+block right after this file's own class declarations) — this file's whole
+vocabulary can now live in the SHARED, persisted world (`pystrider.domain`'s
+`_read` does, since this date) without ending up in `world.json`. See
+`pystrider.resolve` for how a caller reaches one of these ids back from
+something durable, and `loopingrules.world.transient`'s own docstring for
+why none of them may be durable in the first place.
 """
 from __future__ import annotations
 
@@ -53,7 +61,7 @@ import ast
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
 
-from loopingrules.world import World
+from loopingrules.world import World, transient
 
 # -- the common stamp every intaken node carries ---------------------------
 
@@ -200,9 +208,12 @@ class NoOp:
 @dataclass(frozen=True)
 class Block:
     """⚠ Minted directly by `block()`, not through `node()` -- it has no line
-    of its own, so it carries `FromCode`/`Readable` but no `Origin`/`Span`. See
-    the module note on the bug that shipped once before this was `readable`,
-    and `pystrider.spans` for this entity's DERIVED span."""
+    of its own, so it carries `FromCode`/`Readable`/`Origin` but no `Span`
+    (2026-08-30: `Origin` too now -- it never needed a line, only
+    `self.origin`, a plain attribute; see `block()`'s own docstring for why
+    that was missing and what needed it fixed). See the module note on the
+    bug that shipped once before this was `readable`, and `pystrider.spans`
+    for this entity's DERIVED span."""
 
 
 @dataclass(frozen=True)
@@ -303,6 +314,27 @@ class Stmt:
 @dataclass(frozen=True)
 class HasParam:
     entity: int
+
+
+#: ⚠⚠ EVERY CLASS ABOVE IS TRANSIENT -- one call to `intake()` mints ids that
+#: mean nothing once the file is re-read (`pystrider.resolve.reread`) or was
+#: never real to begin with ("thinking about" a rewritten version of a
+#: program that was never intake()'d at all), so nothing here may ever be
+#: durable -- see `loopingrules.world.transient`'s own docstring for the
+#: full argument. A block, not 37 individual `@transient` lines, because
+#: the point IS that this whole vocabulary is one tier, at a glance, not a
+#: property of any one class in it. `pystrider.resolve` is what a caller
+#: durably interested in "this function, again" holds instead of any of
+#: these ids -- a stable key, resolved back to one of these only where the
+#: actual work happens.
+for _cls in (Readable, FromCode, Origin, SourceLine, Span, Partial,
+             UnknownPart, Module, Function, Param, ForStmt, IfStmt, Call,
+             ReturnStmt, Assign, Comparison, Arithmetic, Name, Constant,
+             Attribute, NoOp, Block, Unreadable, Target, Iterated, Body,
+             Otherwise, Condition, Then, Callee, Arg, Returned, Assigned,
+             Value, Left, Right, Of, Stmt, HasParam):
+    transient(_cls)
+del _cls
 
 
 #: label (as every `part()` call site already spells it) -> the component
@@ -441,8 +473,12 @@ class Intake:
 
         ⚠ It is asserted POSITIVELY, on the readable nodes, because a rule cannot
         say *nothing claims this*.
+
+        ⚠⚠ 2026-08-30: attaches `Origin` too now, same fix and same reason as
+        `block()`'s own -- see there.
         """
-        return self.w.spawn(Unreadable(), FromCode(), Partial())
+        return self.w.spawn(Unreadable(), FromCode(), Partial(),
+                            Origin(self.origin))
 
     def gap(self, parent: int, label: str) -> None:
         """Record that a part of `parent` could not be read, AT ITS LABEL.
@@ -495,8 +531,16 @@ class Intake:
         return handler(tree)
 
     def block(self, statements: List[Any], parent: Optional[int] = None) -> int:
-        """⚠ A body is ONE node with ordered `Stmt` parts, never N parts above it."""
-        b = self.w.spawn(Block(), FromCode(), Readable())
+        """⚠ A body is ONE node with ordered `Stmt` parts, never N parts above it.
+
+        ⚠⚠ 2026-08-30: now attaches `Origin` too -- see `Block`'s own updated
+        docstring. It was never true that a `Block` cannot know its origin
+        (that only ever needed `self.origin`, a plain attribute, not a
+        `lineno` off an AST node the way `Span` does); leaving it off just
+        never bit anything until `pystrider.resolve.forget` needed EVERY
+        entity from one file findable by `Origin` alone, not just the ones
+        `node()` minted."""
+        b = self.w.spawn(Block(), FromCode(), Readable(), Origin(self.origin))
         for s in statements:
             self.part(b, "stmt", self.visit(s, b, "stmt"))
         return b

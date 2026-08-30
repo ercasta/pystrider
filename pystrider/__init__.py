@@ -86,6 +86,7 @@ name), not fixed at Python-authoring time, so each keeps a small,
 | `plan.py` | a parallel demonstration of the same repair, arbitrated as a scenario bench |
 | `rules.py` | `derive`/`assign`/`minting` — the three rule shapes `plan.py` is built from |
 | `strict.py` | run a loop the way a one-shot derivation needs, not the way a REPL does |
+| `resolve.py` | a stable key (`path`, name) → a live, `@transient` entity — the seam a durable fact reaches through |
 
 ⚠ `demos/playground` is the headline: business, UX and toolkit rules in separate
 authored files, joined only by `bridge.cnl`, composed and driven green through
@@ -95,5 +96,5 @@ Textual's Pilot. It is the one place the CNL surface is load-bearing, and
 from __future__ import annotations
 
 __all__ = ["cnl", "domain", "effects", "effects_repair", "emit", "evaluator",
-           "intake", "patterns", "plan", "repair", "rules", "strict",
-           "transliterate"]
+           "intake", "patterns", "plan", "repair", "resolve", "rules",
+           "strict", "transliterate"]
