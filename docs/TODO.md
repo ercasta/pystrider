@@ -10,6 +10,76 @@ We need rules to
 
 Important: there are NO "mechanical" transformations that directly modify the ast. All the above steps are fundamental: there is ALWAYS a passage through semantics. Note that "semantics" can mean whatever we need: an annotation on a "span" of the AST to mark that a section of code swaps two variables, an annotation that the overall method is a circuit breaker or has a risk of division by zero, etc. The "semantics" is the "chokepoint" through which every operation goes.
 
+## START HERE — recap as of end of 2026-08-30 session
+
+A long session, in one arc: it began on the "components reference raw ids"
+problem (thinking about a rewritten program has ids that were never real to
+begin with), settled a design for it, built it across two repos, used it for
+a real durable fact, caught and fixed a place that fact was cutting a corner
+around the engine, and ended by prototyping a new idea the durable-fact work
+made obvious. Everything below this point (`## 2026-08-30 session: status +
+decisions` onward) is the dated, blow-by-blow log that arc was built from —
+read it for the reasoning; read THIS section for where things actually
+landed and what to do next.
+
+**Built and pushed, `loopingrules` (sibling repo, `main`):**
+- `67bf6dd` — `@transient`: a component class can be marked disposable
+  (`loopingrules.world.transient`), so `save.dump()` skips every instance
+  and `World.purge_transient()` can drop them all on demand, regardless of
+  which world they live in.
+- `3e3b528` — design note only, nothing built: `DECISION_PATTERNS.md` on
+  chart parsing — `arbitrate`/`census` both resolve ONE occasion at a time,
+  which cannot answer "there are two loops in function a, delete the first
+  one" (an interpretation composed from several already-resolved facts,
+  not one candidate). Flagged, not designed.
+
+**Built and pushed, `pystrider` (this repo, `main`), four commits:**
+- `3c4ada2` — `read <path.py>` moved from a private, throwaway `Loop`/`World`
+  onto the SHARED one, made safe by `@transient` (every `intake.py`/
+  `patterns.py`/`spans.py` component is marked). New `pystrider/resolve.py`:
+  the first concrete resolver, `resolve_function(w, path, name)`, a stable
+  key resolved to a live entity, rereading on demand. Found and fixed a real
+  bug along the way: `Block`/`Unreadable` placeholders minted without
+  `Origin`, silently harmless in the old private-world design, a real leak
+  in the new shared one.
+- `8a94b5b` — `watch <path.py> <name>`: this domain's first DURABLE,
+  stable-keyed business fact (`WatchedFunction`/`FunctionStatus`), the thing
+  that actually exercises `resolve_function` rather than leaving it
+  theoretical. Verified past "reread the same path twice" — a real
+  simulated-restart round trip (`tests/test_domain_watch.py`).
+- `022122c` — caught on review (the user asked directly: "are we using
+  entities and components, or bypassing the engine and writing python
+  code?"): `watch`'s loop count was a plain function, not a standing rule —
+  fixed by promoting it to `patterns.LoopCount`, a proper composable
+  description, which surfaced a genuine one-tick ordering question
+  (`_reconcile_watch`'s own docstring has the argument) — solved without a
+  second `_read`/`_report_read`-style rule split.
+- `f01a228` — `pystrider/constraints.py`, prototype: an architectural
+  constraint is `patterns.py`'s own shape, pointed at a judgment instead of
+  a neutral description. `max_loops` reads `LoopCount`, derives
+  `TooManyLoops`. One constraint deep, on purpose — the threshold is a
+  hardcoded constant (a real policy mechanism is undesigned), and nothing
+  wires it to the live prompt yet.
+
+**Test baseline to verify a fresh session against:** `PYTHONPATH=../loopingrules
+python -m pytest tests/ -q` → **180 passed, 1 skipped, 2 xfailed**. With the
+bridge suite (`PYTHONPATH=../loopingrules /path/to/harneskills/.venv/bin/python
+-m pytest tests/ -q`, see `[[running-pystrider-on-linux]]`) → **198 passed, 2
+xfailed**.
+
+**What's next — pick one** (see "Open threads," below, for the full list):
+- **Thread 1, bidirectional `Iteration`** — the thing this whole session's
+  detour interrupted; plan already written, ready to start cold.
+- **Thread 7, past the `constraints.py` prototype** — a real policy
+  mechanism, live-prompt wiring, or a second constraint (needed before the
+  `CONSTRAINTS`/`install()` shape generalizes any further).
+- **Thread 2's two residual items** — `World.purge_transient()` still
+  unused (fine until a very long session's transient entities actually
+  matter), and the stable key is still `(path, name)`, not `(path,
+  qualname-or-span)`.
+- Threads 3/5/6 (composition, the pattern catalog, symbolic "mental run"
+  analysis) are untouched this session, still open, still real.
+
 ## 2026-08-30 session: status + decisions
 
 ### Done this session
@@ -411,7 +481,9 @@ rule module only, installable, tested, not wired into `domain.py`.
 ### Reference
 
 A full capability recap + rules/components catalog (file:line cited, as of
-2026-08-30 pre-session state) was produced in the session that wrote this
-doc, but not saved to a file — only in that conversation's transcript. Worth
-regenerating as a doc if this file goes stale enough that a fresh recap earns
-its keep again.
+2026-08-30 PRE-session state — i.e. before everything this file itself now
+records) was produced in the session that wrote this doc, but not saved to a
+file — only in that conversation's transcript. "START HERE," at the top of
+this file, is the up-to-date recap as of END of session; regenerate a fuller
+file:line catalog only once THIS file has itself gone stale enough that a
+fresh one earns its keep again.
