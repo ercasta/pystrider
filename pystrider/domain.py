@@ -250,23 +250,6 @@ def _say(w, text: str) -> None:
     w.spawn(Reply("user", text))
 
 
-def _loops_in(w, function) -> int:
-    """How many `for` statements sit DIRECTLY in `function`'s own body —
-    not recursing into a nested block (an `if`'s body, a nested `def`),
-    a real, named simplification: "how many loops does this function
-    have," not "how many loops does its whole subtree have." Needs
-    nothing from `patterns` — raw `intake.py` structure (`Body`/`Stmt`/
-    `ForStmt`) is enough to count, unlike `_report_read`'s `Iteration`
-    check, so `_reconcile_watch` needs no two-phase split the way
-    `_read`/`_report_read` did."""
-    from pystrider.intake import Body, ForStmt, Stmt
-    body = w.get(function, Body)
-    if body is None:
-        return 0
-    return sum(1 for stmt in w.get_all(w.entity(body.entity), Stmt)
-              if w.has(w.entity(stmt.entity), ForStmt))
-
-
 # -- what a typed line means ----------------------------------------------------
 
 def hear(w) -> None:
@@ -529,6 +512,25 @@ def _reconcile_watch(w) -> None:
     happened to hand back last (see `WatchedFunction`'s own docstring for
     why: that entity is `@transient` and may already be gone).
 
+    ⚠⚠ `loops` reads `patterns.LoopCount` — a proper, composable, standing
+    description (see its own docstring), not counted inline here the way
+    an earlier version of this rule did. That reintroduces a real
+    ordering question `_read`/`_report_read` already had to answer, in a
+    NEW shape: `resolve_function`, above, may REREAD `watched.path`
+    synchronously, mid-turn — minting a brand-new `Function` entity
+    AFTER `patterns.loop_count` already had ITS turn this same tick
+    (`install()`'s own `priority=` puts this rule strictly after every
+    `patterns` rule, which is what makes `LoopCount` reliable at all once
+    it exists — but "exists" is exactly what a freshly-reread entity has
+    not had a chance to, yet). So: a `function` that resolved but has no
+    `LoopCount` YET is not "zero loops," it is "not answerable yet" —
+    skip it this tick rather than report a number that is about to
+    self-correct one tick later. `resolve_function`'s own reread already
+    moved `world.revision`, so there IS a next tick, and `patterns.
+    loop_count` gets its turn on the now-existing entity before this rule
+    does again — same settle, one tick later, not a hang and not a
+    second `read`-style two-phase rule.
+
     Reports only on an actual CHANGE (`FunctionStatus` compares by value,
     same as everything else in this world) — first resolution included,
     since `before` reads `None` then — not once a tick forever just
@@ -537,6 +539,7 @@ def _reconcile_watch(w) -> None:
     anything.
     """
     from pystrider import resolve
+    from pystrider.patterns import LoopCount
     for entity, watched in w.each(WatchedFunction):
         before = w.get(entity, FunctionStatus)
         function = resolve.resolve_function(w, watched.path, watched.name)
@@ -544,8 +547,11 @@ def _reconcile_watch(w) -> None:
             after = FunctionStatus(watched.path, watched.name,
                                    exists=False, loops=0)
         else:
+            count = w.get(function, LoopCount)
+            if count is None:
+                continue    # not derived for this entity YET -- try again
             after = FunctionStatus(watched.path, watched.name, exists=True,
-                                   loops=_loops_in(w, function))
+                                   loops=count.count)
         if after == before:
             continue
         w.replace(entity, after)
@@ -620,12 +626,15 @@ def install(loop) -> None:
     for rule in RULES:
         loop.rule(rule)
     loop.rule(_report_read, priority=-1)
-    # `priority=-2`, one below `_report_read`'s -1 -- purely for reading
-    # order: a `read` that happens to jog a watched function's status
-    # should report its OWN summary before the side effect that noticed,
-    # not the other way around. No data dependency requires this (unlike
-    # `_report_read`'s own -- `_reconcile_watch` never reads `Iteration`
-    # or anything `patterns` produces), only the prompt reading naturally.
+    # `priority=-2`, one below `_report_read`'s -1 -- and now, same as
+    # `_report_read` itself, LOAD-BEARING, not just for reading order: see
+    # `_reconcile_watch`'s own docstring. It reads `patterns.LoopCount`,
+    # so it needs to run after `patterns` too, for the same reason
+    # `_report_read` needs to run after `patterns` for `Iteration`. -1
+    # would already guarantee that (patterns is priority 0) -- -2 is
+    # picked instead of tying with `_report_read` so the OUTPUT reads in
+    # the order a person expects: a `read`'s own summary, then any
+    # watched-function side effect it happened to jog, never the reverse.
     loop.rule(_reconcile_watch, watches=(WatchedFunction,), priority=-2)
     from pystrider import patterns
     patterns.install(loop)

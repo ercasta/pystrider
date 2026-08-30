@@ -18,7 +18,7 @@ from pystrider.emit import Unrenderable, emit
 from pystrider.intake import (Assign, Assigned, Body, ForStmt, Iterated,
                               Origin, UnknownPart, decode_literal,
                               encode_literal, intake)
-from pystrider.patterns import Applies, Choice, Iteration
+from pystrider.patterns import Applies, Choice, Iteration, LoopCount
 
 SOURCE = '''\
 def total(items):
@@ -313,7 +313,7 @@ def test_intake_and_the_descriptions_share_NO_vocabulary():
     so what is left to check is that `patterns.py`'s conclusions really are
     classes `intake.py` never defines or attaches."""
     import pystrider.intake as intake_module
-    for neutral in (Iteration, Choice, Applies):
+    for neutral in (Iteration, Choice, Applies, LoopCount):
         assert getattr(intake_module, neutral.__name__, None) is not neutral, (
             f"intake.py also defines {neutral.__name__!r} — the two modules "
             f"collided on a name"

@@ -60,8 +60,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from loopingrules.world import transient
-from pystrider.intake import (Body, Call, Callee, Condition, ForStmt, IfStmt,
-                              Iterated, Readable, Target, Then)
+from pystrider.intake import (Body, Call, Callee, Condition, ForStmt, Function,
+                              IfStmt, Iterated, Readable, Stmt, Target, Then)
 
 #: This module's OWN conclusions — nothing above declares these, and nothing
 #: below reads them before this file attaches them.
@@ -91,6 +91,26 @@ class Choice:
 @dataclass(frozen=True)
 class Applies:
     callee: int
+
+
+@transient
+@dataclass(frozen=True)
+class LoopCount:
+    """How many `for` statements sit DIRECTLY in a `Function`'s own body --
+    an AGGREGATE description, not a construct classification the way
+    `Iteration`/`Choice`/`Applies` are, but built the same way: forward,
+    off `intake.py`'s own structure, deposited so anything else that ever
+    wants "how many loops does this function have" reads it here instead
+    of recomputing it inline (`pystrider.domain._reconcile_watch` is the
+    first caller — see its own docstring for why it has to WAIT a tick
+    for this the one time a watched function was just freshly re-read).
+
+    ⚠ NOT recursive into a nested block (an `if`'s body, a nested `def`)
+    — a real, named simplification: "how many loops this function has,"
+    not "how many loops its whole subtree has."
+    """
+
+    count: int
 
 
 def iteration(w) -> None:
@@ -124,11 +144,30 @@ def application(w) -> None:
         w.attach(entity, Applies(callee.entity))
 
 
+def loop_count(w) -> None:
+    """A `Function`  ->  its `LoopCount` — see that class's own docstring.
+
+    ⚠ No `Readable` check, unlike the three above: an unreadable `for`
+    would already be a placeholder that does not carry `ForStmt` at all
+    (see `intake.py`'s own placeholder mechanism), so it is simply not
+    counted rather than something this rule has to notice and abstain
+    from. `without=LoopCount` here is a pure optimization, not a
+    correctness guard the way it can be read as one above -- a reread
+    destroys a `Function` entity outright rather than mutating it (see
+    `pystrider.resolve.reread`), so one entity only ever gets counted
+    once in its whole lifetime regardless.
+    """
+    for entity, _fn, body in w.each(Function, Body, without=LoopCount):
+        count = sum(1 for stmt in w.get_all(w.entity(body.entity), Stmt)
+                    if w.has(w.entity(stmt.entity), ForStmt))
+        w.attach(entity, LoopCount(count))
+
+
 #: ⭐ The descriptions, in one place, so a caller can install a SUBSET. The
 #: perturbation pin needs exactly that: prove the bet by taking one description away
 #: and watching recognition go dark.
 DESCRIPTIONS = {"iteration": iteration, "conditional": conditional,
-                "application": application}
+                "application": application, "loop_count": loop_count}
 
 
 def install(loop, only=None) -> None:

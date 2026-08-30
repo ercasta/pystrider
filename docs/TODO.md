@@ -235,6 +235,51 @@ still just `(path, name)` — `resolve.py`'s own ⚠ names this; two
 same-named functions in different scopes of one file are not told apart
 yet, and `watch` inherits that limitation directly.
 
+### 2026-08-30 (cont'd) — caught in review: `watch`'s loop count was bypassing the engine
+
+Asked directly, on review: "are we using entities and components, or
+bypassing the engine and writing python code?" Answer at the time was
+"mostly yes, but one real spot didn't." `_reconcile_watch`'s loop count
+was computed by a plain function (`_loops_in`), called from inside a
+rule's body, never itself a component anything else could query — unlike
+`patterns.py`'s `iteration`/`conditional`/`application` or `spans.py`'s
+`block_span`, all of which are standing RULES that DEPOSIT their
+conclusion as its own component. Matched an existing precedent already
+in `domain.py` (`_report_read` counts the same ad hoc way), so not a new
+style invented for `watch` — but `domain.py` is the prompt-glue layer,
+not the recognition layer, and loop-counting is closer to the latter's
+job.
+
+Fixed: `patterns.LoopCount` + `patterns.loop_count(w)`, a fourth
+standing description alongside `Iteration`/`Choice`/`Applies` — an
+AGGREGATE description (closer in shape to `spans.py`'s `block_span` than
+to the other three), but built the same way: forward, off `intake.py`'s
+structure, `@transient`, deposited so ANYTHING can ask "how many loops
+does this function have," not just `watch`. `_reconcile_watch` now reads
+`w.get(function, LoopCount)` instead of counting inline.
+
+**This surfaced a real ordering wrinkle, not just a cosmetic move.**
+`resolve_function` may REREAD `watched.path` synchronously, mid-turn,
+inside `_reconcile_watch`'s own body — minting a brand-new `Function`
+entity AFTER `patterns.loop_count` already had its turn THIS tick (it
+runs earlier, at priority 0; `_reconcile_watch` is priority -2,
+specifically so it always runs after `patterns`). A freshly-reread
+function's `LoopCount` genuinely does not exist yet the tick it is
+reread. Rather than a second `_read`/`_report_read`-style two-phase rule
+split, `_reconcile_watch` just treats "resolved but no `LoopCount` yet"
+as "not answerable yet" and `continue`s — `resolve_function`'s own
+reread already moved `world.revision`, so there is a next tick,
+`patterns.loop_count` derives it then, and `_reconcile_watch` (still
+gated on `WatchedFunction`, always populated) gets another turn and
+reports correctly, one tick later, never a wrong number in between.
+Confirmed by hand: a cold `watch` now settles in 3 ticks, not 2 — the
+one extra tick is exactly this wait, and the final replies are unchanged
+(`["now watching...", "classify in a.py: 1 loop(s)"]`, no flicker).
+
+5 new tests (`tests/test_loop_count.py`, `patterns.LoopCount` in
+isolation) + `test_spine.py`'s vocabulary-collision pin extended to
+cover it. 168 → 173 bare, 186 → 191 with the bridge suite.
+
 ### Open threads — pick one to continue next session
 
 1. **Bidirectional `Iteration` pattern** (paused mid-design, was about to be
