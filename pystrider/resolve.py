@@ -12,14 +12,18 @@ name)` here — the first concrete instance, per this project's own "do one
 concretely first" rule (`docs/TODO.md`, thread 1) — resolved back to a
 live entity ONLY where the actual work happens, through this module.
 
-⚠ The key is `(path, name)`, not `(path, qualname)` — `intake.py` does not
-compute a dotted qualified name for a nested `def` yet, so two functions
-sharing a name in different scopes of the SAME file are not disambiguated
-here; `_find_function` answers whichever sorts first (entity id order).
-Named honestly rather than silently papered over: extending the key to a
-real qualname, once something needs one, is new work in `intake.py`
-(attaching a component alongside `Function` with the dotted path) — not a
-change to the shape below.
+⚠ The key is `(path, name)`, and `name` MAY be a dotted qualname now
+(`intake.py`'s `Qualname`, attached to every `Function` alongside its bare
+`name`) — `_find_function` tries an exact `Qualname` match first, so
+`resolve_function(w, path, "outer.inner")` disambiguates two functions
+named `inner` nested in different outer `def`s. A bare name is still
+resolved the old way too, by scanning `Function.name` — for a top-level
+function (`Qualname == name` already, no dots) this is the same answer
+either way, so every existing caller keeps working unchanged. What is
+STILL not disambiguated: two functions sharing a bare name with NEITHER
+caller passing the dotted form (`_find_function` answers whichever sorts
+first, entity id order, same as before), and any nesting through a
+`class` (`ClassDef` is unmodelled — see `Qualname`'s own docstring).
 
 ⚠ No staleness detection. `resolve_function` treats "this path already has
 SOME entities in `w`" as "trust it, don't reread" — it has no way to tell
@@ -37,7 +41,7 @@ from typing import Optional, Tuple
 
 from loopingrules.world import Entity, World
 
-from .intake import Function, Intaken, Origin, intake
+from .intake import Function, Intaken, Origin, Qualname, intake
 
 
 def forget(w: World, path: str) -> int:
@@ -81,7 +85,8 @@ def reread(w: World, path: str) -> Tuple[Intaken, str]:
 
 def resolve_function(w: World, path: str, name: str) -> Optional[Entity]:
     """The live `Function` entity currently answering to the stable key
-    `(path, name)`.
+    `(path, name)` — `name` may be a bare name or a dotted qualname (see
+    the module docstring's ⚠ on what dotting it buys).
 
     Re-`intake()`s `path` first, exactly once, if `w` holds NOTHING from
     it yet (see the module docstring's ⚠ on why "nothing yet" is the only
@@ -103,7 +108,18 @@ def resolve_function(w: World, path: str, name: str) -> Optional[Entity]:
 
 
 def _find_function(w: World, path: str, name: str) -> Optional[Entity]:
+    """An exact `Qualname` match wins first (never ambiguous ABOUT SCOPE —
+    see the module docstring's ⚠ for what it still can't rule out), so a
+    dotted `name` disambiguates; a bare name falls back to the old
+    by-`Function.name` scan, first match in entity-id order, same as
+    before `Qualname` existed."""
+    fallback = None
     for entity, origin, fn in w.each(Origin, Function):
-        if origin.value == path and fn.name == name:
+        if origin.value != path:
+            continue
+        qualname = w.get(entity, Qualname)
+        if qualname is not None and qualname.value == name:
             return entity
-    return None
+        if fallback is None and fn.name == name:
+            fallback = entity
+    return fallback

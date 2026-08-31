@@ -11,7 +11,7 @@ import pytest
 from loopingrules.world import World
 
 from pystrider import resolve
-from pystrider.intake import Block, Function, Origin, Unreadable
+from pystrider.intake import Block, Function, Origin, Qualname, Unreadable
 
 
 def write(tmp_path, name, text):
@@ -119,6 +119,57 @@ def test_resolve_function_on_a_file_that_cannot_be_read_raises(tmp_path):
     w = World()
     with pytest.raises(OSError):
         resolve.resolve_function(w, str(tmp_path / "nope.py"), "anything")
+
+
+# --- resolve_function: dotted qualname disambiguation ----------------------
+
+NESTED_SAME_NAME = """\
+def a():
+    def inner():
+        return 1
+    return inner()
+
+def b():
+    def inner():
+        return 2
+    return inner()
+"""
+
+
+def test_bare_name_of_a_scope_collision_is_still_ambiguous(tmp_path):
+    # Undisambiguated on purpose -- neither caller named a scope, so this
+    # is the same "whichever sorts first" answer as before `Qualname`
+    # existed. Named here so a future change to that ordering is a
+    # visible break, not a silent one.
+    w = World()
+    path = write(tmp_path, "a.py", NESTED_SAME_NAME)
+    resolve.reread(w, path)
+    entity = resolve.resolve_function(w, path, "inner")
+    assert entity is not None
+    assert w.get(entity, Qualname).value == "a.inner"     # first by entity id
+
+
+def test_a_dotted_qualname_disambiguates_a_scope_collision(tmp_path):
+    w = World()
+    path = write(tmp_path, "a.py", NESTED_SAME_NAME)
+    resolve.reread(w, path)
+    a_inner = resolve.resolve_function(w, path, "a.inner")
+    b_inner = resolve.resolve_function(w, path, "b.inner")
+    assert a_inner is not None and b_inner is not None
+    assert a_inner != b_inner
+    assert w.get(a_inner, Qualname).value == "a.inner"
+    assert w.get(b_inner, Qualname).value == "b.inner"
+
+
+def test_a_top_level_functions_dotted_qualname_is_just_its_name(tmp_path):
+    # A top-level function's qualname has no dots -- resolving by its bare
+    # name must keep working exactly as before `Qualname` existed.
+    w = World()
+    path = write(tmp_path, "a.py", LOOPY)
+    resolve.reread(w, path)
+    entity = resolve.resolve_function(w, path, "classify")
+    assert entity is not None
+    assert w.get(entity, Function).name == "classify"
 
 
 # --- the leak `resolve.forget` needs closed: EVERY entity carries Origin -

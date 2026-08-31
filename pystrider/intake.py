@@ -149,6 +149,31 @@ class Param:
 
 
 @dataclass(frozen=True)
+class Qualname:
+    """The dotted path from the module root to this function, through
+    enclosing `def`s only -- `class` is not modelled yet (`ClassDef` is
+    not in `_CONSUMES`; a class body is refused whole, so nothing under
+    one is ever walked, and no function ever nests inside one here). Equal
+    to `Function.name` for a top-level function -- the common case, so
+    every existing caller of `pystrider.resolve.resolve_function` keeps
+    working unchanged.
+
+    What this is FOR: `pystrider.resolve`'s own ⚠ names `(path, name)` as
+    unable to tell apart two functions sharing a bare name in different
+    scopes of one file. A caller that cares passes the dotted qualname
+    (`"outer.inner"`) instead of the bare one -- see `resolve.py`'s
+    `_find_function`, which tries an exact `Qualname` match before it
+    falls back to the old by-name scan. Two functions can still share one
+    dotted qualname too (`def f(): pass` twice at the same nesting, the
+    second rebinding the first at runtime) -- that ambiguity is real
+    Python, not something this component was ever going to resolve; only
+    the SCOPE-COLLISION case (same bare name, different nesting) is what
+    it fixes."""
+
+    value: str
+
+
+@dataclass(frozen=True)
 class ForStmt:
     pass
 
@@ -328,8 +353,8 @@ class HasParam:
 #: these ids -- a stable key, resolved back to one of these only where the
 #: actual work happens.
 for _cls in (Readable, FromCode, Origin, SourceLine, Span, Partial,
-             UnknownPart, Module, Function, Param, ForStmt, IfStmt, Call,
-             ReturnStmt, Assign, Comparison, Arithmetic, Name, Constant,
+             UnknownPart, Module, Function, Param, Qualname, ForStmt, IfStmt,
+             Call, ReturnStmt, Assign, Comparison, Arithmetic, Name, Constant,
              Attribute, NoOp, Block, Unreadable, Target, Iterated, Body,
              Otherwise, Condition, Then, Callee, Arg, Returned, Assigned,
              Value, Left, Right, Of, Stmt, HasParam):
@@ -436,6 +461,10 @@ class Intake:
         self.w = world
         self.origin = origin
         self.unmodelled: List[str] = []
+        # The enclosing `def` names, outermost first -- what `_FunctionDef`
+        # joins with its own name to build `Qualname`. Never a class name:
+        # `ClassDef` is unmodelled, so nothing under one is ever visited.
+        self.scope: List[str] = []
 
     # --- the five primitives ---------------------------------------------
 
@@ -564,10 +593,17 @@ class Intake:
 
     def _FunctionDef(self, t: ast.FunctionDef) -> int:
         n = self.node(Function, t, name=t.name)
+        self.w.attach(n, Qualname(".".join(self.scope + [t.name])))
         for a in t.args.args:
             self.part(n, "param", self.param(a))
         self.unconsumed(t.args, n)
+        # `scope` covers the BODY only -- a nested `def`'s qualname must
+        # not include its own name twice, and a sibling `def` after this
+        # one (back at the enclosing scope) must not see this one's name
+        # left behind.
+        self.scope.append(t.name)
         self.part(n, "body", self.block(t.body, n))
+        self.scope.pop()
         self.unconsumed(t, n)
         return n
 
