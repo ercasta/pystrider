@@ -16,6 +16,11 @@ by all of them):
     watch <path.py> <name>   durably track one function's loop count -- see
                             `WatchedFunction`'s own docstring for why this is
                             the domain's first fact that survives a restart
+    forget <path.py>       destroy everything `read`/`watch` learned from
+                            one file (`pystrider.resolve.forget`)
+    forget                 detach every `@transient` component, world-wide
+                            (`World.purge_transient`) -- see `_forget`'s own
+                            docstring for how this differs from the path form
 
 ## 2026-08-30: `read` moved into the SHARED world — `@transient` is what made it safe
 
@@ -43,10 +48,11 @@ either.** An earlier `save` could not read a generic relation back at all — se
 it does.
 
 ⭐ **This is not "code facts durably compose with business rules now."** They
-don't, and can't yet — `@transient` means these entities are still gone the
-moment nothing holds their ids any more (`purge_transient`, not yet called by
-anything here — nothing has needed to reclaim the memory yet), and NOTHING
-durable is allowed to hold one of their raw ids in the first place (see
+don't, and can't yet — `@transient` means these entities are gone the moment
+nothing holds their ids any more, on demand via `World.purge_transient()`
+(2026-08-31: now wired to a live verb, `forget` with no path — see
+`_forget`'s own docstring for the two granularities), and NOTHING durable
+is allowed to hold one of their raw ids in the first place (see
 `loopingrules.world.transient`'s own docstring). What a durable fact reaches for
 instead is `pystrider.resolve` — a stable key (`path`, function `name`),
 resolved to a live entity ONLY where the work happens. Nothing in this domain
@@ -144,8 +150,8 @@ from loopingrules.world import Proposal, Reply, Said, propose, transient
 
 #: What the prompt should pull a typo towards. `world.learn` is autocorrect only —
 #: nothing here changes what a rule finds.
-WORDS = ("blocks", "brew", "why", "read", "watch", "drive", "irreversible",
-         "basic", "premium", "spend", "python")
+WORDS = ("blocks", "brew", "why", "read", "watch", "forget", "drive",
+         "irreversible", "basic", "premium", "spend", "python")
 
 
 # -- the goals a typed line becomes ---------------------------------------------
@@ -200,6 +206,15 @@ class ReadDone:
     module: int
     unmodelled: tuple
     roundtrip_line: str
+
+
+@dataclass(frozen=True)
+class ForgetWanted:
+    """`path == ""` means the bare form -- see `_forget`'s own docstring
+    for what each spelling actually does; they are different granularities
+    of the same idea, not two names for one operation."""
+
+    path: str = ""
 
 
 @dataclass(frozen=True)
@@ -314,6 +329,10 @@ def _understand(w, text: str) -> bool:
 
     if verb == "watch" and len(rest) == 2:
         w.spawn(WatchWanted(os.path.expanduser(rest[0]), rest[1]))
+        return True
+
+    if verb == "forget" and len(rest) <= 1:
+        w.spawn(ForgetWanted(os.path.expanduser(rest[0])) if rest else ForgetWanted())
         return True
 
     return False
@@ -504,6 +523,43 @@ def _watch(w) -> None:
         _say(w, f"now watching {wanted.name} in {os.path.basename(wanted.path)}")
 
 
+def _forget(w) -> None:
+    """`forget <path.py>` -> `pystrider.resolve.forget` -- every entity
+    this world knows from ONE file, DESTROYED (not just detached), found
+    by its `Origin`. `forget` alone (no path) -> `World.purge_transient()`
+    -- every `@transient` component detached WORLD-WIDE in one pass,
+    regardless of path; see that method's own docstring for the shape:
+    the entities themselves are left standing, only their transient
+    components are gone, so a purge can orphan an empty entity nothing
+    will ever find again (no component left to query it by) -- a known,
+    named cost of the blunt form, not something `_forget` papers over.
+
+    Different granularities on purpose, not two names for one op: a
+    `watch`ed function survives the path-scoped form the way it was
+    always designed to (`WatchedFunction`'s own docstring) -- the next
+    `resolve.resolve_function` just re-`intake()`s that one file. It
+    survives the bare form too, at one extra tick's cost: `Origin` itself
+    is `@transient`, so after a bare `forget` `resolve_function` sees
+    NOTHING known about the path (not "known, but no such function" --
+    genuinely nothing), rereads it exactly once (same as a never-`read`
+    path always has), and `_reconcile_watch`'s own "not answerable yet"
+    skip (see its docstring) covers the one tick `LoopCount` needs to
+    catch up -- no flicker, no wrong number in between, same as a fresh
+    `watch` on a cold file today.
+    """
+    from pystrider import resolve
+    for entity, wanted in w.each(ForgetWanted):
+        w.destroy(entity)
+        if wanted.path:
+            dropped = resolve.forget(w, wanted.path)
+            _say(w, f"forgot {os.path.basename(wanted.path)}: "
+                    f"{dropped} entities destroyed")
+        else:
+            dropped = w.purge_transient()
+            _say(w, f"forgot everything transient: {dropped} components "
+                    f"detached world-wide")
+
+
 def _reconcile_watch(w) -> None:
     """The standing model `install()`'s own docstring says this domain
     otherwise lacks — every `WatchedFunction` gets its `FunctionStatus`
@@ -593,8 +649,8 @@ def propose_help_census_python(w) -> None:
 #: both separately, with an explicit `priority`/`watches`, since neither's
 #: place in the schedule is "somewhere after" a goal handler in this tuple --
 #: see this module's own docstring and each rule's own.
-RULES = (hear, _blocks, _brew, _why, _read, _watch, propose_help_python,
-         propose_help_census_python)
+RULES = (hear, _blocks, _brew, _why, _read, _watch, _forget,
+         propose_help_python, propose_help_census_python)
 
 
 def install(loop) -> None:
