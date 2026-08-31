@@ -10,6 +10,8 @@ We need rules to
 
 Important: there are NO "mechanical" transformations that directly modify the ast. All the above steps are fundamental: there is ALWAYS a passage through semantics. Note that "semantics" can mean whatever we need: an annotation on a "span" of the AST to mark that a section of code swaps two variables, an annotation that the overall method is a circuit breaker or has a risk of division by zero, etc. The "semantics" is the "chokepoint" through which every operation goes.
 
+See `docs/principles.md` for the fuller version of this same instinct — why the entity/component/rules substrate is built the way it is, and the concrete guidelines (test `watches=`'s over-approximation, keep abstention structural not prose, guard vocabulary collisions with a check) that keep its emergent behaviour the wanted kind rather than the surprising kind.
+
 ## START HERE — recap as of end of 2026-08-31 session (thread 6, `bound_to` slice)
 
 Same day, second sitting on thread 6 — picked up exactly where "What's
