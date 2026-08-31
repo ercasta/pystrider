@@ -5,8 +5,10 @@ from __future__ import annotations
 
 from loopingrules.loop import Loop
 from pystrider import symbolic
-from pystrider.intake import Arithmetic, Comparison, Constant, intake
-from pystrider.symbolic import KnownValue
+from pystrider.intake import (Arithmetic, Assign, Assigned, Body, Call,
+                              Callee, Comparison, Constant, Function, Name,
+                              Stmt, Value, intake)
+from pystrider.symbolic import BoundTo, KnownValue
 
 
 def load(source: str, origin: str = "<test>"):
@@ -107,3 +109,85 @@ def test_fold_is_pure_and_never_reads_known_value():
     (entity, _a), = w.each(Arithmetic)
     w.detach(entity, KnownValue)
     assert symbolic.fold(w, entity) == 5
+
+
+# -- `bound_to`/`BoundTo` -- the second slice, thread 6's motivating case --
+
+def _callee_name(w):
+    """The `Name` entity a source's single bare-call statement's `Callee`
+    names -- every binding test below reads a `Call`'s target this way."""
+    (call, _c), = w.each(Call)
+    callee = w.get(call, Callee)
+    return callee.entity
+
+
+def test_a_straight_line_binding_resolves_to_the_assigned_value():
+    # The motivating case, named directly in `docs/TODO.md`: finding a call
+    # site through indirection.
+    w = load("def helper():\n    return 1\n\n\ndef f():\n    g = helper\n    g()\n")
+    name = _callee_name(w)
+    assert w.get(name, Name).id == "g"
+    bound = w.get(name, BoundTo)
+    assert bound is not None
+    assert w.get(bound.entity, Name) == Name("helper")
+
+
+def test_reassignment_anywhere_in_the_function_abstains():
+    w = load("def f():\n    g = helper\n    g = other\n    g()\n")
+    assert w.get(_callee_name(w), BoundTo) is None
+
+
+def test_a_binding_in_a_different_branch_abstains():
+    # Assigned inside the `if`, used after it -- one candidate, but not
+    # provably on the path to the use; refused by POSITION (different
+    # block), not by guessing whether `cond` is true.
+    w = load("def f(cond):\n    if cond:\n        g = helper\n    g()\n")
+    assert w.get(_callee_name(w), BoundTo) is None
+
+
+def test_a_use_before_its_assignment_abstains():
+    w = load("def f():\n    g()\n    g = helper\n")
+    assert w.get(_callee_name(w), BoundTo) is None
+
+
+def test_a_name_with_no_assignment_at_all_gets_no_bound_to():
+    w = load("def f(g):\n    g()\n")
+    assert w.get(_callee_name(w), BoundTo) is None
+
+
+def test_bound_to_is_pure_and_never_reads_bound_to():
+    # Same discipline as `fold`: must answer correctly even if
+    # `resolved_binding` never ran, or already ran and was detached.
+    w = load("def f():\n    g = helper\n    g()\n")
+    name = _callee_name(w)
+    w.detach(name, BoundTo)
+    target = symbolic.bound_to(w, name)
+    assert target is not None
+    assert w.get(target, Name) == Name("helper")
+
+
+def test_recognizing_an_already_known_binding_is_not_a_change():
+    w = load("def f():\n    g = helper\n    g()\n")
+    before = w.revision
+    symbolic.resolved_binding(w)
+    assert w.revision == before
+
+
+def test_a_binding_added_later_makes_a_stale_binding_reconsidered():
+    # The same TMS shape `KnownValue` pins above, for `BoundTo`: a second
+    # `Assign` to the same name, added after the fact (e.g. by a future
+    # generator/repair), must drop the now-ambiguous binding the very next
+    # tick, not leave a confidently-wrong `BoundTo` standing.
+    w = load("def f():\n    g = helper\n    g()\n")
+    name = _callee_name(w)
+    assert w.get(name, BoundTo) is not None
+    (func, _f), = ((e, c) for e, c in w.each(Function) if c.name == "f")
+    block = w.get(func, Body).entity
+    target = w.spawn(Name("g"))
+    value = w.spawn(Name("other"))
+    second_assign = w.spawn(Assign())
+    w.attach(second_assign, Assigned(target))
+    w.attach(second_assign, Value(value))
+    w.attach(block, Stmt(second_assign))
+    symbolic.resolved_binding(w)
+    assert w.get(name, BoundTo) is None

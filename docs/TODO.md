@@ -10,72 +10,90 @@ We need rules to
 
 Important: there are NO "mechanical" transformations that directly modify the ast. All the above steps are fundamental: there is ALWAYS a passage through semantics. Note that "semantics" can mean whatever we need: an annotation on a "span" of the AST to mark that a section of code swaps two variables, an annotation that the overall method is a circuit breaker or has a risk of division by zero, etc. The "semantics" is the "chokepoint" through which every operation goes.
 
-## START HERE — recap as of end of 2026-08-31 session (thread 6, started)
+## START HERE — recap as of end of 2026-08-31 session (thread 6, `bound_to` slice)
 
-Thread 6 ("symbolic mental run analysis") was picked up this session, past
-what its own name promised — a real design conversation happened first
-(with the user, not solo), and what got built is the RESULT of that
-conversation, not just the obvious first slice. Read "2026-08-31 session:
-thread 6 — constant folding, then a TMS design, then denotations" below
-for the reasoning; this section is where things landed.
+Same day, second sitting on thread 6 — picked up exactly where "What's
+next" (previous recap) left off: resolving what a `Name` is BOUND TO
+through `Assign`. Read "2026-08-31 session (cont'd): thread 6 — `bound_to`,
+the second slice" below for the reasoning (the parent-walk bug included —
+worth reading before touching `symbolic.py`'s new helpers); this section is
+where things landed.
 
-**Built and pushed, on top of `9124ac2`** (this repo) **and a pull of
-`loopingrules` too** (it was 6 commits behind — missing `transient`,
-`loopingrules.help`, and other primitives `symbolic.py` needed; now
-current at `03a9ad7`, nothing local to push there):
+**Built and pushed, on top of `15c2efa`:**
 
-- `pystrider/symbolic.py` — `fold(w, entity)`, a PURE constant-folding
-  function (`Constant`/`Arithmetic`/`Comparison`, recursing through
-  `Left`/`Right`, no caching, no world mutation), and `known_value(w)`, a
-  forward standing annotation (`KnownValue`, `patterns.py`'s exact shape)
-  built on top of it. Deliberately capped at "no unbound symbols" — a
-  `Name` never gets a `KnownValue`, pinned by its own test; that ceiling
-  is ON PURPOSE, see below for what it's scaffolding toward.
-- `pystrider/denotation.py` — `Denotation` (`Root(path, qualname)` /
-  `Step(parent, label, index)`), a stable, resolvable PATH to an entity
-  that holds no raw id, reusing `intake.PARTS` (now public, was `_PARTS`)
-  as its hop vocabulary. `locate(w, denotation)` resolves fresh, never
-  caches, misses honestly. `encode`/`decode` make it storable in a
-  component field at all (nested dataclasses aren't, directly).
-- `pystrider/evaluation.py` — `Evaluation(denotation, kind, value, at)`,
-  a durable, wall-clock-timestamped RECEIPT (not `@transient` — the whole
-  point). `record()` mints one; `current(w, evaluation, deriver)` is the
-  ONLY thing that ever vouches for one, by calling `deriver` fresh
-  against the LIVE entity and comparing — never trusting the stored
-  value. This is the TMS answer: nothing is ever stale-and-wrong, because
-  nothing is ever read without re-checking.
-- **A real, live bug found and fixed along the way**: `repair.py`'s
-  `apply` (`relax`/`lower`) mutates a `Comparison`/`Constant` IN PLACE
-  (`w.replace`, same entity id — rewiring every edge that points at a
-  fresh id has no cheap answer, no reverse index). The FIRST version of
-  `symbolic.known_value` (this same session, since-replaced) cached
-  `KnownValue` via `w.attach` gated on `without=KnownValue` — which, once
-  attached, never reconsidered the entity, so a repair changing `18` to
-  `17` left a confidently-wrong `KnownValue("18")` standing forever. Now
-  `known_value` reruns `fold` for every candidate entity every tick,
-  `w.replace`/`w.detach`-ing the result — idempotent once settled
-  (`World.replace`'s own dedup), corrected the very next tick if not.
+- `pystrider/symbolic.py` grew a SECOND, independent value domain
+  alongside `fold`/`KnownValue` (unchanged, still exactly as narrow —
+  `fold` still never touches a `Name`, pinned by the same existing test):
+  `bound_to(w, entity)`, a pure deriver answering what a `Name` reference
+  is bound to via `Assign`, and `BoundTo`/`resolved_binding(w)`, the
+  standing annotation built on top of it — same `w.replace`/`w.detach`,
+  rebuild-every-tick posture as `KnownValue`, same reason (a repair
+  rewiring an `Assign` in place must not leave a stale binding standing).
+  Proven on the actual motivating case named in the previous recap:
+  `helper = ...; g = helper; g()` resolves `g()`'s `Callee` `Name` to the
+  `helper` `Name` entity on the assignment's right-hand side (one hop
+  short of the eventual `Function` — chasing THAT further is not this
+  slice, see `bound_to`'s own docstring).
+  - **The ceiling, honestly named, matching the previous recap's own
+    framing**: abstains by COUNT on reassignment (two-or-more candidate
+    `Assign`s anywhere in the enclosing function) and by POSITION on
+    branch-dependence (the one candidate must share the reference's exact
+    immediate `Block` and precede it in that block's `Stmt` order) —
+    neither is real flow-sensitivity, both refuse rather than guess.
+  - New private helpers, all "no caching, recompute fresh" like `fold`:
+    `_parent_of` (one upward hop, linear-scanning `intake.PARTS`'s own
+    vocabulary — no reverse index kept), `_enclosing`/`_owning_statement`
+    (walk `_parent_of` to the nearest ancestor of a given kind / the
+    nearest ancestor that is itself a member of a given `Stmt` list),
+    `_reachable` (forward BFS, same vocabulary, downward).
+  - **A real bug caught before it shipped**, not after: `_parent_of`'s
+    first version returned `w.each()`'s own `Entity` HANDLE as the parent,
+    then fed that handle straight back into itself as the next hop's
+    `child` — comparing it against a component field's PLAIN INT
+    (`loopingrules.world.Entity.__eq__` only matches another `Entity`,
+    never a bare int, see that class's own docstring), so every walk past
+    one hop silently stopped matching anything. Caught immediately by a
+    debug script run before trusting the tests, not by a red test (the
+    bug made every multi-hop case degrade to an honest-looking `None`,
+    which is exactly what an ambiguous/unreachable case is SUPPOSED to
+    return — a false abstention could have hidden here indefinitely).
+    Fixed: `_parent_of` normalizes its input and always returns a plain
+    `int`, documented on the function itself as a trap for the next
+    helper written against this substrate.
+- 8 new tests in `tests/test_symbolic.py` (now 20 total): the motivating
+  case resolving; reassignment abstaining; branch-dependence abstaining;
+  use-before-assignment abstaining; an unbound parameter (no `Assign` at
+  all) getting nothing; `bound_to`'s own purity (correct with `BoundTo`
+  never having run, or freshly detached); a no-op recomputation not moving
+  `world.revision`; and the TMS shape itself — a second `Assign` minted by
+  hand after the fact (standing in for a future repair/generator) makes a
+  previously-resolved `BoundTo` go stale-and-corrected, not stale-and-wrong.
 
-**Test baseline:** `python -m pytest tests/ -q` → **236 passed, 2
-xfailed** (bare interpreter; `loopingrules` resolves via the editable
-install, no `PYTHONPATH` needed in this environment — see
-`[[running-pystrider-on-linux]]` for the bridge-suite form if that changes).
+**Test baseline:** `PYTHONPATH=../loopingrules /path/to/harneskills/.venv/bin/python
+-m pytest tests/ -q` → **244 passed, 2 xfailed** (bridge suite; bare
+`python3` needs the same `PYTHONPATH` in THIS environment — the previous
+recap's claim that an editable install made `PYTHONPATH` unnecessary did
+not hold this sitting, see `[[running-pystrider-on-linux]]`).
 
 **What's next — pick one:**
-- **Thread 6, keep going**: the scaffolded target is resolving what a
-  `Name` is BOUND TO (through `Assign`, honestly abstaining on
-  reassignment/branch-dependent binding) — proven on numbers first
-  (`fold`/`KnownValue`), needed next for the motivating case (finding
-  call sites through indirection: `f = some_function; ...; f()`).
-  `Denotation`/`Evaluation` are ready to carry a "bound to" receipt the
-  same way they carry a `known_value` one — `kind="bound_to"`, say.
+- **Thread 6, keep going, one hop further**: `bound_to` returns the bound
+  EXPRESSION entity, not a resolved `Function` — the actual named target
+  (finding `f()`'s real definition through `f = some_function`) needs one
+  more step, chasing a `Name` result through `pystrider.resolve.
+  resolve_function` by bare name, in the same file. Not built.
+- **`Denotation`/`Evaluation`'s `kind="bound_to"` wiring, real design
+  question, not yet started**: `Evaluation.value` is a `repr`-encoded
+  LITERAL (`encode_literal`) — `bound_to`'s result is an ENTITY reference,
+  which cannot travel through that field honestly (the same "nothing
+  durable may hold a raw entity id" rule `Denotation` itself exists to
+  satisfy). The natural answer is probably `Evaluation` carrying a second
+  `Denotation` (itself relative to the same `Root`) rather than a literal,
+  for this one `kind` — genuinely undecided, flagged rather than guessed.
 - Threads 1, 3, 4, 5, 7 (see "Open threads," below) are all still
   untouched, same as before this session.
-- Not done, named honestly: `Evaluation` has never been round-tripped
-  through `loopingrules.save.dump()`/persistence — built and tested
-  in-memory only. A nested-tuple field (`Evaluation.denotation`) SHOULD
-  serialize fine given `save.py`'s own primitives-recursively story, but
-  this was not actually run through a dump/load cycle this session.
+- Still not done, named honestly, unchanged from the previous recap:
+  `Evaluation` has never been round-tripped through
+  `loopingrules.save.dump()`/persistence — built and tested in-memory only.
 
 ## 2026-08-31 session: thread 6 — constant folding, then a TMS design, then denotations
 
@@ -634,6 +652,14 @@ rule module only, installable, tested, not wired into `domain.py`.
    TO through `Assign` (honest abstention on reassignment/branch-dependent
    binding), the motivating case behind starting this thread at all —
    finding call sites through indirection (`f = some_function; ...; f()`).
+   ⚠ 2026-08-31, second sitting: BUILT — `symbolic.bound_to`/`BoundTo`,
+   see "START HERE" and that session's own "(cont'd)" section above. Two
+   real next steps left, both flagged there rather than guessed at: (i)
+   chasing `bound_to`'s result one hop further, through
+   `resolve.resolve_function`, to reach an actual `Function` definition
+   rather than stopping at the bound expression entity; (ii) whether/how
+   `pystrider.evaluation`'s `kind="bound_to"` receipt should exist at all,
+   given `Evaluation.value` is a literal codec, not an entity reference.
 
 7. **Architectural constraints, past the one-constraint prototype** — see
    "new idea, prototyped same session," above. Needs: (a) a real threshold/

@@ -1,18 +1,29 @@
-"""`pystrider.symbolic` — the first slice of thread 6 ("mental run" analysis,
-`docs/TODO.md`). `fold` is a PURE function (no caching, no world mutation);
-`known_value` is a forward, structural ANNOTATION built on top of it
+"""`pystrider.symbolic` — thread 6 ("mental run" analysis, `docs/TODO.md`).
+Two independent value domains, both PURE derivers (no caching, no world
+mutation) with a forward, structural ANNOTATION built on top of each
 (`patterns.py`'s exact shape: structure => description, deposited as a
 component) — not a request/answer pull like `evaluator.evaluate`, and
 nothing here is keyed to a `Case`.
 
-⭐ **THE CEILING THIS SLICE DELIBERATELY SITS AT**: constant folding — every
-operand traced back to a bare `Constant`, no `Name` (bound or not) anywhere in
-the chain. This is the value domain with no unbound symbols and no branches:
-the cheapest place to prove the annotation shape (`KnownValue` on an
-expression entity) before asking it to reason about what a `Name` is BOUND TO
-— which is the actual target this is scaffolding toward (resolving `f()`
-through `f = some_function`, to find call sites through indirection). A
-`Name` gets no `KnownValue` here, ever; that is next, not this.
+⭐ **`fold`/`KnownValue` — THE CEILING THIS DOMAIN DELIBERATELY SITS AT**:
+constant folding — every operand traced back to a bare `Constant`, no `Name`
+(bound or not) anywhere in the chain. This is the value domain with no
+unbound symbols and no branches: the cheapest place to prove the annotation
+shape (`KnownValue` on an expression entity) before asking it to reason
+about what a `Name` is BOUND TO. A `Name` gets no `KnownValue` here, ever —
+`fold` stays exactly this narrow even now that binding (below) exists
+alongside it; they are two SEPARATE conclusions about two separate
+questions ("what value" vs. "what expression"), not one growing to subsume
+the other.
+
+⭐ **`bound_to`/`BoundTo` — the second slice, built 2026-08-31**: what a
+`Name` reference is BOUND TO, through `Assign` — the actual target the
+first slice was scaffolding toward (resolving `f()` through
+`f = some_function`, to find call sites through indirection). See
+`bound_to`'s own docstring for the ceiling it sits at (exactly one
+candidate `Assign`, same immediate block, preceding position — reassignment
+and cross-branch binding both abstain, honestly, rather than guess which
+assignment a flow-insensitive reading can't actually tell apart).
 
 ⚠⚠ **WHY `fold` IS PURE, AND `known_value` REBUILDS EVERY TICK.** Found
 2026-08-31, working through the TMS design (`docs/TODO.md`): `repair.py`'s
@@ -47,11 +58,13 @@ constructions, because the absence is already structural).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, List, Optional, Set
 
 from loopingrules.world import transient
-from pystrider.intake import (Arithmetic, Comparison, Constant, Left, Right,
-                              decode_literal, encode_literal)
+from pystrider.intake import (PARTS, Arithmetic, Assign, Assigned, Block,
+                              Comparison, Constant, Function, Left, Name,
+                              Right, Stmt, Value, decode_literal,
+                              encode_literal)
 
 #: Foldable arithmetic operators. ⚠ `matmul` is deliberately absent — `@` has
 #: no meaning over Python's own literal types, so there is nothing honest to
@@ -144,10 +157,160 @@ def known_value(w) -> None:
                 w.replace(entity, KnownValue(encode_literal(value)))
 
 
-#: ⭐ One entry today, kept as a dict anyway — same reason `patterns.py`'s
+@transient
+@dataclass(frozen=True)
+class BoundTo:
+    """This `Name` reference is bound to `entity`'s CURRENT value — the
+    live entity id of the deciding `Assign`'s `value` part. Kept in sync
+    every tick, same posture as `KnownValue` (`w.replace`d, never
+    `w.attach`ed — a reassignment, or a repair rewiring the `Assign`,
+    corrects this the very next tick rather than leaving it stale).
+    `entity` is a raw id ON PURPOSE: the "nothing durable may hold a raw
+    entity id" rule (`pystrider.denotation`'s own ⚠) binds DURABLE facts,
+    not this tier — `BoundTo` is `@transient`, exactly like `Callee`/
+    `Value`/every other part edge `intake.py` mints, and means nothing
+    once this file is reread.
+    """
+
+    entity: int
+
+
+def bound_to(w, entity: int) -> Optional[int]:
+    """The live entity id `entity` (a `Name`) is bound to, decided FRESH
+    every call — the value-side entity of the one `Assign` that binds it —
+    or `None` wherever the binding cannot be decided honestly. The second
+    slice of thread 6 (`fold`/`KnownValue` was the first): proven here on
+    the motivating case named in `docs/TODO.md` — finding a call site
+    through indirection, `f = some_function; ...; f()`.
+
+    ⭐ THE CEILING: exactly one `Assign`, anywhere in the SMALLEST enclosing
+    `Function`, may target a bare `Name` sharing this reference's `id` —
+    two or more (reassignment, anywhere, even in a branch never taken)
+    abstains by COUNT, never by guessing which one runs last. The one
+    candidate found must ALSO share this reference's exact immediate
+    `Block` (not a different `if`/`for` nesting either direction) and
+    precede it in that block's own `Stmt` order — abstaining by POSITION
+    covers both "used before assigned" and "assigned in one branch, used
+    in a sibling one," without attempting real flow-sensitivity (which
+    branch runs, whether a loop body executes at all). Nothing here
+    resolves what the bound value's OWN entity denotes any further (a
+    `Name` on the right-hand side is returned as-is, not chased to
+    whatever function it might itself name) — that is further out than
+    this slice reaches.
+    """
+    if not w.has(entity, Name):
+        return None
+    name = w.get(entity, Name).id
+    function = _enclosing(w, entity, Function)
+    if function is None:
+        return None
+    candidates = [a for a in _reachable(w, function)
+                  if w.has(a, Assign) and _targets(w, a, name)]
+    if len(candidates) != 1:
+        return None
+    assign = candidates[0]
+    block = _parent_of(w, assign)
+    if block is None or not w.has(block, Block):
+        return None
+    stmts = [s.entity for s in w.get_all(block, Stmt)]
+    if assign not in stmts:
+        return None
+    use_stmt = _owning_statement(w, entity, stmts)
+    if use_stmt is None or stmts.index(use_stmt) <= stmts.index(assign):
+        return None
+    value = w.get(assign, Value)
+    return value.entity if value is not None else None
+
+
+def _targets(w, assign: int, name: str) -> bool:
+    """Does `assign` bind `name` — bare `Name` targets only, `t.entity`
+    read straight off `Assigned`'s own edge; an `Attribute`/other target
+    never matches, since `Name.id` is not even readable off it."""
+    return any(w.has(t.entity, Name) and w.get(t.entity, Name).id == name
+               for t in w.get_all(assign, Assigned))
+
+
+def _enclosing(w, entity: int, kind: type) -> Optional[int]:
+    """The NEAREST ancestor of `entity` (walking `intake.PARTS` edges
+    upward) carrying `kind`, or `None`. `entity` itself never counts —
+    this is a search for an ANCESTOR, never the entity asked about."""
+    node = _parent_of(w, entity)
+    seen: Set[int] = set()
+    while node is not None and node not in seen:
+        if w.has(node, kind):
+            return node
+        seen.add(node)
+        node = _parent_of(w, node)
+    return None
+
+
+def _owning_statement(w, entity: int, stmts: List[int]) -> Optional[int]:
+    """The member of `stmts` that `entity` is part of — `entity` itself if
+    it IS one, else the nearest ancestor that is, else `None` if `entity`
+    is not reachable from any of `stmts` at all (a different block, or a
+    deeper `if`/`for` nesting level)."""
+    node = entity
+    seen: Set[int] = set()
+    while node is not None and node not in seen:
+        if node in stmts:
+            return node
+        seen.add(node)
+        node = _parent_of(w, node)
+    return None
+
+
+def _parent_of(w, child: int) -> Optional[int]:
+    """The one entity holding a part edge to `child`, or `None` — a linear
+    scan of `intake.PARTS`'s own vocabulary. No reverse index kept: same
+    freshness posture as `fold`, recomputed every call, never cached.
+
+    ⚠ Returns a plain int, always — `w.each`'s own first element is an
+    `Entity` HANDLE (compares equal only to another `Entity`, never to the
+    plain int a component field actually stores, see `loopingrules.world.
+    Entity`'s own docstring), so a caller that fed a previous `_parent_of`
+    result straight back in here would silently stop matching anything
+    past the first hop if this returned the handle instead."""
+    child = getattr(child, "id", child)
+    for cls in set(PARTS.values()):
+        for parent, comp in w.each(cls):
+            if comp.entity == child:
+                return parent.id
+    return None
+
+
+def _reachable(w, root: int) -> Set[int]:
+    """Every entity reachable DOWNWARD from `root` through `intake.PARTS`
+    edges, `root` itself included — a plain forward BFS, no caching (this
+    module's whole ethos)."""
+    seen = {root}
+    frontier = [root]
+    while frontier:
+        node = frontier.pop()
+        for cls in set(PARTS.values()):
+            for comp in w.get_all(node, cls):
+                if comp.entity not in seen:
+                    seen.add(comp.entity)
+                    frontier.append(comp.entity)
+    return seen
+
+
+def resolved_binding(w) -> None:
+    """`bound_to` over every `Name` entity, kept in sync as a standing
+    `BoundTo` — present where a binding decides, absent where it does not
+    (dropped via `w.detach` the tick it stops deciding, e.g. a second
+    `Assign` to the same name appearing elsewhere in the function)."""
+    for entity, _tag in w.each(Name):
+        target = bound_to(w, entity)
+        if target is None:
+            w.detach(entity, BoundTo)
+        else:
+            w.replace(entity, BoundTo(target))
+
+
+#: ⭐ Two entries, kept as a dict anyway — same reason `patterns.py`'s
 #: `DESCRIPTIONS` and `effects.py`'s are, even at one entry: the perturbation
 #: pin's `only=` needs a name to select, not a bare function.
-DESCRIPTIONS = {"known_value": known_value}
+DESCRIPTIONS = {"known_value": known_value, "resolved_binding": resolved_binding}
 
 
 def install(loop, only=None) -> None:
