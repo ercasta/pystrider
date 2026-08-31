@@ -10,75 +10,106 @@ We need rules to
 
 Important: there are NO "mechanical" transformations that directly modify the ast. All the above steps are fundamental: there is ALWAYS a passage through semantics. Note that "semantics" can mean whatever we need: an annotation on a "span" of the AST to mark that a section of code swaps two variables, an annotation that the overall method is a circuit breaker or has a risk of division by zero, etc. The "semantics" is the "chokepoint" through which every operation goes.
 
-## START HERE — recap as of end of 2026-08-30 session
+## START HERE — recap as of end of 2026-08-31 session
 
-A long session, in one arc: it began on the "components reference raw ids"
-problem (thinking about a rewritten program has ids that were never real to
-begin with), settled a design for it, built it across two repos, used it for
-a real durable fact, caught and fixed a place that fact was cutting a corner
-around the engine, and ended by prototyping a new idea the durable-fact work
-made obvious. Everything below this point (`## 2026-08-30 session: status +
-decisions` onward) is the dated, blow-by-blow log that arc was built from —
-read it for the reasoning; read THIS section for where things actually
-landed and what to do next.
+Short session: picked up thread 2's own two residual items (named at the
+end of 2026-08-30, below) and closed both. Everything below this point
+(`## 2026-08-30 session: status + decisions` onward) is the dated,
+blow-by-blow log this and the prior session were built from — read it for
+the reasoning; read THIS section for where things actually landed and
+what to do next.
 
-**Built and pushed, `loopingrules` (sibling repo, `main`):**
-- `67bf6dd` — `@transient`: a component class can be marked disposable
-  (`loopingrules.world.transient`), so `save.dump()` skips every instance
-  and `World.purge_transient()` can drop them all on demand, regardless of
-  which world they live in.
-- `3e3b528` — design note only, nothing built: `DECISION_PATTERNS.md` on
-  chart parsing — `arbitrate`/`census` both resolve ONE occasion at a time,
-  which cannot answer "there are two loops in function a, delete the first
-  one" (an interpretation composed from several already-resolved facts,
-  not one candidate). Flagged, not designed.
-
-**Built and pushed, `pystrider` (this repo, `main`), four commits:**
-- `3c4ada2` — `read <path.py>` moved from a private, throwaway `Loop`/`World`
-  onto the SHARED one, made safe by `@transient` (every `intake.py`/
-  `patterns.py`/`spans.py` component is marked). New `pystrider/resolve.py`:
-  the first concrete resolver, `resolve_function(w, path, name)`, a stable
-  key resolved to a live entity, rereading on demand. Found and fixed a real
-  bug along the way: `Block`/`Unreadable` placeholders minted without
-  `Origin`, silently harmless in the old private-world design, a real leak
-  in the new shared one.
-- `8a94b5b` — `watch <path.py> <name>`: this domain's first DURABLE,
-  stable-keyed business fact (`WatchedFunction`/`FunctionStatus`), the thing
-  that actually exercises `resolve_function` rather than leaving it
-  theoretical. Verified past "reread the same path twice" — a real
-  simulated-restart round trip (`tests/test_domain_watch.py`).
-- `022122c` — caught on review (the user asked directly: "are we using
-  entities and components, or bypassing the engine and writing python
-  code?"): `watch`'s loop count was a plain function, not a standing rule —
-  fixed by promoting it to `patterns.LoopCount`, a proper composable
-  description, which surfaced a genuine one-tick ordering question
-  (`_reconcile_watch`'s own docstring has the argument) — solved without a
-  second `_read`/`_report_read`-style rule split.
-- `f01a228` — `pystrider/constraints.py`, prototype: an architectural
-  constraint is `patterns.py`'s own shape, pointed at a judgment instead of
-  a neutral description. `max_loops` reads `LoopCount`, derives
-  `TooManyLoops`. One constraint deep, on purpose — the threshold is a
-  hardcoded constant (a real policy mechanism is undesigned), and nothing
-  wires it to the live prompt yet.
+**Built and pushed, `pystrider` (this repo, `main`), on top of `6b7635a`:**
+- `intake.py` grew `Qualname` — a dotted path from the module root through
+  enclosing `def`s only (`class` still unmodelled, so no function ever
+  nests inside one), attached to every `Function` alongside its bare
+  `name`. Equal to `name` for a top-level function, so nothing existing
+  changes shape. New `Intake.scope`, a plain list pushed/popped around
+  each `_FunctionDef`'s own body.
+- `resolve._find_function` now tries an exact `Qualname` match before its
+  old by-`Function.name` scan — `resolve_function(w, path, "outer.inner")`
+  disambiguates two functions named `inner` nested under different outer
+  `def`s; a bare name with neither caller naming a scope is still
+  resolved the old way (first match, entity-id order), same ambiguity as
+  before, now named as a narrower, honest residual (`resolve.py`'s own ⚠).
+- `domain.py` grew a `forget` verb, in two spellings, wiring
+  `World.purge_transient()` to something a person can actually type for
+  the first time: `forget <path.py>` is the scoped form
+  (`resolve.forget`, entities from one file DESTROYED); bare `forget` is
+  the blunt one (every `@transient` component DETACHED world-wide,
+  entities left standing as unreachable husks — `purge_transient`'s own
+  documented cost, not papered over). Verified a `watch`ed function
+  survives the blunt form the same way it survives a restart —
+  `WatchedFunction`/`FunctionStatus` are not `@transient`, and
+  `_reconcile_watch`'s existing "not answerable yet" skip (built last
+  session for a different reread race) covers the one extra tick a
+  post-purge `resolve_function` reread needs, with no new mechanism.
+- 14 new tests: `tests/test_qualname.py` (`Qualname` in isolation, no
+  loop needed), `tests/test_resolve.py` (3 new: bare-name ambiguity still
+  named, dotted disambiguation, top-level unaffected), and
+  `tests/test_domain_forget.py` (6: both `forget` spellings on the live
+  loop, including the watched-function-survives-a-blunt-purge round trip).
 
 **Test baseline to verify a fresh session against:** `PYTHONPATH=../loopingrules
-python -m pytest tests/ -q` → **180 passed, 1 skipped, 2 xfailed**. With the
+python -m pytest tests/ -q` → **194 passed, 1 skipped, 2 xfailed**. With the
 bridge suite (`PYTHONPATH=../loopingrules /path/to/harneskills/.venv/bin/python
--m pytest tests/ -q`, see `[[running-pystrider-on-linux]]`) → **198 passed, 2
+-m pytest tests/ -q`, see `[[running-pystrider-on-linux]]`) → **212 passed, 2
 xfailed**.
 
 **What's next — pick one** (see "Open threads," below, for the full list):
-- **Thread 1, bidirectional `Iteration`** — the thing this whole session's
+- **Thread 1, bidirectional `Iteration`** — the thing a session two back's
   detour interrupted; plan already written, ready to start cold.
 - **Thread 7, past the `constraints.py` prototype** — a real policy
   mechanism, live-prompt wiring, or a second constraint (needed before the
   `CONSTRAINTS`/`install()` shape generalizes any further).
-- **Thread 2's two residual items** — `World.purge_transient()` still
-  unused (fine until a very long session's transient entities actually
-  matter), and the stable key is still `(path, name)`, not `(path,
-  qualname-or-span)`.
 - Threads 3/5/6 (composition, the pattern catalog, symbolic "mental run"
-  analysis) are untouched this session, still open, still real.
+  analysis) are untouched across both sessions, still open, still real.
+- Thread 2 itself is now fully closed (see "2026-08-31 session," below,
+  for the two items that were still open, and this session's own recap
+  above for how each closed) — nothing left to pick up under it.
+
+## 2026-08-31 session: thread 2's two residual items, both closed
+
+**`World.purge_transient()`, wired to a live verb.** The item itself was
+"unused... fine until a very long session's transient entities actually
+matter" — the fix chosen was not to guess at automatic memory pressure
+(no rule calls this on its own, still), but to expose it as something a
+PERSON decides to do, the same posture `resolve.forget(w, path)` already
+had for the path-scoped case. `domain.py`'s new `_forget` handles both
+spellings under one verb, distinguished by whether an argument is given —
+considered and rejected a second verb name (e.g. `gc`) for the bare form,
+since both are "forget," just at different granularity, and a person
+typing `forget` with no path should not have to already know there are
+two different underlying mechanisms to pick between.
+
+One real cost surfaced, not hidden: `purge_transient()` detaches
+components but leaves the entities themselves standing (`World`'s own
+docstring says so) — a bare `forget` can orphan an empty entity nothing
+will ever find again, since nothing distinguishing is left to query it
+by. Named in `_forget`'s own docstring rather than fixed here; fixing it
+would be `loopingrules.World`'s own call, not this domain's, the same
+boundary `resolve.forget`'s docstring already draws for a different
+question ("the day some domain's own durable fact needs to react to a
+forget too, that domain writes its own sweep").
+
+**Qualname disambiguation.** Scoped down from the thread's original framing
+(`(origin_path, qualname-or-span)`) to just the qualname half — `span` as
+a second disambiguator was never asked for by anything concrete, so per
+this project's own "do one concretely first" rule it stays unbuilt rather
+than speculatively designed alongside qualname. `Qualname` only threads
+through `def` nesting, not `class` — nesting through a class was already
+impossible before this (`ClassDef` is unmodelled, refused whole), so nothing
+was scoped away that intake could actually reach.
+
+`resolve_function`'s SIGNATURE did not change (`name: str`, still) — what
+changed is what a caller may pass for it: a bare name (old behavior,
+unchanged for every existing caller, including `watch`) or a dotted
+qualname (new, disambiguates). Nothing in `domain.py`'s `watch` verb was
+changed to expose the dotted form specially; a person can already type
+`watch a.py outer.inner` today and it resolves correctly, because `_watch`
+passes `rest[1]` straight through to `WatchedFunction.name`, which
+`_reconcile_watch` passes straight through to `resolve_function` — the
+plumbing needed nothing new, only `resolve_function` itself did.
 
 ## 2026-08-30 session: status + decisions
 
@@ -427,12 +458,13 @@ rule module only, installable, tested, not wired into `domain.py`.
    durable, stable-keyed business fact that actually USES the resolver,
    verified end to end across a simulated restart — are all BUILT now
    (see "built: `@transient`, the resolver, and the shared-world move,"
-   and "was not done, now is," above). What's left: (i)
-   `World.purge_transient()` is unused here, so a very long session's
-   transient entities just accumulate; (ii) the stable key is still
-   `(path, name)`, not `(path, qualname-or-span)` — same-named functions
-   in different scopes of one file are not disambiguated, and `watch`
-   inherits that limitation directly.
+   and "was not done, now is," above). ⚠ 2026-08-31: CLOSED — both items
+   that were left here are done, see that session's own section: (i)
+   `World.purge_transient()` is wired to `forget` (no path), a live verb;
+   (ii) the stable key may now be `(path, qualname)`, not just `(path,
+   name)` — `intake.py`'s new `Qualname` disambiguates same-named
+   functions nested in different scopes (still not through a `class`,
+   which was never reachable here to begin with).
 
 3. **Composition-as-its-own-pattern** — user's own insight from this session:
    two sequential loops compose by "sequencing"; nested loops are NOT
