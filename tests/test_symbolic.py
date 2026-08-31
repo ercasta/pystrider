@@ -29,10 +29,11 @@ def test_arithmetic_of_two_constants_folds():
     assert w.get(entity, KnownValue) == KnownValue("5")
 
 
-def test_nested_arithmetic_folds_across_a_fixpoint():
+def test_nested_arithmetic_folds():
     w = load("def f():\n    return (2 + 3) * 4\n")
-    # The outer `*` needs the inner `+` folded FIRST — proves this isn't a
-    # single pass over a flat list. Found by its own operator, not entity
+    # The outer `*` needs the inner `+` folded FIRST — `fold` recurses
+    # internally (Python recursion, not an engine tick per nesting level),
+    # so this settles in one pass. Found by its own operator, not entity
     # order, since `Entity` carries no ordering.
     outer, = (e for e, a in w.each(Arithmetic) if a.operator == "mul")
     assert w.get(outer, KnownValue) == KnownValue("20")
@@ -84,3 +85,25 @@ def test_recognizing_an_already_known_constant_is_not_a_change():
     before = w.revision
     symbolic.known_value(w)
     assert w.revision == before
+
+
+def test_a_replaced_constant_is_reconsidered_not_left_stale():
+    # The bug the module note names: `repair.py`'s `apply` mutates a
+    # `Constant`/`Comparison` IN PLACE (`w.replace`, same entity id). A
+    # `KnownValue` cached before that must not go on saying the old value.
+    w = load("def f():\n    return 18\n")
+    (entity, _c), = w.each(Constant)
+    assert w.get(entity, KnownValue) == KnownValue("18")
+    from pystrider.intake import encode_literal
+    w.replace(entity, Constant(encode_literal(17)))
+    symbolic.known_value(w)
+    assert w.get(entity, KnownValue) == KnownValue("17")
+
+
+def test_fold_is_pure_and_never_reads_known_value():
+    # `fold` must answer correctly even if `KnownValue` was never run at
+    # all -- it is the source `known_value` feeds, not the other way round.
+    w = load("def f():\n    return 2 + 3\n")
+    (entity, _a), = w.each(Arithmetic)
+    w.detach(entity, KnownValue)
+    assert symbolic.fold(w, entity) == 5

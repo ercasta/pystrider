@@ -10,7 +10,136 @@ We need rules to
 
 Important: there are NO "mechanical" transformations that directly modify the ast. All the above steps are fundamental: there is ALWAYS a passage through semantics. Note that "semantics" can mean whatever we need: an annotation on a "span" of the AST to mark that a section of code swaps two variables, an annotation that the overall method is a circuit breaker or has a risk of division by zero, etc. The "semantics" is the "chokepoint" through which every operation goes.
 
-## START HERE — recap as of end of 2026-08-31 session
+## START HERE — recap as of end of 2026-08-31 session (thread 6, started)
+
+Thread 6 ("symbolic mental run analysis") was picked up this session, past
+what its own name promised — a real design conversation happened first
+(with the user, not solo), and what got built is the RESULT of that
+conversation, not just the obvious first slice. Read "2026-08-31 session:
+thread 6 — constant folding, then a TMS design, then denotations" below
+for the reasoning; this section is where things landed.
+
+**Built and pushed, on top of `9124ac2`** (this repo) **and a pull of
+`loopingrules` too** (it was 6 commits behind — missing `transient`,
+`loopingrules.help`, and other primitives `symbolic.py` needed; now
+current at `03a9ad7`, nothing local to push there):
+
+- `pystrider/symbolic.py` — `fold(w, entity)`, a PURE constant-folding
+  function (`Constant`/`Arithmetic`/`Comparison`, recursing through
+  `Left`/`Right`, no caching, no world mutation), and `known_value(w)`, a
+  forward standing annotation (`KnownValue`, `patterns.py`'s exact shape)
+  built on top of it. Deliberately capped at "no unbound symbols" — a
+  `Name` never gets a `KnownValue`, pinned by its own test; that ceiling
+  is ON PURPOSE, see below for what it's scaffolding toward.
+- `pystrider/denotation.py` — `Denotation` (`Root(path, qualname)` /
+  `Step(parent, label, index)`), a stable, resolvable PATH to an entity
+  that holds no raw id, reusing `intake.PARTS` (now public, was `_PARTS`)
+  as its hop vocabulary. `locate(w, denotation)` resolves fresh, never
+  caches, misses honestly. `encode`/`decode` make it storable in a
+  component field at all (nested dataclasses aren't, directly).
+- `pystrider/evaluation.py` — `Evaluation(denotation, kind, value, at)`,
+  a durable, wall-clock-timestamped RECEIPT (not `@transient` — the whole
+  point). `record()` mints one; `current(w, evaluation, deriver)` is the
+  ONLY thing that ever vouches for one, by calling `deriver` fresh
+  against the LIVE entity and comparing — never trusting the stored
+  value. This is the TMS answer: nothing is ever stale-and-wrong, because
+  nothing is ever read without re-checking.
+- **A real, live bug found and fixed along the way**: `repair.py`'s
+  `apply` (`relax`/`lower`) mutates a `Comparison`/`Constant` IN PLACE
+  (`w.replace`, same entity id — rewiring every edge that points at a
+  fresh id has no cheap answer, no reverse index). The FIRST version of
+  `symbolic.known_value` (this same session, since-replaced) cached
+  `KnownValue` via `w.attach` gated on `without=KnownValue` — which, once
+  attached, never reconsidered the entity, so a repair changing `18` to
+  `17` left a confidently-wrong `KnownValue("18")` standing forever. Now
+  `known_value` reruns `fold` for every candidate entity every tick,
+  `w.replace`/`w.detach`-ing the result — idempotent once settled
+  (`World.replace`'s own dedup), corrected the very next tick if not.
+
+**Test baseline:** `python -m pytest tests/ -q` → **236 passed, 2
+xfailed** (bare interpreter; `loopingrules` resolves via the editable
+install, no `PYTHONPATH` needed in this environment — see
+`[[running-pystrider-on-linux]]` for the bridge-suite form if that changes).
+
+**What's next — pick one:**
+- **Thread 6, keep going**: the scaffolded target is resolving what a
+  `Name` is BOUND TO (through `Assign`, honestly abstaining on
+  reassignment/branch-dependent binding) — proven on numbers first
+  (`fold`/`KnownValue`), needed next for the motivating case (finding
+  call sites through indirection: `f = some_function; ...; f()`).
+  `Denotation`/`Evaluation` are ready to carry a "bound to" receipt the
+  same way they carry a `known_value` one — `kind="bound_to"`, say.
+- Threads 1, 3, 4, 5, 7 (see "Open threads," below) are all still
+  untouched, same as before this session.
+- Not done, named honestly: `Evaluation` has never been round-tripped
+  through `loopingrules.save.dump()`/persistence — built and tested
+  in-memory only. A nested-tuple field (`Evaluation.denotation`) SHOULD
+  serialize fine given `save.py`'s own primitives-recursively story, but
+  this was not actually run through a dump/load cycle this session.
+
+## 2026-08-31 session: thread 6 — constant folding, then a TMS design, then denotations
+
+Started as "pick a thread 6 slice" (a menu of three: expression
+interpreter / multi-statement bodies / nested-if). User redirected before
+any code: "discuss what the analysis should produce, and how it should be
+triggered... support for other program analysis and manipulation
+features," not useful standalone. That reframed the whole approach —
+away from generalizing `evaluator.py`'s pull/`Case`-driven model in
+place, toward a forward, STANDING annotation (`patterns.py`'s shape),
+which is what got built first: `KnownValue`, constant folding only, no
+unbound `Name` ever — the cheapest ceiling that still proves the
+annotation shape, chosen explicitly as scaffolding toward the user's
+named target application (resolving `f()` through `f = some_function`,
+to find call sites through indirection) rather than as an end in itself.
+10 tests, committed (`9124ac2`) as a first slice.
+
+User's NEXT redirect, before moving on to `Name`-binding: "where should
+these annotations live... a dedicated evaluation entity so we can note
+WHEN it was performed and the system can easily discard it (after all we
+do have a TMS problem here)." Not hypothetical — checking `repair.py` for
+the actual mutation site found the concrete bug described above
+(`w.replace` on a `Comparison`/`Constant`, same id, leaving a permanently
+stale `KnownValue` nothing would ever reconsider). Discussed two
+design axes:
+
+1. **Scope of "WHEN."** `world.revision` is global (moves on ANY change
+   anywhere), so it can't answer "did THIS entity's own inputs change" —
+   that needs a per-entity stamp `loopingrules.World` doesn't keep. User's
+   answer: skip that entirely, use a plain wall-clock `time.time()` —
+   "nothing fancy." Settled; no new engine primitive needed.
+2. **What an evaluation points AT.** User: "we should always use
+   denotations that can be resolved" — not a raw entity id — and floated
+   "relative" denotations with an (even implicit) parent, for reaching a
+   sub-expression, not just a whole function. This is `pystrider.resolve`'s
+   own tier-1/tier-2 discipline ("nothing durable may hold a raw entity
+   id"), generalized past "a whole function" to "any part of one" —
+   recognized as the same rule, not a new one. Landed on
+   `Root`/`Step(parent, label, index)`, reusing `intake.PARTS` (renamed
+   public for this) as the hop vocabulary rather than inventing a second
+   one — the same "don't invent a second vocabulary" instinct
+   `patterns.py`'s own docstring already states for a different pair.
+
+Then the actual load-bearing decision: given a resolvable, timestamped
+denotation, does staleness get handled by **(a) explicit discard at the
+mutation site** (cheaper, but every future mutation site has to remember
+to do it — the same "a site has to remember" fragility that caused the
+`KnownValue` bug in the first place) or **(b) a receipt, never trusted
+without re-checking** (a reader always re-derives fresh through the
+denotation and compares; nothing is ever silently wrong because nothing
+is ever trusted un-rederived)? Proposed (b) as the one that actually
+earns "TMS" rather than just bookkeeping a discard someone still has to
+remember to call. User: "yes, (b) — build it that way." Built as
+`pystrider/evaluation.py`, described above. `fold` (`symbolic.py`) was
+ALSO fixed as part of building this, once its bug became the concrete
+motivating example — not because (b) required it, but because leaving a
+known, now-named bug sitting in code just committed would have been
+dishonest.
+
+24 new tests total this session (`test_denotation.py`, `test_evaluation.py`,
+plus `test_symbolic.py` growing 4 more past its original 10, 2 of them
+pinning the bug-fix directly). 236 passed, 2 xfailed, no regressions.
+
+## 2026-08-31 session (earlier item, thread 2): recap as of end of session
 
 Short session: picked up thread 2's own two residual items (named at the
 end of 2026-08-30, below) and closed both. Everything below this point
@@ -490,14 +619,21 @@ rule module only, installable, tested, not wired into `domain.py`.
    structural tier. Depends on thread 3 (composition) being pinned down
    first, or patterns will get built that silently can't compose.
 
-6. **Symbolic "mental run" analysis** ("mentally running a program to
-   conclude something about it") — broader than what exists today:
-   `evaluator.py`'s `evaluate()` derives a return value structurally for
-   exactly one narrow shape (single `if`/comparison-against-a-parameter,
-   never executes), and `effects.py` derives reachability/effect propagation
-   structurally too (also narrow: same-module call graph only). Neither
-   "runs" anything — closer to abstract interpretation over a tiny fragment.
-   Not designed as a general primitive yet.
+6. **Symbolic "mental run" analysis** — ⚠ 2026-08-31: STARTED, see that
+   session's own section above for the full design conversation. Built:
+   `pystrider/symbolic.py` (`fold`/`KnownValue`, constant folding only, no
+   unbound `Name`), `pystrider/denotation.py` (`Root`/`Step`, a stable
+   resolvable path to any part of an intaken function, not just the whole
+   thing), `pystrider/evaluation.py` (`Evaluation`, a durable timestamped
+   receipt — `record`/`current`, never trusted without re-deriving fresh).
+   `evaluator.py`'s `evaluate()` (narrow: single `if`/comparison-against-
+   a-parameter, `Case`-pull-driven) and `effects.py` (same-module call
+   graph, forward-structural) are both still exactly as narrow as before —
+   neither has been touched, generalized onto, or replaced. Next concrete
+   step, named at the end of that session: resolve what a `Name` is BOUND
+   TO through `Assign` (honest abstention on reassignment/branch-dependent
+   binding), the motivating case behind starting this thread at all —
+   finding call sites through indirection (`f = some_function; ...; f()`).
 
 7. **Architectural constraints, past the one-constraint prototype** — see
    "new idea, prototyped same session," above. Needs: (a) a real threshold/

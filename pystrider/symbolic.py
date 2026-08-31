@@ -1,8 +1,9 @@
 """`pystrider.symbolic` — the first slice of thread 6 ("mental run" analysis,
-`docs/TODO.md`). An ANNOTATION, `patterns.py`'s exact shape (structure =>
-description, forward-chained, deposited as a component), not a request/answer
-pull like `evaluator.evaluate` — nothing here is keyed to a `Case`, and nothing
-needs one to run.
+`docs/TODO.md`). `fold` is a PURE function (no caching, no world mutation);
+`known_value` is a forward, structural ANNOTATION built on top of it
+(`patterns.py`'s exact shape: structure => description, deposited as a
+component) — not a request/answer pull like `evaluator.evaluate`, and
+nothing here is keyed to a `Case`.
 
 ⭐ **THE CEILING THIS SLICE DELIBERATELY SITS AT**: constant folding — every
 operand traced back to a bare `Constant`, no `Name` (bound or not) anywhere in
@@ -13,20 +14,40 @@ expression entity) before asking it to reason about what a `Name` is BOUND TO
 through `f = some_function`, to find call sites through indirection). A
 `Name` gets no `KnownValue` here, ever; that is next, not this.
 
+⚠⚠ **WHY `fold` IS PURE, AND `known_value` REBUILDS EVERY TICK.** Found
+2026-08-31, working through the TMS design (`docs/TODO.md`): `repair.py`'s
+`apply` (`relax`/`lower`) mutates a `Comparison`/`Constant` IN PLACE via
+`w.replace`, keeping the entity id (rewiring every edge that points at a
+fresh id has no cheap answer here — no reverse index). The FIRST version of
+this module cached `KnownValue` via `w.attach` gated on `without=KnownValue`
+— which, once attached, never reconsidered the entity again, so a `repair`
+that changed `18` to `17` left a confidently-wrong `KnownValue("18")`
+standing forever. Two fixes, together: `fold` never reads `KnownValue` (it
+recomputes from `Constant`/`Arithmetic`/`Comparison`/`Left`/`Right` fresh,
+recursing in Python, not across engine ticks — nesting no longer needs one
+loop tick per level either, a side benefit), and `known_value` reruns it for
+every candidate entity on every tick, `w.replace`-ing (never `w.attach`-ing)
+the result — idempotent by `World.replace`'s own dedup, so an unchanged fold
+costs nothing once settled, but a CHANGED one is corrected the very next
+tick instead of never. See `pystrider.evaluation`'s own module note for the
+other half of this fix: a durable receipt is never trusted without
+re-deriving through `fold` again first either.
+
 ⚠ Abstains the same way every description in this repo does: nothing
 asserted where the fold cannot be decided, rather than a guess. Three
 distinct reasons to abstain, all silent by construction, none conflated:
 an unmodelled operator (`_ARITH`/`_COMPARE` are partial by name, same
-posture as `evaluator._DECIDES`), an operand with no `KnownValue` yet (a
-`Name`, or a fold that raises — `ZeroDivisionError` chief among them), or an
+posture as `evaluator._DECIDES`), an operand with no fold yet (a `Name`,
+or a fold that raises — `ZeroDivisionError` chief among them), or an
 operand that is a placeholder (which never carries `Constant`/`Arithmetic`/
-`Comparison` at all, so it can never reach a `KnownValue` in the first
-place — no explicit `Readable` check needed here, unlike `patterns.py`'s
-three constructions, because the absence is already structural).
+`Comparison` at all, so `fold` never reaches a base case for it — no
+explicit `Readable` check needed here, unlike `patterns.py`'s three
+constructions, because the absence is already structural).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Optional
 
 from loopingrules.world import transient
 from pystrider.intake import (Arithmetic, Comparison, Constant, Left, Right,
@@ -62,55 +83,65 @@ _COMPARE = {
 @dataclass(frozen=True)
 class KnownValue:
     """This expression entity's value is decidable from STRUCTURE ALONE — no
-    case, no bound parameter, nothing outside the entity's own subtree.
-    `literal` is `repr`-encoded, the same codec as `intake.Constant.literal`
-    (`encode_literal`/`decode_literal`) — a `KnownValue` is meant to sit
-    beside a `Constant` in every way a later reader cares about, including
-    how its payload travels.
+    case, no bound parameter, nothing outside the entity's own subtree. A
+    CACHE of `fold`, kept in sync every tick — see the module note on why it
+    is `w.replace`d rather than `w.attach`ed. `literal` is `repr`-encoded,
+    the same codec as `intake.Constant.literal`.
     """
 
     literal: str
 
 
-def known_value(w) -> None:
-    """`Constant`  ->  its own literal, trivially. `Arithmetic`/`Comparison`
-    whose LEFT and RIGHT both already carry `KnownValue`  ->  the folded
-    result. A fixpoint, like every other description here — a doubly-nested
-    expression (`(2 + 3) * 4`) needs one tick per nesting level, the loop
-    settling once nothing new folds.
+def fold(w, entity: int) -> Optional[Any]:
+    """The value `entity` folds to, decided FRESH from its own current
+    components every call — `Constant` trivially, `Arithmetic`/`Comparison`
+    by recursing into `Left`/`Right`. `None` wherever the fold cannot be
+    decided (see the module note's three-reasons-to-abstain).
+
+    ⚠⚠ Never reads `KnownValue`. That component is a CACHE this function
+    feeds (`known_value`, below), never a source this function may lean
+    on — the whole point is a caller (`pystrider.evaluation.current`
+    chief among them) can trust what THIS returns without first asking
+    whether some standing annotation is still in sync with the world.
     """
-    for entity, constant in w.each(Constant, without=KnownValue):
-        w.attach(entity, KnownValue(constant.literal))
+    if w.has(entity, Constant):
+        return decode_literal(w.get(entity, Constant).literal)
+    if w.has(entity, Arithmetic):
+        return _fold_binary(w, entity, _ARITH.get(w.get(entity, Arithmetic).operator))
+    if w.has(entity, Comparison):
+        return _fold_binary(w, entity, _COMPARE.get(w.get(entity, Comparison).operator))
+    return None
 
-    for entity, arithmetic, left, right in w.each(
-            Arithmetic, Left, Right, without=KnownValue):
-        fold = _ARITH.get(arithmetic.operator)
-        if fold is None:
-            continue
-        a = w.get(left.entity, KnownValue)
-        b = w.get(right.entity, KnownValue)
-        if a is None or b is None:
-            continue
-        try:
-            value = fold(decode_literal(a.literal), decode_literal(b.literal))
-        except (ZeroDivisionError, TypeError, ValueError, OverflowError):
-            continue
-        w.attach(entity, KnownValue(encode_literal(value)))
 
-    for entity, comparison, left, right in w.each(
-            Comparison, Left, Right, without=KnownValue):
-        decide = _COMPARE.get(comparison.operator)
-        if decide is None:
-            continue
-        a = w.get(left.entity, KnownValue)
-        b = w.get(right.entity, KnownValue)
-        if a is None or b is None:
-            continue
-        try:
-            value = decide(decode_literal(a.literal), decode_literal(b.literal))
-        except TypeError:
-            continue
-        w.attach(entity, KnownValue(encode_literal(value)))
+def _fold_binary(w, entity: int, op) -> Optional[Any]:
+    if op is None:
+        return None
+    left, right = w.get(entity, Left), w.get(entity, Right)
+    if left is None or right is None:
+        return None
+    a, b = fold(w, left.entity), fold(w, right.entity)
+    if a is None or b is None:
+        return None
+    try:
+        return op(a, b)
+    except (ZeroDivisionError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def known_value(w) -> None:
+    """`fold` over every `Constant`/`Arithmetic`/`Comparison` entity, kept
+    in sync as a standing `KnownValue` — present and correct where `fold`
+    decides a value, absent where it does not (a fold that STOPS deciding,
+    because something it depended on changed, drops its stale `KnownValue`
+    here too, via `w.detach`, not just skips adding a new one).
+    """
+    for kind in (Constant, Arithmetic, Comparison):
+        for entity, _tag in w.each(kind):
+            value = fold(w, entity)
+            if value is None:
+                w.detach(entity, KnownValue)
+            else:
+                w.replace(entity, KnownValue(encode_literal(value)))
 
 
 #: ⭐ One entry today, kept as a dict anyway — same reason `patterns.py`'s

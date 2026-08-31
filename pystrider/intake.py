@@ -365,7 +365,12 @@ del _cls
 #: label (as every `part()` call site already spells it) -> the component
 #: class standing for that edge. ⚠ Kept as ONE table, beside the classes
 #: above, so a new part is one dict entry rather than a new `if` branch.
-_PARTS = {
+#: ⭐ PUBLIC (not `_PARTS`) since 2026-08-31 -- `pystrider.denotation`'s
+#: `Step` walks the SAME label vocabulary rather than inventing a second
+#: one; a description's own vocabulary (`patterns.py`'s `sequence`/`does`)
+#: still must not reuse these words, unchanged premise, see this module's
+#: own ⚠ at the top.
+PARTS = {
     "target": Target, "iterated": Iterated, "body": Body, "otherwise": Otherwise,
     "condition": Condition, "then": Then, "callee": Callee, "arg": Arg,
     "returned": Returned, "assigned": Assigned, "value": Value, "left": Left,
@@ -488,7 +493,7 @@ class Intake:
             return
         if child is UNREADABLE:
             child = self.placeholder(label)
-        self.w.attach(parent, _PARTS[label](child))
+        self.w.attach(parent, PARTS[label](child))
         if self.w.has(child, Partial):
             self.gap(parent, label)
 
