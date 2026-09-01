@@ -12,7 +12,69 @@ Important: there are NO "mechanical" transformations that directly modify the as
 
 See `../loopingrules/PRINCIPLES.md` for the fuller version of this same instinct — why the entity/component/rules substrate is built the way it is, and the concrete guidelines (test `watches=`'s over-approximation, keep abstention structural not prose, guard vocabulary collisions with a check) that keep its emergent behaviour the wanted kind rather than the surprising kind. (Moved there 2026-09-01 from this repo's own `docs/principles.md`, written 2026-08-31 — the question is about the substrate, not about Python, even though the evidence it cites is this repo's.)
 
-## START HERE — recap as of end of 2026-08-31 session (thread 6, `bound_to` slice)
+## START HERE — recap as of end of 2026-09-01 session (thread 6, `bound_function` slice)
+
+Picked the top item off the previous recap's "What's next" menu: chase
+`bound_to` one hop further, past the bound EXPRESSION entity, to the actual
+resolved `Function`. Read "2026-08-31 session (cont'd): thread 6 —
+`bound_to`, the second slice" below for `bound_to` itself; this section is
+where the third slice landed.
+
+**Built and pushed, on top of `ddbbbeb`:**
+
+- `pystrider/symbolic.py` grew `BoundFunction`/`bound_function(w, entity)` —
+  not a third independent value domain, a refinement riding on top of
+  `bound_to`: where `bound_to` stops at the bound `Name` node (`helper`, as
+  a `Name` entity, not yet a `Function`), `bound_function` chases it through
+  `pystrider.resolve.resolve_function`, called with the bound `Name`'s bare
+  `.id` and the ORIGINAL reference's own `Origin` for the path. Proven on
+  the actual motivating case at last: `def helper(): ...; g = helper; g()`
+  resolves `g()`'s `Callee` all the way to `helper`'s own `Function` entity.
+  - **The ceiling**: `bound_to`'s own (unchanged — reassignment,
+    cross-branch binding, use-before-assignment all still abstain exactly
+    as before, since `bound_function` calls `bound_to` fresh rather than
+    reading `BoundTo`); plus two new abstention points, neither hidden —
+    the bound expression is not itself a `Name` (a `Constant`, a `Call`...
+    nothing to chase), or it is a `Name` naming nothing `resolve_function`
+    can find in the same file (a free variable, a typo, a name that is
+    genuinely not a function). Bare name only, deliberately — a `Name` node
+    carries no scope to spell a dotted `Qualname` with, so the disambiguation
+    `resolve_function` offers for THAT case is out of reach here on purpose,
+    not an oversight.
+  - `resolved_function_binding(w)`, the standing annotation, same
+    `w.replace`/`w.detach`-every-tick posture as `resolved_binding` and
+    `known_value` — added to `DESCRIPTIONS` alongside them, so `install()`
+    registers it by default without a caller having to know it exists.
+  - No new mechanism needed for the "don't reread the file" concern:
+    `resolve_function` only rereads a path `w` holds NOTHING from yet, and
+    the reference entity's own `Origin` already proves `w` holds something
+    from this path, so the lookup this does every tick never touches disk.
+- 7 new tests in `tests/test_symbolic.py` (now 27 total): the motivating
+  case resolving all the way to `Function`; `bound_to`'s own abstention
+  (reassignment) propagating; the "not a `Name`" abstention; the
+  "resolves to no `Function`" abstention; `bound_function`'s own purity;
+  a no-op recomputation not moving `world.revision`; and the TMS shape —
+  a second `Assign` minted by hand makes a previously-resolved
+  `BoundFunction` go stale-and-dropped, not stale-and-wrong.
+
+**Test baseline:** `PYTHONPATH=../loopingrules /path/to/harneskills/.venv/bin/python
+-m pytest tests/ -q` → **251 passed, 2 xfailed** (bridge suite; bare
+`python3` → `233 passed, 1 skipped, 2 xfailed`, see `[[running-pystrider-on-linux]]`).
+
+**What's next — pick one:**
+- **`Denotation`/`Evaluation`'s `kind="bound_to"` (and now `"bound_function"`)
+  wiring, real design question, not yet started**: `Evaluation.value` is a
+  `repr`-encoded LITERAL — an ENTITY reference cannot travel through that
+  field honestly. Probably `Evaluation` carries a second `Denotation`
+  instead of a literal for these two `kind`s — genuinely undecided, flagged
+  rather than guessed, unchanged from the previous recap.
+- Threads 1, 3, 4, 5, 7 (see "Open threads," below) are all still
+  untouched, same as before this session.
+- Still not done, named honestly, unchanged from every previous recap:
+  `Evaluation` has never been round-tripped through
+  `loopingrules.save.dump()`/persistence — built and tested in-memory only.
+
+## 2026-08-31 session (cont'd): thread 6 — `bound_to`, the second slice
 
 Same day, second sitting on thread 6 — picked up exactly where "What's
 next" (previous recap) left off: resolving what a `Name` is BOUND TO

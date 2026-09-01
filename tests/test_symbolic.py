@@ -8,7 +8,7 @@ from pystrider import symbolic
 from pystrider.intake import (Arithmetic, Assign, Assigned, Body, Call,
                               Callee, Comparison, Constant, Function, Name,
                               Stmt, Value, intake)
-from pystrider.symbolic import BoundTo, KnownValue
+from pystrider.symbolic import BoundFunction, BoundTo, KnownValue
 
 
 def load(source: str, origin: str = "<test>"):
@@ -191,3 +191,76 @@ def test_a_binding_added_later_makes_a_stale_binding_reconsidered():
     w.attach(block, Stmt(second_assign))
     symbolic.resolved_binding(w)
     assert w.get(name, BoundTo) is None
+
+
+# -- `bound_function`/`BoundFunction` -- one hop further, thread 6's
+# motivating case actually landing --
+
+def test_a_binding_chases_one_hop_further_to_the_bound_function():
+    # The motivating case, all the way this time: `g()` resolves not just
+    # to the `Name` node spelling "helper" (`BoundTo`, above) but to
+    # `helper`'s own `Function` entity.
+    w = load("def helper():\n    return 1\n\n\ndef f():\n    g = helper\n    g()\n")
+    name = _callee_name(w)
+    bound = w.get(name, BoundFunction)
+    assert bound is not None
+    assert w.get(bound.function, Function).name == "helper"
+
+
+def test_bound_function_abstains_when_bound_to_itself_abstains():
+    # `bound_to`'s own ceiling (reassignment, here) propagates -- nothing
+    # new to chase if there was never anything to chase FROM.
+    w = load("def f():\n    g = helper\n    g = other\n    g()\n")
+    assert w.get(_callee_name(w), BoundFunction) is None
+
+
+def test_bound_function_abstains_when_the_bound_expression_is_not_a_name():
+    # `g` binds to a `Constant`, not a `Name` -- nothing for `resolve_function`
+    # to even try, so this abstains before calling it at all.
+    w = load("def f():\n    g = 1\n    g()\n")
+    assert w.get(_callee_name(w), BoundFunction) is None
+
+
+def test_bound_function_abstains_when_the_bound_name_names_no_function():
+    # `g` binds to `x`, a `Name`, but no `Function` named `x` exists in
+    # this file -- `resolve_function` itself decides "no", honestly, not a
+    # guess.
+    w = load("def f():\n    g = x\n    g()\n")
+    assert w.get(_callee_name(w), BoundFunction) is None
+
+
+def test_bound_function_is_pure_and_never_reads_bound_function():
+    w = load("def helper():\n    return 1\n\n\ndef f():\n    g = helper\n    g()\n")
+    name = _callee_name(w)
+    w.detach(name, BoundFunction)
+    target = symbolic.bound_function(w, name)
+    assert target is not None
+    assert w.get(target, Function).name == "helper"
+
+
+def test_recognizing_an_already_known_function_binding_is_not_a_change():
+    w = load("def helper():\n    return 1\n\n\ndef f():\n    g = helper\n    g()\n")
+    before = w.revision
+    symbolic.resolved_function_binding(w)
+    assert w.revision == before
+
+
+def test_a_function_binding_reconsidered_when_the_underlying_chain_changes():
+    # Same TMS shape `BoundTo` pins above: once the binding `bound_function`
+    # itself rests on goes ambiguous, the derived `BoundFunction` must drop
+    # too, the very next tick -- `bound_function` recomputes `bound_to`
+    # fresh every call, never reads the cached `BoundTo`, so this falls out
+    # for free, but it is worth pinning directly.
+    w = load("def helper():\n    return 1\n\n\ndef f():\n    g = helper\n    g()\n")
+    name = _callee_name(w)
+    assert w.get(name, BoundFunction) is not None
+    (func, _f), = ((e, c) for e, c in w.each(Function) if c.name == "f")
+    block = w.get(func, Body).entity
+    target = w.spawn(Name("g"))
+    value = w.spawn(Name("other"))
+    second_assign = w.spawn(Assign())
+    w.attach(second_assign, Assigned(target))
+    w.attach(second_assign, Value(value))
+    w.attach(block, Stmt(second_assign))
+    symbolic.resolved_function_binding(w)
+    assert w.get(name, BoundFunction) is None

@@ -25,6 +25,21 @@ candidate `Assign`, same immediate block, preceding position — reassignment
 and cross-branch binding both abstain, honestly, rather than guess which
 assignment a flow-insensitive reading can't actually tell apart).
 
+⭐ **`bound_function`/`BoundFunction` — one hop further, built 2026-09-01**:
+`bound_to` stops at the bound EXPRESSION entity (a `Name`, returned as-is
+by its own docstring's admission, "not chased to whatever function it
+might itself name"). This is that chase, and it is where thread 6's
+motivating case actually lands: `g = helper; g()` now resolves `g()`'s
+`Callee` all the way to `helper`'s own `Function` entity, not just to the
+`Name` node spelling "helper". Built on `pystrider.resolve.resolve_function`
+— the seam that turns a stable `(path, name)` key back into a live entity
+— called with the bound `Name`'s bare `.id` and `entity`'s own `Origin`,
+never a dotted `Qualname` (a `Name` node has no scope information to spell
+one with). Two separate abstention points, neither hidden: `bound_to`'s
+own (unchanged), and "the bound expression is not a `Name` at all, or
+names nothing `resolve_function` can find in the same file" (a constant, a
+call result, an unresolvable name — nothing to chase, or nothing found).
+
 ⚠⚠ **WHY `fold` IS PURE, AND `known_value` REBUILDS EVERY TICK.** Found
 2026-08-31, working through the TMS design (`docs/TODO.md`): `repair.py`'s
 `apply` (`relax`/`lower`) mutates a `Comparison`/`Constant` IN PLACE via
@@ -63,8 +78,9 @@ from typing import Any, List, Optional, Set
 from loopingrules.world import transient
 from pystrider.intake import (PARTS, Arithmetic, Assign, Assigned, Block,
                               Comparison, Constant, Function, Left, Name,
-                              Right, Stmt, Value, decode_literal,
+                              Origin, Right, Stmt, Value, decode_literal,
                               encode_literal)
+from pystrider.resolve import resolve_function
 
 #: Foldable arithmetic operators. ⚠ `matmul` is deliberately absent — `@` has
 #: no meaning over Python's own literal types, so there is nothing honest to
@@ -307,10 +323,65 @@ def resolved_binding(w) -> None:
             w.replace(entity, BoundTo(target))
 
 
-#: ⭐ Two entries, kept as a dict anyway — same reason `patterns.py`'s
-#: `DESCRIPTIONS` and `effects.py`'s are, even at one entry: the perturbation
-#: pin's `only=` needs a name to select, not a bare function.
-DESCRIPTIONS = {"known_value": known_value, "resolved_binding": resolved_binding}
+@transient
+@dataclass(frozen=True)
+class BoundFunction:
+    """This `Name` reference is bound, through exactly one `Assign`, to
+    ANOTHER `Name` that itself currently resolves to a live `Function` in
+    the SAME file — `function` is that `Function`'s current entity id. The
+    one hop past `BoundTo` thread 6's motivating case actually needed:
+    `f()`'s `Callee` resolved all the way to `f`'s real definition through
+    `f = some_function`. `@transient`, same reason as `BoundTo` — a raw id,
+    meaningless once this file is reread, never a durable fact.
+    """
+
+    function: int
+
+
+def bound_function(w, entity: int) -> Optional[int]:
+    """The live `Function` entity `entity` (a `Name`) ultimately names,
+    chasing `bound_to` one hop further — decided FRESH every call, same
+    purity discipline as `bound_to` and `fold`.
+
+    `None` wherever `bound_to(w, entity)` itself abstains (see its own
+    docstring for the ceiling: reassignment, cross-branch binding, use
+    before assignment); wherever the bound expression is not itself a
+    `Name` (a `Constant`, a `Call`, an `Attribute`... nothing to chase);
+    or wherever `pystrider.resolve.resolve_function` finds no `Function`
+    of that BARE name in `entity`'s own file (`entity`'s `Origin` supplies
+    the path — never a dotted `Qualname`, which a bare `Name` node has no
+    scope information to spell in the first place, see `resolve_function`'s
+    own docstring on what dotting buys and what it still can't do).
+    """
+    bound = bound_to(w, entity)
+    if bound is None or not w.has(bound, Name):
+        return None
+    origin = w.get(entity, Origin)
+    if origin is None:
+        return None
+    found = resolve_function(w, origin.value, w.get(bound, Name).id)
+    return found.id if found is not None else None
+
+
+def resolved_function_binding(w) -> None:
+    """`bound_function` over every `Name` entity, kept in sync as a
+    standing `BoundFunction` — same present-where-decided, dropped-via-
+    `w.detach`-where-not posture as `resolved_binding`, for the same
+    reason (a reassignment, or a repair rewiring the chain, must correct
+    this the very next tick, not leave a stale resolution standing)."""
+    for entity, _tag in w.each(Name):
+        target = bound_function(w, entity)
+        if target is None:
+            w.detach(entity, BoundFunction)
+        else:
+            w.replace(entity, BoundFunction(target))
+
+
+#: ⭐ Kept as a dict for the same reason `patterns.py`'s `DESCRIPTIONS` and
+#: `effects.py`'s are, even at one entry: the perturbation pin's `only=`
+#: needs a name to select, not a bare function.
+DESCRIPTIONS = {"known_value": known_value, "resolved_binding": resolved_binding,
+                 "resolved_function_binding": resolved_function_binding}
 
 
 def install(loop, only=None) -> None:
