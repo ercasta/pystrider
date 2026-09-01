@@ -73,6 +73,25 @@ where the third slice landed.
 - Still not done, named honestly, unchanged from every previous recap:
   `Evaluation` has never been round-tripped through
   `loopingrules.save.dump()`/persistence — built and tested in-memory only.
+- **Two things surfaced discussing this session's own cost, neither fixed
+  yet:**
+  - `symbolic.install()` registers all three rules (`known_value`,
+    `resolved_binding`, `resolved_function_binding`) with no `watches=` at
+    all — every one runs its full body every tick, even on a world with no
+    `Constant`/`Name` whatsoever. Cheap, mechanical fix, not yet made:
+    `watches=(Constant, Arithmetic, Comparison)` for `known_value`,
+    `watches=(Name,)` for the other two.
+  - `resolved_function_binding` — this session's own new standing rule —
+    has no consumer yet: nothing queries `w.each(BoundFunction)` anywhere
+    in this codebase except its own tests. It was built as scaffolding
+    toward the named target application (resolving call sites through
+    indirection), the same justification `KnownValue`'s first slice used —
+    but unlike that slice, nothing downstream reads it YET, which is in
+    tension with this project's own "do one concretely first" rule (see
+    thread 1's own framing, and `Qualname`'s). Worth deciding, next
+    session: build the actual consumer next (closing the loop this was
+    scaffolding for), or leave it registered-but-unread a while longer,
+    named honestly either way rather than assumed fine.
 
 ## 2026-08-31 session (cont'd): thread 6 — `bound_to`, the second slice
 
