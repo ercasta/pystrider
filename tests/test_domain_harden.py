@@ -46,7 +46,7 @@ def loop_with(tmp_path, name, text):
 def test_harden_wraps_a_risky_division_and_reports_it(tmp_path):
     loop, path = loop_with(tmp_path, "a.py", ONE_DIV)
     lines = say(loop, f"harden {path}")
-    assert lines[0] == "a.py: 1 risky division(s), 0 already guarded, 1 newly wrapped"
+    assert lines[0] == "a.py: 1 risky spot(s), 0 already guarded, 1 newly wrapped"
     assert "try:" in lines[1]
     assert "except ZeroDivisionError:" in lines[1]
 
@@ -59,7 +59,7 @@ def test_harden_reports_nothing_risky_when_there_is_none(tmp_path):
 def test_harden_on_an_already_guarded_division_wraps_nothing_more(tmp_path):
     loop, path = loop_with(tmp_path, "a.py", ALREADY_GUARDED)
     lines = say(loop, f"harden {path}")
-    assert lines == ["a.py: 1 risky division(s), 1 already guarded, 0 newly wrapped"]
+    assert lines == ["a.py: 1 risky spot(s), 1 already guarded, 0 newly wrapped"]
 
 
 def test_hardening_twice_is_not_two_standing_requests(tmp_path):

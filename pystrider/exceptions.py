@@ -1,81 +1,104 @@
-"""Exceptions — recognizing a division that MIGHT raise `ZeroDivisionError`,
-and repairing it by wrapping it in `try`/`except ZeroDivisionError: raise`.
+"""Exceptions — recognizing code that MIGHT raise, and repairing it by
+wrapping it in `try`/`except <Type>: raise`.
 
 The first end-to-end slice through `docs/TODO.md`'s "general cycle" that
-needs all four steps for real: `may_raise` is `effects.py`'s recipe applied
-to a different risk (structure => description, forward, abstaining
-structurally); `wrap_in_try` is the generative half `effects.py` itself
-declines, the same "propose a target semantics, then synthesize it" shape
-`repair.py`/`effects_repair.py` already use for a statement-level repair —
-here for the first time synthesizing a whole new BLOCK-CARRYING construct
-(`try`/`except`), which needed `intake.py`/`emit.py` to grow `TryStmt`/
-`ExceptHandler`/`RaiseStmt` first (see those modules' own notes).
+needs all four steps for real: `may_raise_*` is `effects.py`'s recipe
+applied to a different risk (structure => description, forward, abstaining
+structurally); the repair pipeline below is the generative half
+`effects.py` itself declines, the same "propose a target semantics, then
+synthesize it" shape `repair.py`/`effects_repair.py` already use for a
+statement-level repair — the first module here to synthesize a whole new
+BLOCK-CARRYING construct (`try`/`except`), which needed `intake.py`/
+`emit.py` to grow `TryStmt`/`ExceptHandler`/`RaiseStmt` first (see those
+modules' own notes).
 
 ⚠ DELIBERATELY NARROW, NAMED, NOT HIDDEN:
-  - Only `x / y` / `x // y` where `y` is anything but a bare `Constant` — a
-    literal divisor (zero or not) is a different question (dead code /
+  - Only `x / y` / `x // y` where `y` is anything but a bare `Constant`
+    (risking `ZeroDivisionError`), and `int(x)`/`float(x)` where `x` is
+    anything but a bare `Constant` (risking `ValueError`) — a literal
+    argument either way is a different question (dead code /
     guaranteed-raise), not attempted here.
-  - Only an EXACT `except ZeroDivisionError:` counts as a guard — no `as`
-    binding, no tuple of types, no bare `except:`, no broader supertype
-    (`Exception`, `ArithmeticError`). A division inside `except ValueError:`
-    is (correctly, for this scope) still wrapped — a second, nested `try`,
+  - Only an EXACT `except <Type>:` counts as a guard — no `as` binding, no
+    tuple of types, no bare `except:`, no broader supertype (`Exception`,
+    `ArithmeticError`). A risk inside `except SomeOtherType:` is
+    (correctly, for this scope) still wrapped — a second, nested `try`,
     not a bug.
   - Never wraps more than one STATEMENT per `try` — deliberately dodges the
     open "which span does one `try` cover" question
     `loopingrules/DECISION_PATTERNS.md`'s 2026-08-30/31 notes flag as
     unresolved (the chart-parsing shape), rather than pre-empting it.
-  - Does not consult `symbolic.known_value` to rule out a non-constant
-    divisor that is provably nonzero — a natural follow-on, not this slice.
+  - Does not consult `symbolic.known_value` to rule out an argument that is
+    provably safe despite not being a bare `Constant` — a natural
+    follow-on, not this slice.
 
-⭐⭐ 2026-09-05: WIRED TO THE LIVE PROMPT NOW — `pystrider.domain`'s `harden
+⭐⭐ 2026-09-05: WIRED TO THE LIVE PROMPT — `pystrider.domain`'s `harden
 <path.py>` installs nothing (this module's rules are STANDING, registered
 once by `domain.install()`, same as `patterns.install`); it asserts
-`WantsHardening(path)`, the gate `wrap_in_try` reads below. `may_raise`/
-`guarded` were already unconditional and safe to run globally; `wrap_in_try`
-was NOT, before this gate existed — see `WantsHardening`'s own docstring for
-why that only became visible once something outside this module's own tests
-ever called it.
+`WantsHardening(path)`, the gate the repair pipeline reads below.
+`may_raise_*`/`guarded` were already unconditional and safe to run
+globally; the repair rules were NOT, before that gate existed — see
+`WantsHardening`'s own docstring for why that only became visible once
+something outside this module's own tests ever called it.
 
-⭐ NO `Proposal`/`Candidate`/`arbitrate` HERE, UNLIKE `effects_repair.py` —
-deliberately. That machinery exists for RIVAL repair families genuinely
-disagreeing about the same fact (`via_print` vs. `via_open`); there is
-exactly one family here, so the general machinery `repair.py`/
-`effects_repair.py` reach for would be unneeded weight for a fact nothing
-disputes. `diagnose` (folded into `wrap_in_try` below) goes straight from
-"unmet" to "applied," gated by `WantsHardening`/`Guarded`/`Repaired`.
+⭐⭐ 2026-09-05, later the same day: REBUILT ON PROPOSE/ARBITRATE/APPLY, a
+second risk kind added specifically to force the question. `wrap_in_try`
+(gone now) diagnosed and applied in one step, correctly, for exactly as
+long as exactly one repair family existed — its own docstring said so
+plainly. The moment a SECOND risk (`int`/`float`, above) can land on the
+SAME statement as the first, that shortcut stops being innocent: nesting
+one `try` per risk, in whatever order two independent rules happen to run,
+is not obviously the fix anyone wants, and nothing had ever DECIDED it was
+— `docs/TODO.md`'s own "there are NO mechanical transformations... always a
+passage through semantics" names exactly this failure mode. So there are
+now two rival families, `propose_per_issue`/`propose_combined`, and a local
+`arbitrate_repair`/`Candidate`/`Winner` — the SAME shape `effects_repair.py`
+already established (`Candidate`/`Winner`/`arbitrate`, local to the module,
+deliberately not shared with `repair.py`'s own, for the identical reason:
+two independently-evolving modules must not read each other's proposals by
+accident of a shared type). `per_issue` (today's original mechanism,
+renamed, priority 1) is kept as a genuine, fully-working rival that
+`combined` (one `try`, one `except` per distinct risk, priority 2) always
+outranks — the same role `effects_repair.via_open` already plays for a
+different pair of families: a losing candidate that is still real code,
+provably reachable via `install(..., only=...)`, not a code path removed
+because it never wins by default.
 
-⚠⚠ THE SPLICE IS NEW GROUND. Every earlier synthesized repair
-(`effects_repair._insert_call`) only ever APPENDS a new statement at the end
-of a body — `World.attach` on a multi-valued, ordered component (`Stmt`)
-only ever appends, never inserts. Replacing one statement IN PLACE while
-keeping its siblings' order needs a full read/detach/reattach of the block's
-own `Stmt` bucket, done once here (`_splice_try`) rather than folded into a
-generic-looking helper that would hide how narrow this still is.
+⚠⚠ THE SPLICE IS NEW GROUND (unchanged from the first slice, still true).
+Every earlier synthesized repair (`effects_repair._insert_call`) only ever
+APPENDS a new statement at the end of a body — `World.attach` on a
+multi-valued, ordered component (`Stmt`) only ever appends, never inserts.
+Replacing one statement IN PLACE while keeping its siblings' order needs a
+full read/detach/reattach of the block's own `Stmt` bucket, done once here
+(`_splice_try`) rather than folded into a generic-looking helper that would
+hide how narrow this still is.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from .intake import (Arithmetic, Block, Body, Constant, ExceptHandler,
-                     Handler, Origin, Readable, RaiseStmt, Right, Stmt,
-                     TryStmt)
+from .intake import (Arg, Arithmetic, Block, Body, Call, Callee, Constant,
+                     ExceptHandler, Handler, Name, Origin, Readable,
+                     RaiseStmt, Right, Stmt, TryStmt)
 from .symbolic import _parent_of
 
 
 @dataclass(frozen=True)
 class MayRaise:
-    """`kind`/`detail` name the risk this is about, not just a bare flag —
-    `MayRaise("zero_division", "div")` — the same "name what, not just
-    that" discipline `effects.Effect` already follows."""
+    """`exc_type`/`detail` name the risk this is about, not just a bare
+    flag — `MayRaise("ZeroDivisionError", "div")` — the same "name what,
+    not just that" discipline `effects.Effect` already follows. `exc_type`
+    is the literal Python exception class name, read directly by `guarded`
+    and the repair pipeline below — not a `kind` tag some other table has
+    to translate."""
 
-    kind: str
+    exc_type: str
     detail: str
 
 
 @dataclass(frozen=True)
 class Guarded:
-    """An ancestor `except ZeroDivisionError:` already covers this risk."""
+    """An ancestor `except <exc_type>:` already covers this risk."""
 
 
 @dataclass(frozen=True)
@@ -92,10 +115,10 @@ class WantsHardening:
     """A standing request: repair every `MayRaise` found under this path,
     not just report it — the desired-semantics step `docs/TODO.md`'s cycle
     names, and the same gating role `effects_repair.WantsEffect` plays for
-    that module's own repair. `may_raise`/`guarded` stay unconditional and
-    global (recognition is cheap, pure, and harmless to run for every file,
-    same as `effects.py`'s own `contains`/`calls_effectful`) — only
-    `wrap_in_try`, the code-MUTATING half, is gated on this.
+    that module's own repair. `may_raise_*`/`guarded` stay unconditional
+    and global (recognition is cheap, pure, and harmless to run for every
+    file, same as `effects.py`'s own `contains`/`calls_effectful`) — only
+    the repair pipeline, the code-MUTATING half, is gated on this.
 
     Durable (no `@transient`) and keyed by PATH, never by an entity id —
     same reasoning as `pystrider.domain.WatchedFunction`'s own docstring:
@@ -107,7 +130,7 @@ class WantsHardening:
 
 # -- recognize ---------------------------------------------------------------
 
-def may_raise(w) -> None:
+def may_raise_zero_division(w) -> None:
     """`Arithmetic("div"/"floordiv")` whose divisor is not a bare
     `Constant` — the entire recognizer, on purpose. Silence here never means
     "provably safe," only "not this narrow pattern.\""""
@@ -117,7 +140,32 @@ def may_raise(w) -> None:
         right = w.get(entity, Right)
         if right is None or w.has(right.entity, Constant):
             continue
-        w.attach(entity, MayRaise("zero_division", arith.operator))
+        w.attach(entity, MayRaise("ZeroDivisionError", arith.operator))
+
+
+#: `int`/`float` NAMES this recognizes as raising `ValueError` on a bad
+#: argument — a REGISTRY, not an inference, same posture as `effects.
+#: IO_NAMES`: that these two convert and can fail is knowledge about the
+#: builtins, not something the syntax alone reveals.
+_VALUE_ERROR_CALLEES = {"int", "float"}
+
+
+def may_raise_value_error(w) -> None:
+    """`int(x)`/`float(x)`, exactly one argument, that argument not a bare
+    `Constant` — a call with zero or two-or-more arguments (`int(x, base)`,
+    a real, differently-shaped call this recognizer has no opinion about)
+    is refused, not guessed at."""
+    for entity, _tag in w.each(Call):
+        callee = w.get(entity, Callee)
+        if callee is None:
+            continue
+        name = w.get(callee.entity, Name)
+        if name is None or name.id not in _VALUE_ERROR_CALLEES:
+            continue
+        args = w.get_all(entity, Arg)
+        if len(args) != 1 or w.has(args[0].entity, Constant):
+            continue
+        w.attach(entity, MayRaise("ValueError", f"{name.id}_call"))
 
 
 # -- diagnose: is it already guarded? -----------------------------------------
@@ -130,8 +178,17 @@ def _enclosing_stmt(w, entity: int) -> Optional[Tuple[int, int]]:
     _owning_statement`/`_enclosing` (`_parent_of`, one hop at a time,
     nothing construct-specific) — a local variant because the existing ones
     need the candidate list, or the target kind, handed in, and here
-    neither is known ahead of the walk."""
-    node = entity
+    neither is known ahead of the walk.
+
+    ⚠ `entity` is normalized to a plain id UP FRONT — a caller may hand in
+    the `Entity` HANDLE `w.each()` returns (every call site here does); a
+    component field's own `.entity` is always already a plain id (`World.
+    attach`'s own docstring), so leaving the handle unnormalized would make
+    the very first membership check below silently never match (`Entity.
+    __eq__` refuses a plain int on the other side, see `loopingrules.
+    world.Entity`'s own docstring) whenever `entity` itself, not some
+    ancestor of it, is the block member being looked for."""
+    node = getattr(entity, "id", entity)
     seen = set()
     while node is not None and node not in seen:
         seen.add(node)
@@ -169,45 +226,21 @@ def _guarding_try(w, entity: int, exc_type: str) -> bool:
 
 
 def guarded(w) -> None:
-    for entity, _tag in w.each(MayRaise):
-        if _guarding_try(w, entity, "ZeroDivisionError"):
+    for entity, tag in w.each(MayRaise):
+        if _guarding_try(w, entity, tag.exc_type):
             w.attach(entity, Guarded())
 
 
-# -- repair: synthesize the wrap ----------------------------------------------
+# -- group: which risks share a statement? ------------------------------------
 
-def _splice_try(w, block: int, stmt: int) -> None:
-    """Replace `stmt`, in place, inside `block`'s own `Stmt` list with a new
-    `try: <stmt>\\n except ZeroDivisionError: raise` — see the module note
-    on why this needs a full detach/reattach rather than one `attach`."""
-    try_block = w.spawn(Block(), Readable())
-    w.attach(try_block, Stmt(stmt))
-
-    raise_stmt = w.spawn(RaiseStmt(), Readable())
-    handler_block = w.spawn(Block(), Readable())
-    w.attach(handler_block, Stmt(raise_stmt.id))
-
-    handler = w.spawn(ExceptHandler("ZeroDivisionError"), Readable())
-    w.attach(handler, Body(handler_block.id))
-
-    try_stmt = w.spawn(TryStmt(), Readable())
-    w.attach(try_stmt, Body(try_block.id))
-    w.attach(try_stmt, Handler(handler.id))
-
-    ordered = [try_stmt.id if s.entity == stmt else s.entity
-               for s in w.get_all(block, Stmt)]
-    w.detach(block, Stmt)
-    for e in ordered:
-        w.attach(block, Stmt(e))
-
-
-def wrap_in_try(w) -> None:
-    """Gated on `WantsHardening` — see that component's own docstring for
-    why. ⚠ Not folded into the `each()` call as a plain component filter:
-    `WantsHardening` is keyed by PATH, not by the `MayRaise` entity itself,
-    so it needs its own membership check against `Origin`, computed once
-    per tick rather than once per entity."""
+def _statement_risks(w) -> Dict[int, Tuple[int, List[int]]]:
+    """`statement -> (block, [MayRaise entity ids])` for every un-guarded,
+    un-repaired risk under a path something asked to `harden` — the
+    grouping `propose_per_issue`/`propose_combined`/`apply_repair` all
+    share, recomputed fresh on every call (this module's usual posture,
+    never cached)."""
     wanted = {h.path for _e, h in w.each(WantsHardening)}
+    groups: Dict[int, Tuple[int, List[int]]] = {}
     for entity, _tag in w.each(MayRaise, without=(Guarded, Repaired)):
         origin = w.get(entity, Origin)
         if origin is None or origin.value not in wanted:
@@ -216,30 +249,168 @@ def wrap_in_try(w) -> None:
         if found is None:
             continue
         block, stmt = found
-        _splice_try(w, block, stmt)
-        w.attach(entity, Repaired())
+        _block, entities = groups.setdefault(stmt, (block, []))
+        entities.append(entity)
+    return groups
+
+
+# -- propose / arbitrate / apply ----------------------------------------------
+# ⭐ Local to this module, deliberately not shared with `effects_repair.
+# Candidate`/`Winner`/`arbitrate` even though the shape is identical — that
+# module's own note already makes the argument: two independently-evolving
+# modules must not be able to read each other's proposals by accident of a
+# shared type.
+
+@dataclass(frozen=True)
+class Candidate:
+    """One rival repair for a risky STATEMENT (the occasion)."""
+
+    name: str
+    priority: int
+
+
+@dataclass(frozen=True)
+class Winner:
+    name: str
+
+
+@dataclass(frozen=True)
+class Verdict:
+    value: str
+
+
+@dataclass(frozen=True)
+class StatementRepaired:
+    """`apply_repair`'s own guard, keyed on the STATEMENT occasion rather
+    than any one `MayRaise` — the per-entity `Repaired` mark alone is not
+    enough here, because `apply_repair` acts on the whole GROUP at once,
+    and `Candidate`/`Winner` are deliberately never cleaned up once
+    resolved (`repair.py`'s own "a losing... `Candidate` is never
+    destroyed" precedent), so the query they came from does not simply go
+    empty on its own."""
+
+
+def propose_per_issue(w) -> None:
+    """One `try` per risk, nested — today's original mechanism, kept as a
+    genuine, fully-working rival that `propose_combined` (below) always
+    outranks, the same role `effects_repair.via_open` already plays for a
+    different pair of families."""
+    for stmt, _found in _statement_risks(w).items():
+        w.attach(stmt, Candidate("per_issue", 1))
+
+
+def propose_combined(w) -> None:
+    """ONE `try` wrapping the statement, one `except <Type>: raise` per
+    DISTINCT exception type found on it — identical output to `per_issue`
+    for a lone risk, and the whole point once ≥2 risks share a statement."""
+    for stmt, _found in _statement_risks(w).items():
+        w.attach(stmt, Candidate("combined", 2))
+
+
+def arbitrate_repair(w) -> None:
+    """This module's own local reader — see `Candidate`'s own note on why
+    it is not shared. Structural copy of `effects_repair.arbitrate`, keyed
+    on the statement entity instead of a function."""
+    seen = set()
+    for stmt, _candidate in w.each(Candidate):
+        if stmt.id in seen:
+            continue
+        seen.add(stmt.id)
+        candidates = w.get_all(stmt, Candidate)
+        best = max(c.priority for c in candidates)
+        top = [c for c in candidates if c.priority == best]
+        if len(top) == 1:
+            w.replace(stmt, Winner(top[0].name))
+            w.replace(stmt, Verdict("forced"))
+        else:
+            w.detach(stmt, Winner)
+            w.replace(stmt, Verdict("ambiguous"))
+
+
+def _splice_try(w, block: int, stmt: int, exc_types: List[str]) -> int:
+    """Replace `stmt`, in place, inside `block`'s own `Stmt` list with a new
+    `try: <stmt>` carrying one `except <Type>: raise` per entry in
+    `exc_types`, all on the SAME `TryStmt` — `emit._try_stmt` already
+    renders however many `Handler` edges one `TryStmt` carries (built
+    generally in the first slice; `propose_combined`'s repair is the first
+    caller to ever hand it more than one). Returns the new inner `Block`
+    entity now containing `stmt` — `apply_repair`'s `"per_issue"` family
+    nests by feeding this straight back in as the next call's `block`,
+    `stmt` itself never moving again after this call returns.
+
+    See the module note on why this needs a full detach/reattach of
+    `block`'s own `Stmt` bucket rather than one `attach` call."""
+    try_block = w.spawn(Block(), Readable())
+    w.attach(try_block, Stmt(stmt))
+
+    try_stmt = w.spawn(TryStmt(), Readable())
+    w.attach(try_stmt, Body(try_block.id))
+    for exc_type in exc_types:
+        raise_stmt = w.spawn(RaiseStmt(), Readable())
+        handler_block = w.spawn(Block(), Readable())
+        w.attach(handler_block, Stmt(raise_stmt.id))
+        handler = w.spawn(ExceptHandler(exc_type), Readable())
+        w.attach(handler, Body(handler_block.id))
+        w.attach(try_stmt, Handler(handler.id))
+
+    ordered = [try_stmt.id if s.entity == stmt else s.entity
+               for s in w.get_all(block, Stmt)]
+    w.detach(block, Stmt)
+    for e in ordered:
+        w.attach(block, Stmt(e))
+    return try_block.id
+
+
+def apply_repair(w) -> None:
+    """Reads `Winner` back and synthesizes it. Gated by `StatementRepaired`
+    -- see that component's own docstring for why `Repaired`/emptying the
+    `_statement_risks` query is not, by itself, enough of a guard."""
+    groups = _statement_risks(w)
+    for stmt, winner in w.each(Winner):
+        if w.has(stmt, StatementRepaired):
+            continue
+        found = groups.get(stmt.id)
+        if found is None:
+            continue
+        block, entities = found
+        exc_types = sorted({w.get(e, MayRaise).exc_type for e in entities})
+        if winner.name == "combined":
+            _splice_try(w, block, stmt.id, exc_types)
+        else:
+            current_block = block
+            for exc_type in exc_types:
+                current_block = _splice_try(w, current_block, stmt.id, [exc_type])
+        for entity in entities:
+            w.attach(entity, Repaired())
+        w.attach(stmt, StatementRepaired())
 
 
 #: name -> (rule, watched types) -- explicit per-rule `watches=`, unlike
 #: `effects.install`/`symbolic.install`'s own current gap (`docs/TODO.md`
 #: names it as a known, not-yet-fixed cost there); nothing forces this
-#: module to repeat it. ⚠ `guarded`/`wrap_in_try` watch `MayRaise` alone,
-#: not also `TryStmt`/`Guarded` -- `World.populated()` is an ANY-of-these
-#: check across the whole world (`loop.py`'s own docstring), not scoped to
-#: which entity changed, so once `MayRaise` exists anywhere both rules are
-#: awake and rescan their full antecedents (including `TryStmt`, `Guarded`)
-#: every tick regardless of what else is in the tuple -- adding those two
-#: would cost nothing extra but claims a precision this substrate cannot
-#: keep, so they are left out honestly rather than added for looks.
+#: module to repeat it. ⚠ Every rule here watches only the type it reads to
+#: decide whether to WAKE, not every type its body eventually touches --
+#: `World.populated()` is an ANY-of-these check across the WHOLE world
+#: (`loop.py`'s own docstring), not scoped to which entity changed, so once
+#: e.g. `MayRaise` exists anywhere, a rule watching it is awake and
+#: rescans its full antecedents every tick regardless of what else is in
+#: the tuple -- adding more would cost nothing extra but claims a
+#: precision this substrate cannot keep, so it is left out honestly.
 _RULES = (
-    ("may_raise", may_raise, (Arithmetic,)),
+    ("may_raise_zero_division", may_raise_zero_division, (Arithmetic,)),
+    ("may_raise_value_error", may_raise_value_error, (Call,)),
     ("guarded", guarded, (MayRaise,)),
-    ("wrap_in_try", wrap_in_try, (MayRaise,)),
+    ("propose_per_issue", propose_per_issue, (MayRaise,)),
+    ("propose_combined", propose_combined, (MayRaise,)),
+    ("arbitrate_repair", arbitrate_repair, (Candidate,)),
+    ("apply_repair", apply_repair, (Winner,)),
 )
 
 
 def install(loop, only=None) -> None:
-    """Register the rules. `only` names a subset, for a control."""
+    """Register the rules. `only` names a subset — the control a test uses
+    to force `per_issue` to win outright, by installing every rule except
+    `propose_combined` (mirrors `effects_repair.install`'s own `families=`)."""
     for name, fn, watches in _RULES:
         if only is None or name in only:
             loop.rule(fn, name=f"exceptions.{name}", watches=watches)

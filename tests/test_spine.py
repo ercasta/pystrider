@@ -18,7 +18,8 @@ from pystrider.emit import Unrenderable, emit
 from pystrider.intake import (Assign, Assigned, Body, ForStmt, Iterated,
                               Origin, UnknownPart, decode_literal,
                               encode_literal, intake)
-from pystrider.exceptions import Guarded, MayRaise, Repaired
+from pystrider.exceptions import (Candidate, Guarded, MayRaise, Repaired,
+                                  StatementRepaired, Verdict, Winner)
 from pystrider.patterns import Applies, Choice, Iteration, LoopCount
 
 SOURCE = '''\
@@ -317,7 +318,8 @@ def test_intake_and_the_descriptions_share_NO_vocabulary():
     check" guideline."""
     import pystrider.intake as intake_module
     for neutral in (Iteration, Choice, Applies, LoopCount,
-                    MayRaise, Guarded, Repaired):
+                    MayRaise, Guarded, Repaired,
+                    Candidate, Winner, Verdict, StatementRepaired):
         assert getattr(intake_module, neutral.__name__, None) is not neutral, (
             f"intake.py also defines {neutral.__name__!r} — the two modules "
             f"collided on a name"

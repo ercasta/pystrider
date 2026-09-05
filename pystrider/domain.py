@@ -13,10 +13,11 @@ by all of them):
     brew drive             ...and RUN the emitted app under Textual's Pilot
     why <subj> <pred> <obj>   what makes a derived fact so, across the blocks
     read <path.py>         intake a Python file and say what was recognized
-    harden <path.py>       intake it, and REPAIR every risky division found
-                            (wraps it in try/except ZeroDivisionError:
-                            raise) -- see `pystrider.exceptions`'s own
-                            docstring for exactly what "risky" means here
+    harden <path.py>       intake it, and REPAIR every risky spot found
+                            (wraps it in try/except <Type>: raise, one
+                            combined try per statement even when more than
+                            one risk applies) -- see `pystrider.exceptions`'s
+                            own docstring for exactly what "risky" means here
     watch <path.py> <name>   durably track one function's loop count -- see
                             `WatchedFunction`'s own docstring for why this is
                             the domain's first fact that survives a restart
@@ -603,7 +604,7 @@ def _report_harden(w) -> None:
         if not risky:
             _say(w, f"{base}: nothing looked risky")
             continue
-        _say(w, f"{base}: {len(risky)} risky division(s), "
+        _say(w, f"{base}: {len(risky)} risky spot(s), "
                 f"{len(guarded)} already guarded, {len(repaired)} newly wrapped")
         if repaired:
             _say(w, emit(w, done.module))

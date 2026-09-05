@@ -12,8 +12,9 @@ import pytest
 from loopingrules.loop import Loop
 from pystrider import exceptions
 from pystrider.emit import emit
-from pystrider.exceptions import Guarded, MayRaise, Repaired, WantsHardening
-from pystrider.intake import TryStmt, intake
+from pystrider.exceptions import (Candidate, Guarded, MayRaise, Repaired,
+                                  Verdict, WantsHardening, Winner)
+from pystrider.intake import Handler, TryStmt, intake
 
 
 def load(source: str, harden: bool = True):
@@ -109,6 +110,19 @@ def test_the_wrap_is_spliced_in_place_not_appended_at_the_end():
             < lines.index("c = 2"))
 
 
+def test_a_bare_risky_expression_statement_is_found_and_wrapped():
+    """Regression pin for `_enclosing_stmt`'s own normalization note: a
+    risky expression that IS ITSELF the statement (no enclosing `return`/
+    `=` around it) must be found on the very first membership check, not
+    walked past."""
+    w, taken, _ = load("def divide(x, y):\n    x / y\n    return 1\n")
+    (entity, _tag), = w.each(MayRaise)
+    assert w.has(entity, Repaired)
+    source = emit(w, taken.module)
+    assert "try:" in source
+    assert "return 1" in source
+
+
 def test_settling_again_does_not_move_revision_or_double_wrap():
     w, _, loop = load(SOURCE_DIV)
     before = w.revision
@@ -122,21 +136,21 @@ def test_guarded_correctly_reads_a_try_minted_after_may_raise_already_ran():
     """`guarded` watches `MayRaise` alone, never `TryStmt` (see
     `exceptions.py`'s own note on why that is still correct) — pin the over-
     approximation itself, per `PRINCIPLES.md`'s "`watches=` correctness
-    should be tested" guideline: `may_raise` runs FIRST and alone, with no
-    `TryStmt` anywhere yet; a covering `try` is minted out-of-band after
-    that (not through `wrap_in_try`); only THEN is `guarded` installed and
-    run — it must still find it, a full rescan rather than a diff since
-    `may_raise`'s own tick."""
+    should be tested" guideline: `may_raise_zero_division` runs FIRST and
+    alone, with no `TryStmt` anywhere yet; a covering `try` is minted
+    out-of-band after that (not through the repair pipeline); only THEN is
+    `guarded` installed and run — it must still find it, a full rescan
+    rather than a diff since `may_raise_zero_division`'s own tick."""
     loop = Loop()
     intake(SOURCE_DIV, loop.world, "<test>")
-    exceptions.install(loop, only=("may_raise",))
+    exceptions.install(loop, only=("may_raise_zero_division",))
     loop.run()
     w = loop.world
     (entity, _tag), = w.each(MayRaise)
     assert w.get_all(entity, Guarded) == []
 
     block, stmt = exceptions._enclosing_stmt(w, entity)
-    exceptions._splice_try(w, block, stmt)
+    exceptions._splice_try(w, block, stmt, ["ZeroDivisionError"])
 
     exceptions.install(loop, only=("guarded",))
     loop.run()
@@ -144,12 +158,91 @@ def test_guarded_correctly_reads_a_try_minted_after_may_raise_already_ran():
 
 
 def test_without_a_hardening_request_recognition_still_happens_but_nothing_is_rewritten():
-    """The gate `WantsHardening` exists for: recognition (`may_raise`,
+    """The gate `WantsHardening` exists for: recognition (`may_raise_*`,
     `guarded`) is unconditional and global, same as `effects.py`'s own
-    `contains`/`calls_effectful` -- but `wrap_in_try` must never rewrite a
-    file nobody asked to harden, simply because it happened to be `read`."""
+    `contains`/`calls_effectful` -- but the repair pipeline must never
+    rewrite a file nobody asked to harden, simply because it happened to
+    be `read`."""
     w, taken, _ = load(SOURCE_DIV, harden=False)
     (entity, _tag), = w.each(MayRaise)
     assert w.get_all(entity, Repaired) == []
     assert w.each(TryStmt) == []
     assert "try" not in emit(w, taken.module)
+
+
+# --- the second risk: `int`/`float` with a non-constant argument -----------
+
+SOURCE_INT_CALL = "def parse(raw):\n    return int(raw)\n"
+
+SOURCE_INT_CONST = "def answer():\n    return int('42')\n"
+
+
+def test_a_non_constant_int_call_is_wrapped_and_actually_runs_correctly():
+    w, taken, _ = load(SOURCE_INT_CALL)
+    source = emit(w, taken.module)
+    assert "except ValueError:" in source
+    namespace: dict = {}
+    exec(compile(source, "<repaired>", "exec"), namespace)  # noqa: S102
+    assert namespace["parse"]("42") == 42
+    with pytest.raises(ValueError):
+        namespace["parse"]("not a number")
+
+
+def test_a_constant_argument_to_int_is_never_flagged():
+    w, taken, _ = load(SOURCE_INT_CONST)
+    assert w.each(MayRaise) == []
+    assert "try" not in emit(w, taken.module)
+
+
+def test_int_with_the_wrong_number_of_arguments_is_never_flagged():
+    # `int(x, base)` -- a real, differently-shaped call this recognizer
+    # has no opinion about, refused rather than guessed at.
+    w, taken, _ = load("def parse(raw, base):\n    return int(raw, base)\n")
+    assert w.each(MayRaise) == []
+
+
+# --- two risks sharing one statement: scalability + arbitration ------------
+
+SOURCE_TWO_RISKS = "def rate(raw, total):\n    return int(raw) / total\n"
+
+
+def test_two_co_occurring_risks_settle_to_one_combined_try_not_two_nested_ones():
+    w, taken, _ = load(SOURCE_TWO_RISKS)
+    (try_entity, _tag), = w.each(TryStmt)   # exactly ONE `try`, not two nested
+    handlers = w.get_all(try_entity, Handler)
+    assert len(handlers) == 2               # ...carrying BOTH exception types
+    source = emit(w, taken.module)
+    assert source.count("try:") == 1
+    assert "except ValueError:" in source
+    assert "except ZeroDivisionError:" in source
+
+
+def test_per_issue_is_proposed_but_arbitration_inhibits_it():
+    """The concrete, checkable version of "inhibit the single-issue fix
+    when there's more than one": `per_issue` really was on the table, and
+    really lost -- not merely never built."""
+    w, _taken, _ = load(SOURCE_TWO_RISKS)
+    (stmt, winner), = w.each(Winner)
+    names = {c.name for c in w.get_all(stmt, Candidate)}
+    assert names == {"per_issue", "combined"}   # both really were on the table
+    assert winner.name == "combined"            # ...and `combined` really won
+    assert w.get(stmt, Verdict) == Verdict("forced")
+
+
+def test_per_issue_still_fully_works_when_forced_to_win():
+    """Proves the losing family is not dead code — same reasoning
+    `test_via_open_alone_wins_by_default...` already pins for
+    `effects_repair.py`'s own losing rival."""
+    loop = Loop()
+    taken = intake(SOURCE_TWO_RISKS, loop.world, "<test>")
+    loop.world.spawn(WantsHardening(taken.origin))
+    exceptions.install(loop, only=(
+        "may_raise_zero_division", "may_raise_value_error", "guarded",
+        "propose_per_issue", "arbitrate_repair", "apply_repair"))
+    loop.run()
+    w = loop.world
+    assert len(w.each(TryStmt)) == 2   # two NESTED trys, not one combined one
+    source = emit(w, taken.module)
+    assert source.count("try:") == 2
+    ast.parse(source)
+
