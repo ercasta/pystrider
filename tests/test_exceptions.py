@@ -13,7 +13,7 @@ from loopingrules.loop import Loop
 from pystrider import exceptions
 from pystrider.emit import emit
 from pystrider.exceptions import (Candidate, Guarded, MayRaise, Repaired,
-                                  Verdict, WantsHardening, Winner)
+                                  RiskOn, Verdict, WantsHardening, Winner)
 from pystrider.intake import Handler, TryStmt, intake
 
 
@@ -229,6 +229,31 @@ def test_per_issue_is_proposed_but_arbitration_inhibits_it():
     assert w.get(stmt, Verdict) == Verdict("forced")
 
 
+def test_the_seam_groups_both_risks_onto_one_statement_and_clears_once_repaired():
+    """`RiskOn` is the chokepoint `propose_per_issue`/`propose_combined`/
+    `apply_repair` all read instead of re-deriving the grouping themselves
+    -- pin its own shape directly: both risks land on the SAME statement
+    entity before repair, and the edge is gone (not stale) afterward."""
+    loop = Loop()
+    taken = intake(SOURCE_TWO_RISKS, loop.world, "<test>")
+    loop.world.spawn(WantsHardening(taken.origin))
+    exceptions.install(loop, only=(
+        "may_raise_zero_division", "may_raise_value_error", "guarded",
+        "group_risks"))
+    loop.run()
+    w = loop.world
+    stmts = {s.id for s, _tag in w.each(RiskOn)}
+    assert len(stmts) == 1   # exactly one statement carries any `RiskOn`
+    (stmt,) = stmts
+    risked = {w.get(r.entity, MayRaise).exc_type for r in w.get_all(stmt, RiskOn)}
+    assert risked == {"ZeroDivisionError", "ValueError"}
+
+    exceptions.install(loop, only=(
+        "propose_per_issue", "propose_combined", "arbitrate_repair", "apply_repair"))
+    loop.run()
+    assert w.each(RiskOn) == []   # cleared, not left stale, once both are `Repaired`
+
+
 def test_per_issue_still_fully_works_when_forced_to_win():
     """Proves the losing family is not dead code — same reasoning
     `test_via_open_alone_wins_by_default...` already pins for
@@ -238,7 +263,7 @@ def test_per_issue_still_fully_works_when_forced_to_win():
     loop.world.spawn(WantsHardening(taken.origin))
     exceptions.install(loop, only=(
         "may_raise_zero_division", "may_raise_value_error", "guarded",
-        "propose_per_issue", "arbitrate_repair", "apply_repair"))
+        "group_risks", "propose_per_issue", "arbitrate_repair", "apply_repair"))
     loop.run()
     w = loop.world
     assert len(w.each(TryStmt)) == 2   # two NESTED trys, not one combined one

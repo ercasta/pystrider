@@ -63,6 +63,22 @@ different pair of families: a losing candidate that is still real code,
 provably reachable via `install(..., only=...)`, not a code path removed
 because it never wins by default.
 
+⭐⭐ 2026-09-05, later still: THE FIRST CUT OF THAT REBUILD PUT THE GATE IN
+THE WRONG PLACE, caught the same session on a straight read of what "not
+touching individual rules" actually requires. `propose_per_issue`,
+`propose_combined`, AND `apply_repair` each independently re-walked
+`_enclosing_stmt` and re-applied `WantsHardening`/`Guarded`/`Repaired`
+themselves — three call sites re-deriving one fact, which is not a seam,
+it is the same logic pasted three times with different endings. `group_
+risks` (below) is the actual fix: ONE rule does the gated walk, deposits
+the answer as an ordinary edge (`RiskOn`), and every rule downstream reads
+that edge the way it reads `Stmt`/`Arg` — knowing nothing about the three
+gates at all. See that section's own note for the precedent this follows
+(`effects_repair.diagnose` -> `MissingEffect` -> `via_print`/`via_open`,
+diagnose once, consume many times) and why it is the right shape for
+introducing arbitration into a set of rules without touching or re-guarding
+each one.
+
 ⚠⚠ THE SPLICE IS NEW GROUND (unchanged from the first slice, still true).
 Every earlier synthesized repair (`effects_repair._insert_call`) only ever
 APPENDS a new statement at the end of a body — `World.attach` on a
@@ -231,16 +247,41 @@ def guarded(w) -> None:
             w.attach(entity, Guarded())
 
 
-# -- group: which risks share a statement? ------------------------------------
+# -- the chokepoint: group which risks share a statement, ONCE ---------------
+# ⭐⭐ THE SEAM. Every rule downstream of `group_risks` (`propose_per_issue`,
+# `propose_combined`, `apply_repair`) reads `RiskOn` the way it would read
+# `Stmt`/`Arg`/`Handler` — an ordinary structural fact — and knows NOTHING
+# about `WantsHardening`, `Guarded`, or `Repaired`. That is deliberate, not
+# an accident of what got refactored: the alternative (each of those three
+# rules independently re-walking `_enclosing_stmt` and re-applying the same
+# three gates) was tried first and rejected the same session it was built —
+# three call sites quietly re-deriving one fact is not a seam, it is the
+# same logic pasted three times with different endings. `effects_repair.py`'s
+# own `diagnose` -> `MissingEffect` -> `via_print`/`via_open` is the
+# precedent this follows: diagnose once, consume many times.
 
-def _statement_risks(w) -> Dict[int, Tuple[int, List[int]]]:
-    """`statement -> (block, [MayRaise entity ids])` for every un-guarded,
-    un-repaired risk under a path something asked to `harden` — the
-    grouping `propose_per_issue`/`propose_combined`/`apply_repair` all
-    share, recomputed fresh on every call (this module's usual posture,
-    never cached)."""
+@dataclass(frozen=True)
+class RiskOn:
+    """`entity` (a `MayRaise` entity) applies to the statement this is
+    attached to — multi-valued and UNORDERED (unlike `Stmt`/`Arg`: nothing
+    downstream cares which risk on a statement was found first), the edge
+    vocabulary shape `intake.py`'s `Handler`/`Arg` already establish,
+    applied to a DERIVED relationship instead of a syntactic one."""
+
+    entity: int
+
+
+def group_risks(w) -> None:
+    """THE CHOKEPOINT — see the section note above. Recomputes the full,
+    correct `RiskOn` extension every tick (this module's usual "never
+    cache" posture) but only touches a statement's own bucket when it
+    actually changed, the same TMS discipline `symbolic.py`'s own
+    `KnownValue`/`BoundTo` follow — so a settled world does not move
+    `world.revision` just because this rule ran again, and a risk that
+    becomes `Guarded`/`Repaired` after having been grouped is dropped from
+    `RiskOn`, not left stale."""
     wanted = {h.path for _e, h in w.each(WantsHardening)}
-    groups: Dict[int, Tuple[int, List[int]]] = {}
+    current: Dict[int, List[int]] = {}
     for entity, _tag in w.each(MayRaise, without=(Guarded, Repaired)):
         origin = w.get(entity, Origin)
         if origin is None or origin.value not in wanted:
@@ -248,10 +289,18 @@ def _statement_risks(w) -> Dict[int, Tuple[int, List[int]]]:
         found = _enclosing_stmt(w, entity)
         if found is None:
             continue
-        block, stmt = found
-        _block, entities = groups.setdefault(stmt, (block, []))
-        entities.append(entity)
-    return groups
+        _block, stmt = found
+        current.setdefault(stmt, []).append(entity.id)
+
+    known = {s.id for s, _tag in w.each(RiskOn)}
+    for stmt in known | set(current.keys()):
+        target = sorted(current.get(stmt, []))
+        existing = sorted(r.entity for r in w.get_all(stmt, RiskOn))
+        if target == existing:
+            continue
+        w.detach(stmt, RiskOn)
+        for entity_id in current.get(stmt, []):
+            w.attach(stmt, RiskOn(entity_id))
 
 
 # -- propose / arbitrate / apply ----------------------------------------------
@@ -294,16 +343,26 @@ def propose_per_issue(w) -> None:
     """One `try` per risk, nested — today's original mechanism, kept as a
     genuine, fully-working rival that `propose_combined` (below) always
     outranks, the same role `effects_repair.via_open` already plays for a
-    different pair of families."""
-    for stmt, _found in _statement_risks(w).items():
+    different pair of families. Reads `RiskOn` alone — no gate of its own,
+    all of that already happened at the seam (`group_risks`)."""
+    seen = set()
+    for stmt, _tag in w.each(RiskOn):
+        if stmt.id in seen:
+            continue
+        seen.add(stmt.id)
         w.attach(stmt, Candidate("per_issue", 1))
 
 
 def propose_combined(w) -> None:
     """ONE `try` wrapping the statement, one `except <Type>: raise` per
     DISTINCT exception type found on it — identical output to `per_issue`
-    for a lone risk, and the whole point once ≥2 risks share a statement."""
-    for stmt, _found in _statement_risks(w).items():
+    for a lone risk, and the whole point once ≥2 risks share a statement.
+    Reads `RiskOn` alone, same as `propose_per_issue`."""
+    seen = set()
+    for stmt, _tag in w.each(RiskOn):
+        if stmt.id in seen:
+            continue
+        seen.add(stmt.id)
         w.attach(stmt, Candidate("combined", 2))
 
 
@@ -362,17 +421,25 @@ def _splice_try(w, block: int, stmt: int, exc_types: List[str]) -> int:
 
 
 def apply_repair(w) -> None:
-    """Reads `Winner` back and synthesizes it. Gated by `StatementRepaired`
-    -- see that component's own docstring for why `Repaired`/emptying the
-    `_statement_risks` query is not, by itself, enough of a guard."""
-    groups = _statement_risks(w)
+    """Reads `Winner` back and synthesizes it — the entities it repairs
+    come straight off `RiskOn`, the same seam `propose_per_issue`/
+    `propose_combined` read, not a re-walk. `block` is the one thing
+    `RiskOn` does not carry (nothing downstream needed it until now); it is
+    a single `_parent_of` hop off `stmt` itself — an adjacent structural
+    fact, not the gated walk `group_risks` already did.
+
+    Gated by `StatementRepaired` — see that component's own docstring for
+    why `Repaired`/`RiskOn` going empty for this statement is not, by
+    itself, enough of a guard."""
     for stmt, winner in w.each(Winner):
         if w.has(stmt, StatementRepaired):
             continue
-        found = groups.get(stmt.id)
-        if found is None:
+        entities = [r.entity for r in w.get_all(stmt, RiskOn)]
+        if not entities:
             continue
-        block, entities = found
+        block = _parent_of(w, stmt.id)
+        if block is None:
+            continue
         exc_types = sorted({w.get(e, MayRaise).exc_type for e in entities})
         if winner.name == "combined":
             _splice_try(w, block, stmt.id, exc_types)
@@ -400,8 +467,9 @@ _RULES = (
     ("may_raise_zero_division", may_raise_zero_division, (Arithmetic,)),
     ("may_raise_value_error", may_raise_value_error, (Call,)),
     ("guarded", guarded, (MayRaise,)),
-    ("propose_per_issue", propose_per_issue, (MayRaise,)),
-    ("propose_combined", propose_combined, (MayRaise,)),
+    ("group_risks", group_risks, (MayRaise,)),
+    ("propose_per_issue", propose_per_issue, (RiskOn,)),
+    ("propose_combined", propose_combined, (RiskOn,)),
     ("arbitrate_repair", arbitrate_repair, (Candidate,)),
     ("apply_repair", apply_repair, (Winner,)),
 )

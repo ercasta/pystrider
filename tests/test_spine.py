@@ -19,7 +19,7 @@ from pystrider.intake import (Assign, Assigned, Body, ForStmt, Iterated,
                               Origin, UnknownPart, decode_literal,
                               encode_literal, intake)
 from pystrider.exceptions import (Candidate, Guarded, MayRaise, Repaired,
-                                  StatementRepaired, Verdict, Winner)
+                                  RiskOn, StatementRepaired, Verdict, Winner)
 from pystrider.patterns import Applies, Choice, Iteration, LoopCount
 
 SOURCE = '''\
@@ -319,7 +319,7 @@ def test_intake_and_the_descriptions_share_NO_vocabulary():
     import pystrider.intake as intake_module
     for neutral in (Iteration, Choice, Applies, LoopCount,
                     MayRaise, Guarded, Repaired,
-                    Candidate, Winner, Verdict, StatementRepaired):
+                    Candidate, Winner, Verdict, StatementRepaired, RiskOn):
         assert getattr(intake_module, neutral.__name__, None) is not neutral, (
             f"intake.py also defines {neutral.__name__!r} — the two modules "
             f"collided on a name"
