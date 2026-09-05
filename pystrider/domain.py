@@ -13,6 +13,10 @@ by all of them):
     brew drive             ...and RUN the emitted app under Textual's Pilot
     why <subj> <pred> <obj>   what makes a derived fact so, across the blocks
     read <path.py>         intake a Python file and say what was recognized
+    harden <path.py>       intake it, and REPAIR every risky division found
+                            (wraps it in try/except ZeroDivisionError:
+                            raise) -- see `pystrider.exceptions`'s own
+                            docstring for exactly what "risky" means here
     watch <path.py> <name>   durably track one function's loop count -- see
                             `WatchedFunction`'s own docstring for why this is
                             the domain's first fact that survives a restart
@@ -93,6 +97,29 @@ read (the shared world does not forget on its own — see `resolve.forget`) — 
 world version never needed this, because a private `World` never held more than
 one file's worth of anything.
 
+### `harden`/`_report_harden`: the same two-rule shape, one more time
+
+`_harden`/`_report_harden` mirror `_read`/`_report_read` exactly, same
+reason: `_harden` re-`intake()`s (via `resolve.reread`, same as `_read`)
+and asserts `pystrider.exceptions.WantsHardening(path)` — the standing
+request `exceptions.wrap_in_try` gates on (see that component's own
+docstring for why the gate exists at all: without it, `exceptions.install`
+becoming a STANDING rule below would silently rewrite every file anyone
+ever `read`, not just the ones someone asked to `harden`). `_report_harden`
+reads the outcome back strictly after `patterns` AND `pystrider.exceptions`'s
+three rules have had this tick's turn (`priority=-1`, the same slot
+`_report_read` already occupies), for the identical reason `_report_read`
+needs `patterns` to have run first — `Guarded`/`Repaired` are `exceptions.py`'s
+own conclusions, not yet attached the same tick `_harden` mints the fresh
+structure they are about.
+
+`exceptions.install(loop)` is called once, in `install()` below, right
+alongside `patterns.install(loop)` — `may_raise`/`guarded`/`wrap_in_try` are
+STANDING rules on this shared loop from then on, the same as every
+`patterns` rule; a `harden` request does not "install" anything, it only
+ever asserts the one fact (`WantsHardening`) those rules were already
+watching for.
+
 ## ⚠ NOTHING HERE BLOCKS, except when you ask it to
 
 `engine.py` is explicit: a rule that stops the world stops it for every channel.
@@ -150,7 +177,7 @@ from loopingrules.world import Proposal, Reply, Said, propose, transient
 
 #: What the prompt should pull a typo towards. `world.learn` is autocorrect only —
 #: nothing here changes what a rule finds.
-WORDS = ("blocks", "brew", "why", "read", "watch", "forget", "drive",
+WORDS = ("blocks", "brew", "why", "read", "harden", "watch", "forget", "drive",
          "irreversible", "basic", "premium", "spend", "python")
 
 
@@ -206,6 +233,23 @@ class ReadDone:
     module: int
     unmodelled: tuple
     roundtrip_line: str
+
+
+@dataclass(frozen=True)
+class HardenWanted:
+    path: str
+
+
+@transient
+@dataclass(frozen=True)
+class HardenDone:
+    """Bridges `_harden` to `_report_harden`, same role `ReadDone` plays for
+    `_read`/`_report_read` — see this module's own docstring, "`harden`/
+    `_report_harden`.\" `path` is `Intaken.origin`, already expanded, same
+    as `ReadDone`'s own."""
+
+    path: str
+    module: int
 
 
 @dataclass(frozen=True)
@@ -325,6 +369,10 @@ def _understand(w, text: str) -> bool:
 
     if verb == "read" and len(rest) == 1:
         w.spawn(ReadWanted(rest[0]))
+        return True
+
+    if verb == "harden" and len(rest) == 1:
+        w.spawn(HardenWanted(os.path.expanduser(rest[0])))
         return True
 
     if verb == "watch" and len(rest) == 2:
@@ -473,6 +521,31 @@ def _read(w) -> None:
                          roundtrip_line=roundtrip_line))
 
 
+def _harden(w) -> None:
+    """`harden <path.py>` -> re-`intake()` it fresh (same as `_read`,
+    regardless of whether it was `read` before), assert the standing
+    request `exceptions.wrap_in_try` gates on, and hand off to
+    `_report_harden` -- see this module's own docstring, "`harden`/
+    `_report_harden`," for why this is two rules and not one."""
+    from pystrider import resolve
+    from pystrider.exceptions import WantsHardening
+    for entity, wanted in w.each(HardenWanted):
+        w.destroy(entity)
+        try:
+            taken, _source = resolve.reread(w, wanted.path)
+        except OSError as error:
+            _say(w, f"cannot read {wanted.path}: {error.strerror}")
+            continue
+        except Exception as error:                     # noqa: BLE001
+            _say(w, f"could not read {wanted.path}: {error!r}")
+            continue
+        already = any(existing.path == taken.origin
+                      for _e, existing in w.each(WantsHardening))
+        if not already:
+            w.spawn(WantsHardening(taken.origin))
+        w.spawn(HardenDone(path=taken.origin, module=taken.module))
+
+
 def _report_read(w) -> None:
     """The other half of `_read` — see this module's own docstring. Runs
     strictly AFTER `patterns` has had this tick's turn (`install()`'s own
@@ -505,6 +578,35 @@ def _report_read(w) -> None:
         else:
             _say(w, "  nothing unread")
         _say(w, done.roundtrip_line)
+
+
+def _report_harden(w) -> None:
+    """The other half of `_harden` — see this module's own docstring,
+    "`harden`/`_report_harden`." Runs strictly after `patterns` AND
+    `pystrider.exceptions`'s three rules (`install()`'s own `priority=`),
+    so `Guarded`/`Repaired` are already attached to whatever this is about
+    to report on.
+
+    ⚠ Filtered by `Origin(path) == done.path`, same reason `_report_read`
+    filters the same way — the shared world may hold `MayRaise` from every
+    file this session has ever `read`/`harden`ed, not just this one."""
+    from pystrider.emit import emit
+    from pystrider.exceptions import Guarded, MayRaise, Repaired
+    from pystrider.intake import Origin
+    for entity, done in w.each(HardenDone):
+        w.destroy(entity)
+        risky = [e.id for e, origin, _tag in w.each(Origin, MayRaise)
+                if origin.value == done.path]
+        guarded = [e for e in risky if w.has(e, Guarded)]
+        repaired = [e for e in risky if w.has(e, Repaired)]
+        base = os.path.basename(done.path)
+        if not risky:
+            _say(w, f"{base}: nothing looked risky")
+            continue
+        _say(w, f"{base}: {len(risky)} risky division(s), "
+                f"{len(guarded)} already guarded, {len(repaired)} newly wrapped")
+        if repaired:
+            _say(w, emit(w, done.module))
 
 
 def _watch(w) -> None:
@@ -628,7 +730,7 @@ def propose_help_python(w) -> None:
             w.spawn(Proposal(occasion.id), HelpAnswer(
                 "blocks, brew [irreversible|basic|premium] [spend N] "
                 "[drive], why <subject> <predicate> <object>, "
-                "read <path.py>"))
+                "read <path.py>, harden <path.py>"))
 
 
 def propose_help_census_python(w) -> None:
@@ -649,7 +751,7 @@ def propose_help_census_python(w) -> None:
 #: both separately, with an explicit `priority`/`watches`, since neither's
 #: place in the schedule is "somewhere after" a goal handler in this tuple --
 #: see this module's own docstring and each rule's own.
-RULES = (hear, _blocks, _brew, _why, _read, _watch, _forget,
+RULES = (hear, _blocks, _brew, _why, _read, _harden, _watch, _forget,
          propose_help_python, propose_help_census_python)
 
 
@@ -682,6 +784,7 @@ def install(loop) -> None:
     for rule in RULES:
         loop.rule(rule)
     loop.rule(_report_read, priority=-1)
+    loop.rule(_report_harden, priority=-1)
     # `priority=-2`, one below `_report_read`'s -1 -- and now, same as
     # `_report_read` itself, LOAD-BEARING, not just for reading order: see
     # `_reconcile_watch`'s own docstring. It reads `patterns.LoopCount`,
@@ -692,6 +795,13 @@ def install(loop) -> None:
     # the order a person expects: a `read`'s own summary, then any
     # watched-function side effect it happened to jog, never the reverse.
     loop.rule(_reconcile_watch, watches=(WatchedFunction,), priority=-2)
-    from pystrider import patterns
+    from pystrider import exceptions, patterns
     patterns.install(loop)
+    # ⭐ Standing, from here on -- `may_raise`/`guarded`/`wrap_in_try` watch
+    # the SHARED world for every file this session ever `read`s or
+    # `harden`s, same as `patterns`'s own rules. `harden <path.py>` never
+    # installs anything; it only ever asserts `WantsHardening`, the one
+    # fact `wrap_in_try` was already watching for -- see this module's own
+    # docstring, "`harden`/`_report_harden`."
+    exceptions.install(loop)
     loop.world.learn(*WORDS)

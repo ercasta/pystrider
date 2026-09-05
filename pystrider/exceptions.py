@@ -26,8 +26,15 @@ here for the first time synthesizing a whole new BLOCK-CARRYING construct
     unresolved (the chart-parsing shape), rather than pre-empting it.
   - Does not consult `symbolic.known_value` to rule out a non-constant
     divisor that is provably nonzero — a natural follow-on, not this slice.
-  - Not wired to the live prompt (`pystrider.domain`) yet — same honest gap
-    `repair.py`'s own TODO names for itself.
+
+⭐⭐ 2026-09-05: WIRED TO THE LIVE PROMPT NOW — `pystrider.domain`'s `harden
+<path.py>` installs nothing (this module's rules are STANDING, registered
+once by `domain.install()`, same as `patterns.install`); it asserts
+`WantsHardening(path)`, the gate `wrap_in_try` reads below. `may_raise`/
+`guarded` were already unconditional and safe to run globally; `wrap_in_try`
+was NOT, before this gate existed — see `WantsHardening`'s own docstring for
+why that only became visible once something outside this module's own tests
+ever called it.
 
 ⭐ NO `Proposal`/`Candidate`/`arbitrate` HERE, UNLIKE `effects_repair.py` —
 deliberately. That machinery exists for RIVAL repair families genuinely
@@ -35,7 +42,7 @@ disagreeing about the same fact (`via_print` vs. `via_open`); there is
 exactly one family here, so the general machinery `repair.py`/
 `effects_repair.py` reach for would be unneeded weight for a fact nothing
 disputes. `diagnose` (folded into `wrap_in_try` below) goes straight from
-"unmet" to "applied," gated only by `Guarded`/`Repaired`.
+"unmet" to "applied," gated by `WantsHardening`/`Guarded`/`Repaired`.
 
 ⚠⚠ THE SPLICE IS NEW GROUND. Every earlier synthesized repair
 (`effects_repair._insert_call`) only ever APPENDS a new statement at the end
@@ -51,7 +58,8 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from .intake import (Arithmetic, Block, Body, Constant, ExceptHandler,
-                     Handler, Readable, RaiseStmt, Right, Stmt, TryStmt)
+                     Handler, Origin, Readable, RaiseStmt, Right, Stmt,
+                     TryStmt)
 from .symbolic import _parent_of
 
 
@@ -77,6 +85,24 @@ class Repaired:
     here performs irreversible AST surgery: re-running it on an entity
     already wrapped would not just be redundant, it would be wrong (the
     entity it would try to move has already moved)."""
+
+
+@dataclass(frozen=True)
+class WantsHardening:
+    """A standing request: repair every `MayRaise` found under this path,
+    not just report it — the desired-semantics step `docs/TODO.md`'s cycle
+    names, and the same gating role `effects_repair.WantsEffect` plays for
+    that module's own repair. `may_raise`/`guarded` stay unconditional and
+    global (recognition is cheap, pure, and harmless to run for every file,
+    same as `effects.py`'s own `contains`/`calls_effectful`) — only
+    `wrap_in_try`, the code-MUTATING half, is gated on this.
+
+    Durable (no `@transient`) and keyed by PATH, never by an entity id —
+    same reasoning as `pystrider.domain.WatchedFunction`'s own docstring:
+    intake's entities are transient and gone on every reread, so a standing
+    request cannot point at one."""
+
+    path: str
 
 
 # -- recognize ---------------------------------------------------------------
@@ -176,7 +202,16 @@ def _splice_try(w, block: int, stmt: int) -> None:
 
 
 def wrap_in_try(w) -> None:
+    """Gated on `WantsHardening` — see that component's own docstring for
+    why. ⚠ Not folded into the `each()` call as a plain component filter:
+    `WantsHardening` is keyed by PATH, not by the `MayRaise` entity itself,
+    so it needs its own membership check against `Origin`, computed once
+    per tick rather than once per entity."""
+    wanted = {h.path for _e, h in w.each(WantsHardening)}
     for entity, _tag in w.each(MayRaise, without=(Guarded, Repaired)):
+        origin = w.get(entity, Origin)
+        if origin is None or origin.value not in wanted:
+            continue
         found = _enclosing_stmt(w, entity)
         if found is None:
             continue

@@ -12,13 +12,20 @@ import pytest
 from loopingrules.loop import Loop
 from pystrider import exceptions
 from pystrider.emit import emit
-from pystrider.exceptions import Guarded, MayRaise, Repaired
+from pystrider.exceptions import Guarded, MayRaise, Repaired, WantsHardening
 from pystrider.intake import TryStmt, intake
 
 
-def load(source: str):
+def load(source: str, harden: bool = True):
+    """`harden=True` (the default, so most tests below are unaffected)
+    attaches `WantsHardening` for `<test>` before running — the gate
+    `wrap_in_try` reads, since `pystrider.domain`'s `harden <path.py>`
+    wiring. `harden=False` is what pins the gate itself: without a request,
+    recognition still happens, but nothing gets rewritten."""
     loop = Loop()
     taken = intake(source, loop.world, "<test>")
+    if harden:
+        loop.world.spawn(WantsHardening(taken.origin))
     exceptions.install(loop)
     loop.run()
     return loop.world, taken, loop
@@ -134,3 +141,15 @@ def test_guarded_correctly_reads_a_try_minted_after_may_raise_already_ran():
     exceptions.install(loop, only=("guarded",))
     loop.run()
     assert w.has(entity, Guarded)
+
+
+def test_without_a_hardening_request_recognition_still_happens_but_nothing_is_rewritten():
+    """The gate `WantsHardening` exists for: recognition (`may_raise`,
+    `guarded`) is unconditional and global, same as `effects.py`'s own
+    `contains`/`calls_effectful` -- but `wrap_in_try` must never rewrite a
+    file nobody asked to harden, simply because it happened to be `read`."""
+    w, taken, _ = load(SOURCE_DIV, harden=False)
+    (entity, _tag), = w.each(MayRaise)
+    assert w.get_all(entity, Repaired) == []
+    assert w.each(TryStmt) == []
+    assert "try" not in emit(w, taken.module)
