@@ -18,6 +18,7 @@ from pystrider.emit import Unrenderable, emit
 from pystrider.intake import (Assign, Assigned, Body, ForStmt, Iterated,
                               Origin, UnknownPart, decode_literal,
                               encode_literal, intake)
+from pystrider.exceptions import Guarded, MayRaise, Repaired
 from pystrider.patterns import Applies, Choice, Iteration, LoopCount
 
 SOURCE = '''\
@@ -310,10 +311,13 @@ def test_intake_and_the_descriptions_share_NO_vocabulary():
     would do nothing for that part while looking like it worked. There is no
     shared string table any more for two authors to collide in BY ACCIDENT — a
     collision now has to be a Python `NameError`-worthy identical class name —
-    so what is left to check is that `patterns.py`'s conclusions really are
-    classes `intake.py` never defines or attaches."""
+    so what is left to check is that `patterns.py`'s (and now `exceptions.
+    py`'s) conclusions really are classes `intake.py` never defines or
+    attaches — see `PRINCIPLES.md`'s "guard vocabulary collision with a
+    check" guideline."""
     import pystrider.intake as intake_module
-    for neutral in (Iteration, Choice, Applies, LoopCount):
+    for neutral in (Iteration, Choice, Applies, LoopCount,
+                    MayRaise, Guarded, Repaired):
         assert getattr(intake_module, neutral.__name__, None) is not neutral, (
             f"intake.py also defines {neutral.__name__!r} — the two modules "
             f"collided on a name"

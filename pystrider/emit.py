@@ -35,9 +35,10 @@ from typing import List, Optional
 
 from .intake import (_BIN, _CMP, Arg, Arithmetic, Assign, Assigned, Attribute,
                       Block, Body, Call, Callee, Comparison, Condition,
-                      Constant, ForStmt, Function, HasParam, IfStmt, Iterated,
-                      Left, Module, Name, NoOp, Of, Otherwise, Param, Partial,
-                      Returned, ReturnStmt, Right, Stmt, Target, Then, Value,
+                      Constant, ExceptHandler, ForStmt, Function, Handler,
+                      HasParam, IfStmt, Iterated, Left, Module, Name, NoOp, Of,
+                      Otherwise, Param, Partial, RaiseStmt, Returned,
+                      ReturnStmt, Right, Stmt, Target, Then, TryStmt, Value,
                       decode_literal)
 
 _CMP_BACK = {v: k for k, v in _CMP.items()}
@@ -52,6 +53,7 @@ _RENDERABLE = (
     (Call, "call"), (ReturnStmt, "return_stmt"), (Assign, "assign"),
     (Comparison, "comparison"), (Arithmetic, "arithmetic"), (Name, "name"),
     (Constant, "constant"), (Attribute, "attribute"), (NoOp, "no_op"),
+    (TryStmt, "try_stmt"), (RaiseStmt, "raise_stmt"),
 )
 
 
@@ -177,6 +179,25 @@ class Emit:
 
     def _no_op(self, n: int) -> ast.Pass:
         return ast.Pass()
+
+    def _try_stmt(self, n: int) -> ast.Try:
+        # ⚠ empty `orelse`/`finalbody` -- `intake.py`'s `TryStmt` never reads
+        # either, so there is nothing here to round-trip.
+        handlers = []
+        for h in self.w.get_all(n, Handler):
+            clause = h.entity
+            handlers.append(ast.ExceptHandler(
+                type=ast.Name(id=self.w.get(clause, ExceptHandler).exc_type),
+                name=None,
+                body=self.body(self.w.get(clause, Body).entity),
+            ))
+        return ast.Try(
+            body=self.body(self.w.get(n, Body).entity),
+            handlers=handlers, orelse=[], finalbody=[],
+        )
+
+    def _raise_stmt(self, n: int) -> ast.Raise:
+        return ast.Raise(exc=None, cause=None)
 
 
 def emit(world, node: int) -> str:

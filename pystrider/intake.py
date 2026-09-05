@@ -184,6 +184,29 @@ class IfStmt:
 
 
 @dataclass(frozen=True)
+class TryStmt:
+    """`body` (its `Body` part) is the guarded block; `handler` parts name
+    its `except` clauses, in order. ⚠ `orelse`/`finalbody` NOT yet read --
+    same convention as `FunctionDef`'s `returns`, see `_CONSUMES`."""
+
+
+@dataclass(frozen=True)
+class ExceptHandler:
+    """One `except` clause, always naming exactly one exception type by a
+    bare name -- `except Foo:`. ⚠ Refused whole (`_ExceptHandler`) for a
+    bare `except:`, a tuple of types, or an `as name` binding; none of
+    those are modelled yet. Its own `Body` part is the handler's block."""
+
+    exc_type: str
+
+
+@dataclass(frozen=True)
+class RaiseStmt:
+    """A bare `raise` (re-raise) only -- `_Raise` refuses anything that
+    names an exception or a `from` cause."""
+
+
+@dataclass(frozen=True)
 class Call:
     pass
 
@@ -341,6 +364,14 @@ class HasParam:
     entity: int
 
 
+@dataclass(frozen=True)
+class Handler:
+    """Multi-valued and ordered -- a `try` may carry several `except`
+    clauses, tried in the order they appear."""
+
+    entity: int
+
+
 #: ⚠⚠ EVERY CLASS ABOVE IS TRANSIENT -- one call to `intake()` mints ids that
 #: mean nothing once the file is re-read (`pystrider.resolve.reread`) or was
 #: never real to begin with ("thinking about" a rewritten version of a
@@ -354,10 +385,11 @@ class HasParam:
 #: actual work happens.
 for _cls in (Readable, FromCode, Origin, SourceLine, Span, Partial,
              UnknownPart, Module, Function, Param, Qualname, ForStmt, IfStmt,
+             TryStmt, ExceptHandler, RaiseStmt,
              Call, ReturnStmt, Assign, Comparison, Arithmetic, Name, Constant,
              Attribute, NoOp, Block, Unreadable, Target, Iterated, Body,
              Otherwise, Condition, Then, Callee, Arg, Returned, Assigned,
-             Value, Left, Right, Of, Stmt, HasParam):
+             Value, Left, Right, Of, Stmt, HasParam, Handler):
     transient(_cls)
 del _cls
 
@@ -374,7 +406,7 @@ PARTS = {
     "target": Target, "iterated": Iterated, "body": Body, "otherwise": Otherwise,
     "condition": Condition, "then": Then, "callee": Callee, "arg": Arg,
     "returned": Returned, "assigned": Assigned, "value": Value, "left": Left,
-    "right": Right, "of": Of, "stmt": Stmt, "param": HasParam,
+    "right": Right, "of": Of, "stmt": Stmt, "param": HasParam, "handler": Handler,
 }
 
 
@@ -400,6 +432,9 @@ _CONSUMES = {
     "arg": {"arg"},                            # `annotation` NOT yet read
     "For": {"target", "iter", "body", "orelse"},
     "If": {"test", "body", "orelse"},
+    "Try": {"body", "handlers"},               # `orelse`/`finalbody` NOT yet read
+    "ExceptHandler": {"type", "name", "body"},
+    "Raise": {"exc", "cause"},
     "Call": {"func", "args"},                  # `keywords` NOT yet read
     "Return": {"value"},
     "Assign": {"targets", "value"},
@@ -630,6 +665,46 @@ class Intake:
         # one every pass, which is divergence that compounds.
         if t.orelse:
             self.part(n, "otherwise", self.block(t.orelse, n))
+        self.unconsumed(t, n)
+        return n
+
+    def _Try(self, t: ast.Try) -> Any:
+        # A bare `try/finally` (no `except` at all) is refused whole -- there
+        # is no `handler` part to hang the gap on otherwise, the same reason
+        # `_Compare` refuses a chained comparison rather than approximate it.
+        if not t.handlers:
+            self.unmodelled.append("Try.no_handlers")
+            return UNREADABLE
+        n = self.node(TryStmt, t)
+        self.part(n, "body", self.block(t.body, n))
+        for h in t.handlers:
+            self.part(n, "handler", self.visit(h, n, "handler"))
+        self.unconsumed(t, n)
+        return n
+
+    def _ExceptHandler(self, t: ast.ExceptHandler) -> Any:
+        if t.name is not None:
+            self.unmodelled.append("ExceptHandler.named")
+            return UNREADABLE
+        if not isinstance(t.type, ast.Name):
+            # `t.type is None` is a bare `except:`; anything else non-`Name`
+            # is a tuple of types (or a dotted/computed one) -- neither
+            # modelled yet.
+            self.unmodelled.append("ExceptHandler.complex_type")
+            return UNREADABLE
+        n = self.node(ExceptHandler, t, exc_type=t.type.id)
+        self.part(n, "body", self.block(t.body, n))
+        self.unconsumed(t, n)
+        return n
+
+    def _Raise(self, t: ast.Raise) -> Any:
+        if t.exc is not None:
+            self.unmodelled.append("Raise.exc")
+            return UNREADABLE
+        if t.cause is not None:
+            self.unmodelled.append("Raise.cause")
+            return UNREADABLE
+        n = self.node(RaiseStmt, t)
         self.unconsumed(t, n)
         return n
 
